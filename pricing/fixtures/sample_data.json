@@ -1,0 +1,282 @@
+[
+  {
+    "model": "pricing.property",
+    "pk": 1,
+    "fields": {
+      "name": "Biosphere Inn (Dharavandhoo)",
+      "reference_base_rate": "65.00",
+      "currency_symbol": "$"
+    }
+  },
+  {
+    "model": "pricing.season",
+    "pk": 1,
+    "fields": {
+      "name": "Low Season",
+      "start_date": "2026-01-11",
+      "end_date": "2026-03-30",
+      "season_index": "1.00"
+    }
+  },
+  {
+    "model": "pricing.season",
+    "pk": 2,
+    "fields": {
+      "name": "Shoulder Season 1",
+      "start_date": "2026-04-01",
+      "end_date": "2026-05-30",
+      "season_index": "1.30"
+    }
+  },
+  {
+    "model": "pricing.season",
+    "pk": 3,
+    "fields": {
+      "name": "High Season",
+      "start_date": "2026-06-01",
+      "end_date": "2026-10-30",
+      "season_index": "1.30"
+    }
+  },
+  {
+    "model": "pricing.season",
+    "pk": 4,
+    "fields": {
+      "name": "Shoulder Season 2",
+      "start_date": "2026-11-01",
+      "end_date": "2026-12-19",
+      "season_index": "1.10"
+    }
+  },
+  {
+    "model": "pricing.season",
+    "pk": 5,
+    "fields": {
+      "name": "Peak Season",
+      "start_date": "2025-12-20",
+      "end_date": "2026-01-10",
+      "season_index": "1.20"
+    }
+  },
+  {
+    "model": "pricing.roomtype",
+    "pk": 1,
+    "fields": {
+      "name": "Standard Room",
+      "base_rate": "65.00",
+      "room_index": "1.00",
+      "room_adjustment": "0.00",
+      "pricing_method": "index",
+      "sort_order": 1
+    }
+  },
+  {
+    "model": "pricing.roomtype",
+    "pk": 2,
+    "fields": {
+      "name": "Deluxe Room",
+      "base_rate": "65.00",
+      "room_index": "1.00",
+      "room_adjustment": "0.00",
+      "pricing_method": "index",
+      "sort_order": 2
+    }
+  },
+  {
+    "model": "pricing.roomtype",
+    "pk": 3,
+    "fields": {
+      "name": "Family Suite",
+      "base_rate": "65.00",
+      "room_index": "2.00",
+      "room_adjustment": "0.00",
+      "pricing_method": "index",
+      "sort_order": 3
+    }
+  },
+  {
+    "model": "pricing.roomtype",
+    "pk": 4,
+    "fields": {
+      "name": "Presidential Suite",
+      "base_rate": "65.00",
+      "room_index": "3.50",
+      "room_adjustment": "0.00",
+      "pricing_method": "index",
+      "sort_order": 4
+    }
+  },
+  {
+    "model": "pricing.rateplan",
+    "pk": 1,
+    "fields": {
+      "name": "Room Only",
+      "meal_supplement": "0.00",
+      "sort_order": 1
+    }
+  },
+  {
+    "model": "pricing.rateplan",
+    "pk": 2,
+    "fields": {
+      "name": "Bed & Breakfast",
+      "meal_supplement": "6.00",
+      "sort_order": 2
+    }
+  },
+  {
+    "model": "pricing.rateplan",
+    "pk": 3,
+    "fields": {
+      "name": "Half Board",
+      "meal_supplement": "12.00",
+      "sort_order": 3
+    }
+  },
+  {
+    "model": "pricing.rateplan",
+    "pk": 4,
+    "fields": {
+      "name": "Full Board",
+      "meal_supplement": "22.00",
+      "sort_order": 4
+    }
+  },
+  {
+    "model": "pricing.channel",
+    "pk": 1,
+    "fields": {
+      "name": "OTA",
+      "base_discount_percent": "0.00",
+      "commission_percent": "18.00",
+      "sort_order": 1
+    }
+  },
+  {
+    "model": "pricing.channel",
+    "pk": 2,
+    "fields": {
+      "name": "DIRECT",
+      "base_discount_percent": "15.00",
+      "commission_percent": "0.00",
+      "sort_order": 2
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 1,
+    "fields": {
+      "channel": 1,
+      "name": "Standard Rate",
+      "discount_percent": "0.00",
+      "active": true,
+      "sort_order": 1,
+      "modifier_type": "standard",
+      "description": "Standard OTA rate - no additional discount"
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 2,
+    "fields": {
+      "channel": 1,
+      "name": "Genius Level 1",
+      "discount_percent": "10.00",
+      "active": true,
+      "sort_order": 2,
+      "modifier_type": "member",
+      "description": "Booking.com Genius Level 1 members get 10% off"
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 3,
+    "fields": {
+      "channel": 1,
+      "name": "Genius Level 2",
+      "discount_percent": "15.00",
+      "active": true,
+      "sort_order": 3,
+      "modifier_type": "member",
+      "description": "Booking.com Genius Level 2 members get 15% off"
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 4,
+    "fields": {
+      "channel": 1,
+      "name": "Mobile App Exclusive",
+      "discount_percent": "10.00",
+      "active": true,
+      "sort_order": 4,
+      "modifier_type": "mobile",
+      "description": "Book through mobile app for 10% discount"
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 5,
+    "fields": {
+      "channel": 1,
+      "name": "Last Minute Deal",
+      "discount_percent": "20.00",
+      "active": true,
+      "sort_order": 5,
+      "modifier_type": "last_minute",
+      "description": "Booking within 48 hours - 20% off"
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 6,
+    "fields": {
+      "channel": 2,
+      "name": "Standard Direct",
+      "discount_percent": "0.00",
+      "active": true,
+      "sort_order": 1,
+      "modifier_type": "standard",
+      "description": "Standard direct booking rate (already includes 15% channel discount)"
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 7,
+    "fields": {
+      "channel": 2,
+      "name": "Newsletter Subscriber",
+      "discount_percent": "5.00",
+      "active": true,
+      "sort_order": 2,
+      "modifier_type": "promo",
+      "description": "Email newsletter subscribers get additional 5% off"
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 8,
+    "fields": {
+      "channel": 2,
+      "name": "Corporate Rate",
+      "discount_percent": "10.00",
+      "active": true,
+      "sort_order": 3,
+      "modifier_type": "corporate",
+      "description": "Corporate bookings get additional 10% off"
+    }
+  },
+  {
+    "model": "pricing.ratemodifier",
+    "pk": 9,
+    "fields": {
+      "channel": 2,
+      "name": "Early Bird Special",
+      "discount_percent": "15.00",
+      "active": true,
+      "sort_order": 4,
+      "modifier_type": "early_bird",
+      "description": "Book 60+ days in advance for additional 15% off"
+    }
+  }
+]

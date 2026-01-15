@@ -1,0 +1,242 @@
+{% extends 'pricing/base.html' %}
+{% load pricing_filters %}
+
+{% block title %}Enhanced Pricing Matrix - With Rate Modifiers{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">Enhanced Pricing Matrix</h1>
+            <p class="text-gray-600 mt-1">BAR rates with channel modifiers (Genius, Mobile App, Newsletter, etc.)</p>
+        </div>
+        <a href="{% url 'pricing:home' %}" 
+           class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+            </svg>
+            Back to Home
+        </a>
+    </div>
+
+    {% if not has_data %}
+    <!-- Empty State -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+        <h3 class="mt-2 text-lg font-medium text-gray-900">No Data Available</h3>
+        <p class="mt-1 text-sm text-gray-500">Load sample data or add your own.</p>
+        <div class="mt-6">
+            <a href="{% url 'admin:index' %}" class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">
+                Go to Admin
+            </a>
+        </div>
+    </div>
+    {% else %}
+
+    <!-- Season Selector -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <label class="block text-sm font-medium text-gray-700 mb-2">Select Season</label>
+        <div class="flex flex-wrap gap-2">
+            {% for season in seasons %}
+            <a href="?season={{ season.id }}" 
+               class="px-4 py-2 rounded-lg transition {% if season.id == selected_season.id %}bg-blue-600 text-white{% else %}bg-gray-100 text-gray-700 hover:bg-gray-200{% endif %}">
+                <span class="font-medium">{{ season.name }}</span>
+                <span class="text-sm {% if season.id == selected_season.id %}text-blue-100{% else %}text-gray-500{% endif %}">
+                    (×{{ season.season_index }})
+                </span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Info Banner -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-start">
+            <svg class="w-5 h-5 text-blue-600 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <div class="text-sm text-blue-900">
+                <strong>BAR</strong> = Best Available Rate (your public rack rate). 
+                <strong>Channel Base</strong> = BAR with channel discount applied. 
+                <strong>Rate Modifiers</strong> = Additional discounts (Genius, Mobile, etc.). 
+                Hover over any rate to see full breakdown including <strong>net revenue</strong> after commissions.
+            </div>
+        </div>
+    </div>
+
+    <!-- Enhanced Matrix by Channel -->
+    <div class="space-y-6">
+        {% for channel in channels %}
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <!-- Channel Header -->
+            <div class="bg-gray-50 border-b border-gray-200 px-6 py-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-xl font-bold text-gray-900">{{ channel.name }}</h2>
+                        <div class="flex items-center space-x-4 mt-1 text-sm text-gray-600">
+                            {% if channel.base_discount_percent > 0 %}
+                                <span class="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800">
+                                    {{ channel.base_discount_percent }}% Channel Discount
+                                </span>
+                            {% endif %}
+                            {% if channel.commission_percent > 0 %}
+                                <span class="inline-flex items-center px-2 py-1 rounded bg-amber-100 text-amber-800">
+                                    {{ channel.commission_percent }}% Commission
+                                </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rooms -->
+            <div class="divide-y divide-gray-200">
+                {% for room in rooms %}
+                <div class="p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                        {{ room.name }}
+                        <span class="text-sm font-normal text-gray-500">(Base: ${{ room.base_rate }})</span>
+                    </h3>
+
+                    <!-- Rate Plans -->
+                    {% for rate_plan in rate_plans %}
+                    {% with data=matrix|get_item:channel.id|get_item:room.id|get_item:rate_plan.id %}
+                    <div class="mb-6 border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-medium text-gray-900">{{ rate_plan.name }}</h4>
+                            <div class="text-sm text-gray-600">
+                                <span class="font-semibold">BAR:</span> ${{ data.bar_rate }}
+                                {% if data.channel_base_rate != data.bar_rate %}
+                                    | <span class="font-semibold">Channel Base:</span> ${{ data.channel_base_rate }}
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Rate Modifiers -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                            {% for mod_data in data.modifiers %}
+                            <div class="tooltip-trigger relative bg-white border border-gray-200 rounded-lg p-3 hover:border-blue-300 hover:shadow-md transition cursor-help">
+                                <!-- Modifier Name -->
+                                <div class="text-sm font-medium text-gray-700 mb-1">
+                                    {{ mod_data.modifier.name }}
+                                    {% if mod_data.modifier.modifier_type == 'member' %}🎯{% endif %}
+                                    {% if mod_data.modifier.modifier_type == 'mobile' %}📱{% endif %}
+                                    {% if mod_data.modifier.modifier_type == 'promo' %}📧{% endif %}
+                                    {% if mod_data.modifier.modifier_type == 'last_minute' %}⚡{% endif %}
+                                    {% if mod_data.modifier.modifier_type == 'early_bird' %}🐦{% endif %}
+                                </div>
+
+                                <!-- Guest Pays -->
+                                <div class="text-xl font-bold text-gray-900">
+                                    ${{ mod_data.rate }}
+                                </div>
+
+                                <!-- Discount Badge -->
+                                {% if mod_data.breakdown.total_discount_percent > 0 %}
+                                <div class="mt-2">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                        -{{ mod_data.breakdown.total_discount_percent }}% off BAR
+                                    </span>
+                                </div>
+                                {% endif %}
+
+                                <!-- Net Revenue Badge -->
+                                {% if channel.commission_percent > 0 %}
+                                <div class="mt-1 text-xs text-gray-600">
+                                    Net: <span class="font-semibold">${{ mod_data.breakdown.net_revenue }}</span>
+                                </div>
+                                {% endif %}
+
+                                <!-- Tooltip -->
+                                <div class="tooltip absolute z-10 w-72 bg-gray-900 text-white text-xs rounded-lg shadow-lg p-3 left-0 top-full mt-2">
+                                    <div class="font-semibold mb-2">{{ mod_data.modifier.name }} - Full Breakdown</div>
+                                    <div class="space-y-1">
+                                        <div class="flex justify-between">
+                                            <span>Base Rate:</span>
+                                            <span>${{ mod_data.breakdown.base_rate }}</span>
+                                        </div>
+                                        <div class="flex justify-between">
+                                            <span>× Season ({{ mod_data.breakdown.season_index }}):</span>
+                                            <span>${{ mod_data.breakdown.seasonal_rate }}</span>
+                                        </div>
+                                        {% if mod_data.breakdown.meal_cost > 0 %}
+                                        <div class="flex justify-between">
+                                            <span>+ Meals ({{ mod_data.breakdown.occupancy }} pax):</span>
+                                            <span>${{ mod_data.breakdown.meal_cost }}</span>
+                                        </div>
+                                        {% endif %}
+                                        <div class="flex justify-between border-t border-gray-700 pt-1 font-semibold">
+                                            <span>= BAR:</span>
+                                            <span>${{ mod_data.breakdown.bar_rate }}</span>
+                                        </div>
+                                        {% if mod_data.breakdown.channel_base_discount_percent > 0 %}
+                                        <div class="flex justify-between">
+                                            <span>- Channel ({{ mod_data.breakdown.channel_base_discount_percent }}%):</span>
+                                            <span>-${{ mod_data.breakdown.channel_base_discount_amount }}</span>
+                                        </div>
+                                        <div class="flex justify-between">
+                                            <span>= Channel Base:</span>
+                                            <span>${{ mod_data.breakdown.channel_base_rate }}</span>
+                                        </div>
+                                        {% endif %}
+                                        {% if mod_data.breakdown.modifier_discount_percent > 0 %}
+                                        <div class="flex justify-between">
+                                            <span>- Modifier ({{ mod_data.breakdown.modifier_discount_percent }}%):</span>
+                                            <span>-${{ mod_data.breakdown.modifier_discount_amount }}</span>
+                                        </div>
+                                        {% endif %}
+                                        <div class="flex justify-between border-t border-gray-700 pt-1 font-bold text-green-300">
+                                            <span>= GUEST PAYS:</span>
+                                            <span>${{ mod_data.breakdown.final_rate }}</span>
+                                        </div>
+                                        {% if mod_data.breakdown.commission_percent > 0 %}
+                                        <div class="flex justify-between mt-2 pt-2 border-t border-gray-700">
+                                            <span>- Commission ({{ mod_data.breakdown.commission_percent }}%):</span>
+                                            <span class="text-red-300">-${{ mod_data.breakdown.commission_amount }}</span>
+                                        </div>
+                                        <div class="flex justify-between font-bold text-blue-300">
+                                            <span>= YOU RECEIVE:</span>
+                                            <span>${{ mod_data.breakdown.net_revenue }}</span>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endwith %}
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Legend -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h3 class="text-sm font-semibold text-gray-900 mb-3">Key Terms</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div>
+                <span class="font-semibold text-gray-900">BAR (Best Available Rate):</span>
+                <span class="text-gray-600">Your public rack rate = Base × Season + Meals</span>
+            </div>
+            <div>
+                <span class="font-semibold text-gray-900">Channel Base:</span>
+                <span class="text-gray-600">BAR with channel discount applied</span>
+            </div>
+            <div>
+                <span class="font-semibold text-gray-900">Rate Modifier:</span>
+                <span class="text-gray-600">Additional discounts (Genius, Mobile App, etc.)</span>
+            </div>
+            <div>
+                <span class="font-semibold text-gray-900">Net Revenue:</span>
+                <span class="text-gray-600">What you actually receive after commission</span>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}
