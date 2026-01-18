@@ -5,7 +5,8 @@ Pricing app URLs.
 from django.urls import path
 from .views import (
     HomeView, PricingMatrixView, EnhancedPricingMatrixView, 
-    AllSeasonsComparisonView, ADRAnalysisView, RevenueAnalysisView, update_room, update_season, parity_data_ajax)
+    AllSeasonsComparisonView, ADRAnalysisView, RevenueAnalysisView, 
+    update_room, update_season, parity_data_ajax, revenue_forecast_ajax)
 
 app_name = 'pricing'
 
@@ -19,6 +20,8 @@ urlpatterns = [
     path('room/<int:room_id>/update/', update_room, name='update_room'),
     path('season/<int:season_id>/update/', update_season, name='update_season'),
     path('parity-data/', parity_data_ajax, name='parity_data_ajax'),
+    path('api/revenue-forecast/', revenue_forecast_ajax, name='revenue_forecast_ajax'),  # ADD THIS LINE
+
 
 
 ]

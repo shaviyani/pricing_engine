@@ -5,23 +5,29 @@ Pricing views.
 from django.shortcuts import render, get_object_or_404
 from django.views.generic import TemplateView
 from django.http import JsonResponse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
+from django.template.loader import render_to_string
 from django.views.decorators.csrf import csrf_exempt
 from decimal import Decimal
 from .models import Season, RoomType, RatePlan, Channel
 from .services import calculate_final_rate
+import json
 
+
+
+# pricing/views.py - SIMPLIFIED HomeView for AJAX approach
 
 class HomeView(TemplateView):
     """
     Home page with quick links and rate parity summary.
+    Revenue forecast loaded dynamically via AJAX.
     """
     template_name = 'pricing/home.html'
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         
-        # Quick stats
+        # Quick stats only
         context['stats'] = {
             'seasons_count': Season.objects.count(),
             'rooms_count': RoomType.objects.count(),
@@ -38,19 +44,17 @@ class HomeView(TemplateView):
         
         try:
             from .services import calculate_final_rate_with_modifier
+            from decimal import Decimal
             
-            # Get data
             seasons = Season.objects.all().order_by('start_date')
             all_seasons = list(seasons)
             rooms = RoomType.objects.all()
             channels = Channel.objects.all()
             rate_plans = RatePlan.objects.all()
             
-            # Get selected season from query parameter
             selected_season_id = self.request.GET.get('parity_season')
             
             if seasons.exists() and rooms.exists() and channels.exists() and rate_plans.exists():
-                # Use selected season or default to first
                 if selected_season_id:
                     try:
                         parity_season = Season.objects.get(id=selected_season_id)
@@ -62,7 +66,7 @@ class HomeView(TemplateView):
                 parity_room = rooms.first()
                 parity_rate_plan = rate_plans.first()
                 
-                # Calculate BAR (no channel discount, no modifier discount)
+                # Calculate BAR
                 bar_rate, _ = calculate_final_rate_with_modifier(
                     room_base_rate=parity_room.get_effective_base_rate(),
                     season_index=parity_season.season_index,
@@ -75,20 +79,17 @@ class HomeView(TemplateView):
                 
                 # Check each channel's rate
                 for channel in channels:
-                    # Try to get modifiers, but don't fail if table doesn't exist
                     season_discount = Decimal('0.00')
                     try:
                         from .models import RateModifier
                         modifiers = RateModifier.objects.filter(channel=channel, active=True)
                         
                         if modifiers.exists():
-                            # Use standard/no discount modifier if available
                             modifier = modifiers.filter(discount_percent=0).first()
                             if not modifier:
                                 modifier = modifiers.first()
                             season_discount = modifier.get_discount_for_season(parity_season)
                     except:
-                        # RateModifier table doesn't exist yet, just use base channel discount
                         pass
                     
                     channel_rate, breakdown = calculate_final_rate_with_modifier(
@@ -101,11 +102,9 @@ class HomeView(TemplateView):
                         occupancy=2
                     )
                     
-                    # Calculate difference from BAR
                     difference = channel_rate - bar_rate
                     difference_percent = (difference / bar_rate * 100) if bar_rate > 0 else Decimal('0.00')
                     
-                    # Determine parity status
                     if abs(difference_percent) < Decimal('1.0'):
                         status = 'good'
                         status_text = 'At Parity'
@@ -128,7 +127,6 @@ class HomeView(TemplateView):
                     })
         
         except Exception as e:
-            # If any error occurs, just skip parity calculation
             import traceback
             print(f"Parity calculation error: {e}")
             print(traceback.format_exc())
@@ -1016,3 +1014,147 @@ def parity_data_ajax(request):
         print(f"Parity AJAX error: {e}")
         print(traceback.format_exc())
         return JsonResponse({'success': False, 'message': str(e)}, status=400)
+    
+    
+@require_GET
+def revenue_forecast_ajax(request):
+    """
+    AJAX endpoint to return revenue AND occupancy forecast data.
+    
+    Returns JSON with:
+    - Revenue forecast HTML (with ADR and room nights)
+    - Occupancy forecast HTML
+    - Annual totals including ADR and room nights
+    - Validation status
+    """
+    try:
+        from pricing.services import RevenueForecastService
+        from pricing.models import Channel
+        
+        forecast_service = RevenueForecastService()
+        
+        # Get monthly revenue forecast
+        monthly_forecast = forecast_service.calculate_monthly_forecast()
+        
+        # Get occupancy forecast
+        occupancy_forecast = forecast_service.calculate_occupancy_forecast()
+        
+        if not monthly_forecast:
+            # Render setup message
+            html = render_to_string('pricing/partials/revenue_forecast.html', {
+                'has_forecast_data': False,
+            })
+            
+            return JsonResponse({
+                'success': True,
+                'has_data': False,
+                'html': html,
+                'message': 'No forecast data available. Please configure channel distribution and room inventory.'
+            })
+        
+        # Prepare revenue chart data
+        forecast_months = [f"{item['month_name'][:3]}" for item in monthly_forecast]
+        forecast_gross_revenue = [float(item['gross_revenue']) for item in monthly_forecast]
+        forecast_net_revenue = [float(item['net_revenue']) for item in monthly_forecast]
+        forecast_commission = [float(item['commission_amount']) for item in monthly_forecast]
+        
+        # Prepare occupancy chart data
+        occupancy_months = [item['month_name'] for item in occupancy_forecast['monthly_data']]
+        occupancy_percentages = [item['occupancy_percent'] for item in occupancy_forecast['monthly_data']]
+        
+        # Calculate annual totals
+        annual_gross = sum(item['gross_revenue'] for item in monthly_forecast)
+        annual_net = sum(item['net_revenue'] for item in monthly_forecast)
+        annual_commission = sum(item['commission_amount'] for item in monthly_forecast)
+        
+        # 🔧 FIX 1: Calculate annual room nights
+        annual_room_nights = sum(item['occupied_room_nights'] for item in monthly_forecast)
+        
+        # 🔧 FIX 2: Calculate annual ADR (Gross Revenue / Room Nights)
+        annual_adr = (annual_gross / annual_room_nights) if annual_room_nights > 0 else Decimal('0.00')
+        
+        # Get channel breakdown
+        channels = Channel.objects.all()
+        channel_data = []
+        for channel in channels:
+            channel_gross = sum(
+                sum(ch['gross_revenue'] for ch in item['channel_breakdown'] if ch['channel'].id == channel.id)
+                for item in monthly_forecast
+            )
+            channel_net = sum(
+                sum(ch['net_revenue'] for ch in item['channel_breakdown'] if ch['channel'].id == channel.id)
+                for item in monthly_forecast
+            )
+            channel_commission = sum(
+                sum(ch['commission_amount'] for ch in item['channel_breakdown'] if ch['channel'].id == channel.id)
+                for item in monthly_forecast
+            )
+            
+            if channel_gross > 0:
+                channel_data.append({
+                    'name': channel.name,
+                    'share_percent': float(channel.distribution_share_percent),
+                    'gross_revenue': float(channel_gross),
+                    'net_revenue': float(channel_net),
+                    'commission': float(channel_commission),
+                })
+        
+        # Validate distribution
+        is_valid, total_dist, message = forecast_service.validate_channel_distribution()
+        
+        # Convert to JSON strings for templates
+        revenue_chart_data = json.dumps({
+            'months': forecast_months,
+            'gross_revenue': forecast_gross_revenue,
+            'net_revenue': forecast_net_revenue,
+            'commission': forecast_commission
+        })
+        
+        occupancy_chart_data = json.dumps({
+            'months': occupancy_months,
+            'occupancy': occupancy_percentages
+        })
+        
+        # Render revenue forecast HTML
+        revenue_html = render_to_string('pricing/partials/revenue_forecast.html', {
+            'has_forecast_data': True,
+            'annual_gross_revenue': annual_gross,
+            'annual_net_revenue': annual_net,
+            'annual_commission': annual_commission,
+            'annual_adr': annual_adr,  # 🔧 ADDED
+            'annual_room_nights': annual_room_nights,  # 🔧 ADDED
+            'channel_breakdown': channel_data,
+            'forecast_chart_data': revenue_chart_data,
+            'distribution_valid': is_valid,
+            'distribution_total': total_dist,
+            'distribution_message': message,
+        })
+        
+        # Render occupancy forecast HTML
+        occupancy_html = render_to_string('pricing/partials/occupancy_forecast.html', {
+            'has_occupancy_data': True,
+            'occupancy_chart_data': occupancy_chart_data,
+            'annual_metrics': occupancy_forecast['annual_metrics'],
+            'seasonal_data': occupancy_forecast['seasonal_data'],
+        })
+        
+        return JsonResponse({
+            'success': True,
+            'has_data': True,
+            'revenue_html': revenue_html,
+            'occupancy_html': occupancy_html,
+            'annual_gross': float(annual_gross),
+            'annual_net': float(annual_net),
+            'annual_adr': float(annual_adr),  # 🔧 ADDED to JSON response
+            'annual_room_nights': int(annual_room_nights),  # 🔧 ADDED to JSON response
+            'distribution_valid': is_valid,
+        })
+    
+    except Exception as e:
+        import traceback
+        print(f"Revenue forecast error: {e}")
+        print(traceback.format_exc())
+        return JsonResponse({
+            'success': False,
+            'message': str(e)
+        }, status=500)

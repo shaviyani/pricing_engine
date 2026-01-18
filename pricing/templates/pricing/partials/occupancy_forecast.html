@@ -1,0 +1,138 @@
+<!-- pricing/templates/pricing/partials/occupancy_forecast.html -->
+
+{% if not has_occupancy_data %}
+<!-- Setup Message (if no data) -->
+<div class="text-center py-12">
+    <div class="text-gray-400 mb-4">
+        <svg class="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+    </div>
+    <h3 class="text-lg font-semibold text-gray-700 mb-2">Occupancy Forecast Not Available</h3>
+    <p class="text-sm text-gray-500">Configure room inventory and season occupancy to see projections.</p>
+</div>
+{% else %}
+
+<!-- Occupancy Forecast Chart -->
+<div class="mb-8" style="height: 350px; position: relative;">
+    <canvas id="occupancyChart"></canvas>
+</div>
+
+<!-- KPI Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+    <!-- Annual Average Occupancy -->
+    <div class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-6 border border-purple-200">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-purple-700">Annual Avg Occupancy</span>
+            <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+        </div>
+        <div class="text-3xl font-bold text-purple-900">{{ annual_metrics.annual_occupancy|floatformat:1 }}%</div>
+        <div class="text-xs text-purple-600 mt-1">Across all room types</div>
+    </div>
+    
+    <!-- Peak Month -->
+    <div class="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-6 border border-green-200">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-green-700">Peak Month</span>
+            <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+            </svg>
+        </div>
+        <div class="text-2xl font-bold text-green-900">{{ annual_metrics.peak_month }}</div>
+        <div class="text-xs text-green-600 mt-1">{{ annual_metrics.peak_occupancy|floatformat:1 }}% occupancy</div>
+    </div>
+    
+    <!-- Low Month -->
+    <div class="bg-gradient-to-br from-amber-50 to-amber-100 rounded-lg p-6 border border-amber-200">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-amber-700">Low Month</span>
+            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"/>
+            </svg>
+        </div>
+        <div class="text-2xl font-bold text-amber-900">{{ annual_metrics.low_month }}</div>
+        <div class="text-xs text-amber-600 mt-1">{{ annual_metrics.low_occupancy|floatformat:1 }}% occupancy</div>
+    </div>
+    
+    <!-- High Occupancy Days -->
+    <div class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-6 border border-blue-200">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-blue-700">Days 80%+</span>
+            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+        </div>
+        <div class="text-3xl font-bold text-blue-900">{{ annual_metrics.days_80_plus }}</div>
+        <div class="text-xs text-blue-600 mt-1">High demand days</div>
+    </div>
+</div>
+
+<!-- Seasonal Breakdown Table -->
+<div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+    <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+        <h4 class="text-lg font-semibold text-gray-900">Seasonal Occupancy Breakdown</h4>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Season</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Dates</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Days</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Expected Occ</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Available Nights</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Occupied Nights</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Occupancy Level</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+                {% for season in seasonal_data %}
+                <tr class="hover:bg-gray-50 transition">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="font-medium text-gray-900">{{ season.season_name }}</div>
+                    </td>
+                    <td class="px-4 py-4 text-center text-sm text-gray-600">
+                        {{ season.start_date }} - {{ season.end_date }}
+                    </td>
+                    <td class="px-4 py-4 text-center text-sm text-gray-600">
+                        {{ season.days }}
+                    </td>
+                    <td class="px-4 py-4 text-center">
+                        <span class="text-lg font-semibold 
+                            {% if season.occupancy_percent >= 80 %}text-green-600
+                            {% elif season.occupancy_percent >= 60 %}text-amber-600
+                            {% else %}text-red-600{% endif %}">
+                            {{ season.occupancy_percent|floatformat:1 }}%
+                        </span>
+                    </td>
+                    <td class="px-4 py-4 text-center text-sm text-gray-600">
+                        {{ season.available_room_nights|floatformat:0 }}
+                    </td>
+                    <td class="px-4 py-4 text-center text-sm font-medium text-gray-900">
+                        {{ season.occupied_room_nights|floatformat:0 }}
+                    </td>
+                    <td class="px-4 py-4">
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="h-2 rounded-full transition-all duration-300
+                                {% if season.occupancy_percent >= 80 %}bg-green-500
+                                {% elif season.occupancy_percent >= 60 %}bg-amber-500
+                                {% else %}bg-red-500{% endif %}"
+                                style="width: {{ season.occupancy_percent }}%">
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Occupancy Chart Data (for AJAX loading) -->
+<script id="occupancy-chart-data" type="application/json">
+{{ occupancy_chart_data|safe }}
+</script>
+
+{% endif %}

@@ -3,7 +3,9 @@ Pricing models - simplified version.
 """
 
 from django.db import models
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+from django.core.validators import MinValueValidator, MaxValueValidator
+
 
 
 class Property(models.Model):
@@ -365,6 +367,15 @@ class Channel(models.Model):
         default=Decimal('0.00'),
         help_text="Commission the channel takes (for revenue analysis)"
     )
+    
+    distribution_share_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Expected % of bookings from this channel (for revenue forecasting)"
+    )
+    
     sort_order = models.PositiveIntegerField(default=0, help_text="Display order")
     
     class Meta:
@@ -391,8 +402,103 @@ class Channel(models.Model):
         if self.commission_percent > 0:
             return f"{self.commission_percent}% commission"
         return "No commission"
+    
+    def distribution_display(self):
+        """Display formatted distribution share."""
+        if self.distribution_share_percent > 0:
+            return f"{self.distribution_share_percent}% of bookings"
+        return "No distribution set"
 
-
+    @classmethod
+    def validate_total_distribution(cls):
+        """
+        Validate that total distribution shares equal 100%.
+        
+        Returns:
+            tuple: (is_valid: bool, total: Decimal, message: str)
+        """
+        total = cls.objects.aggregate(
+            total=models.Sum('distribution_share_percent')
+        )['total'] or Decimal('0.00')
+        
+        is_valid = abs(total - Decimal('100.00')) < Decimal('0.01')
+        
+        if is_valid:
+            message = f"✓ Total distribution: {total}%"
+        elif total == Decimal('0.00'):
+            message = "⚠ No distribution shares set"
+        elif total < Decimal('100.00'):
+            message = f"⚠ Total distribution: {total}% (missing {Decimal('100.00') - total}%)"
+        else:
+            message = f"⚠ Total distribution: {total}% (exceeds 100% by {total - Decimal('100.00')}%)"
+        
+        return is_valid, total, message
+    
+    @classmethod
+    def get_distribution_mix(cls):
+        """
+        Get channel distribution as a dictionary for calculations.
+        
+        Returns:
+            dict: {channel_id: share_as_decimal}
+            Example: {1: Decimal('0.70'), 2: Decimal('0.30')}
+        """
+        channels = cls.objects.all()
+        return {
+            channel.id: channel.distribution_share_percent / Decimal('100.00')
+            for channel in channels
+            if channel.distribution_share_percent > 0
+        }
+    
+    @classmethod
+    def normalize_distribution(cls):
+        """
+        Auto-normalize distribution shares to sum to 100%.
+        
+        Proportionally adjusts all shares so they sum to exactly 100%.
+        Only affects channels with share > 0.
+        """
+        channels_with_share = cls.objects.filter(distribution_share_percent__gt=0)
+        
+        if not channels_with_share.exists():
+            return
+        
+        total = channels_with_share.aggregate(
+            total=models.Sum('distribution_share_percent')
+        )['total'] or Decimal('0.00')
+        
+        if total == Decimal('0.00'):
+            return
+        
+        # Calculate normalization factor
+        factor = Decimal('100.00') / total
+        
+        # Apply to each channel
+        for channel in channels_with_share:
+            channel.distribution_share_percent = (
+                channel.distribution_share_percent * factor
+            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            channel.save()
+    
+    @classmethod
+    def distribute_equally(cls):
+        """
+        Set equal distribution across all channels.
+        
+        Each channel gets 100% / number_of_channels.
+        """
+        channels = cls.objects.all()
+        if not channels.exists():
+            return
+        
+        share_per_channel = (Decimal('100.00') / channels.count()).quantize(
+            Decimal('0.01'), rounding=ROUND_HALF_UP
+        )
+        
+        for channel in channels:
+            channel.distribution_share_percent = share_per_channel
+            channel.save()
+            
 class RateModifier(models.Model):
     """
     Additional discount modifiers for channels (Genius, Mobile App, Newsletter, etc.).

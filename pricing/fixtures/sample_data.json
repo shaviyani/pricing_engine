@@ -15,7 +15,8 @@
       "name": "Low Season",
       "start_date": "2026-01-11",
       "end_date": "2026-03-30",
-      "season_index": "1.00"
+      "season_index": "1.00",
+      "expected_occupancy": "65.00"
     }
   },
   {
@@ -25,7 +26,8 @@
       "name": "Shoulder Season 1",
       "start_date": "2026-04-01",
       "end_date": "2026-05-30",
-      "season_index": "1.30"
+      "season_index": "1.30",
+      "expected_occupancy": "70.00"
     }
   },
   {
@@ -35,7 +37,8 @@
       "name": "High Season",
       "start_date": "2026-06-01",
       "end_date": "2026-10-30",
-      "season_index": "1.30"
+      "season_index": "1.30",
+      "expected_occupancy": "85.00"
     }
   },
   {
@@ -45,7 +48,8 @@
       "name": "Shoulder Season 2",
       "start_date": "2026-11-01",
       "end_date": "2026-12-19",
-      "season_index": "1.10"
+      "season_index": "1.10",
+      "expected_occupancy": "75.00"
     }
   },
   {
@@ -55,7 +59,8 @@
       "name": "Peak Season",
       "start_date": "2025-12-20",
       "end_date": "2026-01-10",
-      "season_index": "1.20"
+      "season_index": "1.20",
+      "expected_occupancy": "95.00"
     }
   },
   {
@@ -67,7 +72,8 @@
       "room_index": "1.00",
       "room_adjustment": "0.00",
       "pricing_method": "index",
-      "sort_order": 1
+      "sort_order": 1,
+      "number_of_rooms": 6
     }
   },
   {
@@ -76,10 +82,11 @@
     "fields": {
       "name": "Deluxe Room",
       "base_rate": "65.00",
-      "room_index": "1.00",
+      "room_index": "1.30",
       "room_adjustment": "0.00",
       "pricing_method": "index",
-      "sort_order": 2
+      "sort_order": 2,
+      "number_of_rooms": 8
     }
   },
   {
@@ -91,7 +98,8 @@
       "room_index": "2.00",
       "room_adjustment": "0.00",
       "pricing_method": "index",
-      "sort_order": 3
+      "sort_order": 3,
+      "number_of_rooms": 4
     }
   },
   {
@@ -103,7 +111,8 @@
       "room_index": "3.50",
       "room_adjustment": "0.00",
       "pricing_method": "index",
-      "sort_order": 4
+      "sort_order": 4,
+      "number_of_rooms": 2
     }
   },
   {
@@ -149,6 +158,7 @@
       "name": "OTA",
       "base_discount_percent": "0.00",
       "commission_percent": "18.00",
+      "distribution_share_percent": "70.00",
       "sort_order": 1
     }
   },
@@ -159,6 +169,7 @@
       "name": "DIRECT",
       "base_discount_percent": "15.00",
       "commission_percent": "0.00",
+      "distribution_share_percent": "30.00",
       "sort_order": 2
     }
   },
