@@ -1445,3 +1445,752 @@ class OccupancyForecast(models.Model):
             )
         
         return " ".join(insights) if insights else "Forecast is on track."
+    
+    
+    
+    """
+Reservation and Import Models for Booking Data Analysis.
+
+These models support:
+- Importing reservation data from Excel/CSV
+- Tracking booking sources and mapping to channels
+- Guest tracking for repeat analysis
+- Multi-room booking linking
+- Lead time calculations
+
+Add these to your existing pricing/models.py file.
+"""
+
+from django.db import models
+from django.db.models import Sum, Count, Avg, Q
+from decimal import Decimal
+from datetime import date, timedelta
+import re
+
+
+class BookingSource(models.Model):
+    """
+    Maps import source values to channels.
+    
+    Handles the mapping between what appears in your reservation export
+    (e.g., "Booking.com", "Walk-in", empty cell with user "Reekko")
+    and your existing Channel model.
+    
+    Example mappings:
+        - "Booking.com" → OTA channel
+        - "Walk-in", empty+Reekko, empty+Maais → Direct channel
+    """
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Display name (e.g., 'Booking.com', 'Direct - Walk-in')"
+    )
+    
+    # Values to match from import file (case-insensitive)
+    import_values = models.JSONField(
+        default=list,
+        help_text="List of values to match from import (e.g., ['Booking.com', 'booking.com'])"
+    )
+    
+    # Map to existing Channel
+    channel = models.ForeignKey(
+        'Channel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='booking_sources',
+        help_text="Map to existing channel for analysis"
+    )
+    
+    # Special handling flags
+    is_direct = models.BooleanField(
+        default=False,
+        help_text="Is this a direct booking source?"
+    )
+    
+    # For empty source with specific user mapping
+    user_mappings = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="User names that indicate this source when Source is empty (e.g., ['Reekko', 'Maais'])"
+    )
+    
+    # Commission override (if different from channel)
+    commission_override = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Override commission % (if different from channel)"
+    )
+    
+    active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['sort_order', 'name']
+        verbose_name = "Booking Source"
+        verbose_name_plural = "Booking Sources"
+    
+    def __str__(self):
+        channel_str = f" → {self.channel.name}" if self.channel else ""
+        return f"{self.name}{channel_str}"
+    
+    @property
+    def effective_commission(self):
+        """Get commission rate (override or channel default)."""
+        if self.commission_override is not None:
+            return self.commission_override
+        if self.channel:
+            return self.channel.commission_percent
+        return Decimal('0.00')
+    
+    @classmethod
+    def find_source(cls, source_value, user_value=None):
+        """
+        Find matching BookingSource for import values.
+        
+        Args:
+            source_value: Value from 'Source' column (may be empty)
+            user_value: Value from 'User' column (for empty source handling)
+        
+        Returns:
+            BookingSource or None
+        """
+        source_value = (source_value or '').strip()
+        user_value = (user_value or '').strip()
+        
+        # First, try to match by source value
+        if source_value:
+            for booking_source in cls.objects.filter(active=True):
+                import_vals = [v.lower() for v in booking_source.import_values]
+                if source_value.lower() in import_vals:
+                    return booking_source
+        
+        # If source is empty, check user mappings
+        if not source_value and user_value:
+            for booking_source in cls.objects.filter(active=True):
+                user_maps = [u.lower() for u in booking_source.user_mappings]
+                if user_value.lower() in user_maps:
+                    return booking_source
+        
+        return None
+    
+    @classmethod
+    def get_or_create_unknown(cls):
+        """Get or create an 'Unknown' source for unmapped values."""
+        source, created = cls.objects.get_or_create(
+            name='Unknown',
+            defaults={
+                'import_values': [],
+                'is_direct': False,
+                'sort_order': 999,
+            }
+        )
+        return source
+
+
+class Guest(models.Model):
+    """
+    Guest record for tracking repeat visitors.
+    
+    Created from reservation imports, allows analysis of:
+    - Repeat guest rate
+    - Guest lifetime value
+    - Booking patterns per guest
+    """
+    name = models.CharField(
+        max_length=200,
+        db_index=True,
+        help_text="Guest name from reservation"
+    )
+    
+    email = models.EmailField(
+        blank=True,
+        null=True,
+        help_text="Guest email (if available)"
+    )
+    
+    phone = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Guest phone (if available)"
+    )
+    
+    country = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text="Guest country from reservation"
+    )
+    
+    # Denormalized stats for quick queries
+    booking_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Total number of bookings"
+    )
+    total_nights = models.PositiveIntegerField(
+        default=0,
+        help_text="Total room nights stayed"
+    )
+    total_revenue = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Lifetime revenue from this guest"
+    )
+    
+    first_booking_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date of first booking"
+    )
+    last_booking_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date of most recent booking"
+    )
+    
+    notes = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-last_booking_date', 'name']
+        verbose_name = "Guest"
+        verbose_name_plural = "Guests"
+        indexes = [
+            models.Index(fields=['name', 'country']),
+            models.Index(fields=['booking_count']),
+        ]
+    
+    def __str__(self):
+        country_str = f" ({self.country})" if self.country else ""
+        return f"{self.name}{country_str}"
+    
+    @property
+    def is_repeat_guest(self):
+        """Check if guest has multiple bookings."""
+        return self.booking_count > 1
+    
+    @property
+    def average_booking_value(self):
+        """Calculate average revenue per booking."""
+        if self.booking_count > 0:
+            return (self.total_revenue / self.booking_count).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+    
+    def update_stats(self):
+        """Recalculate denormalized stats from reservations."""
+        from django.db.models import Min, Max
+        
+        stats = self.reservations.filter(
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        ).aggregate(
+            count=Count('id'),
+            nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            first=Min('booking_date'),
+            last=Max('booking_date'),
+        )
+        
+        self.booking_count = stats['count'] or 0
+        self.total_nights = stats['nights'] or 0
+        self.total_revenue = stats['revenue'] or Decimal('0.00')
+        self.first_booking_date = stats['first']
+        self.last_booking_date = stats['last']
+        self.save()
+    
+    @classmethod
+    def find_or_create(cls, name, country=None, email=None):
+        """
+        Find existing guest or create new one.
+        
+        Matching logic:
+        1. Exact name + country match
+        2. Exact email match (if provided)
+        3. Create new guest
+        """
+        name = (name or '').strip()
+        country = (country or '').strip()
+        email = (email or '').strip() or None
+        
+        if not name:
+            return None
+        
+        # Try exact match on name + country
+        if country:
+            guest = cls.objects.filter(
+                name__iexact=name,
+                country__iexact=country
+            ).first()
+            if guest:
+                return guest
+        
+        # Try email match
+        if email:
+            guest = cls.objects.filter(email__iexact=email).first()
+            if guest:
+                # Update name/country if needed
+                if not guest.country and country:
+                    guest.country = country
+                    guest.save()
+                return guest
+        
+        # Try just name match (if no country provided)
+        if not country:
+            guest = cls.objects.filter(name__iexact=name).first()
+            if guest:
+                return guest
+        
+        # Create new guest
+        return cls.objects.create(
+            name=name,
+            country=country,
+            email=email,
+        )
+
+
+class FileImport(models.Model):
+    """
+    Tracks file import history.
+    
+    Keeps record of all imports for:
+    - Audit trail
+    - Error tracking
+    - Duplicate prevention
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('completed_with_errors', 'Completed with Errors'),
+        ('failed', 'Failed'),
+    ]
+    
+    filename = models.CharField(
+        max_length=255,
+        help_text="Original filename"
+    )
+    
+    file_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="SHA256 hash for duplicate detection"
+    )
+    
+    status = models.CharField(
+        max_length=30,
+        choices=STATUS_CHOICES,
+        default='pending',
+        db_index=True
+    )
+    
+    # Stats
+    rows_total = models.PositiveIntegerField(default=0)
+    rows_processed = models.PositiveIntegerField(default=0)
+    rows_created = models.PositiveIntegerField(default=0)
+    rows_updated = models.PositiveIntegerField(default=0)
+    rows_skipped = models.PositiveIntegerField(default=0)
+    
+    # Error tracking
+    errors = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of error messages with row numbers"
+    )
+    
+    # Date range of imported data
+    date_range_start = models.DateField(null=True, blank=True)
+    date_range_end = models.DateField(null=True, blank=True)
+    
+    # Timing
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # User who initiated import (optional)
+    imported_by = models.CharField(max_length=100, blank=True)
+    
+    notes = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "File Import"
+        verbose_name_plural = "File Imports"
+    
+    def __str__(self):
+        return f"{self.filename} ({self.get_status_display()})"
+    
+    @property
+    def success_rate(self):
+        """Calculate import success rate."""
+        if self.rows_total > 0:
+            successful = self.rows_created + self.rows_updated
+            return (Decimal(str(successful)) / Decimal(str(self.rows_total)) * 100).quantize(Decimal('0.1'))
+        return Decimal('0.0')
+    
+    @property
+    def duration_seconds(self):
+        """Calculate import duration."""
+        if self.started_at and self.completed_at:
+            return (self.completed_at - self.started_at).total_seconds()
+        return None
+    
+    def add_error(self, row_num, message):
+        """Add an error to the errors list."""
+        if self.errors is None:
+            self.errors = []
+        self.errors.append({
+            'row': row_num,
+            'message': str(message),
+        })
+        self.save(update_fields=['errors'])
+
+
+class Reservation(models.Model):
+    """
+    Core reservation/booking record.
+    
+    Imported from PMS exports, used for:
+    - Pickup analysis (booking pace)
+    - Lead time analysis
+    - Channel performance
+    - Revenue tracking
+    - Multi-room booking analysis
+    """
+    STATUS_CHOICES = [
+        ('confirmed', 'Confirmed'),
+        ('cancelled', 'Cancelled'),
+        ('checked_in', 'Checked In'),
+        ('checked_out', 'Checked Out'),
+        ('no_show', 'No Show'),
+    ]
+    
+    # Primary identifier
+    confirmation_no = models.CharField(
+        max_length=50,
+        db_index=True,
+        help_text="Confirmation number (base number, without room suffix)"
+    )
+    
+    # For display - the original confirmation with suffix
+    original_confirmation_no = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Original confirmation number from import (e.g., 286-1)"
+    )
+    
+    # Dates
+    booking_date = models.DateField(
+        db_index=True,
+        help_text="Date when booking was made"
+    )
+    arrival_date = models.DateField(
+        db_index=True,
+        help_text="Check-in date"
+    )
+    departure_date = models.DateField(
+        help_text="Check-out date"
+    )
+    
+    # Stay details
+    nights = models.PositiveIntegerField(
+        default=1,
+        help_text="Number of nights"
+    )
+    adults = models.PositiveIntegerField(default=2)
+    children = models.PositiveIntegerField(default=0)
+    
+    # Calculated field
+    lead_time_days = models.IntegerField(
+        default=0,
+        db_index=True,
+        help_text="Days between booking and arrival (arrival - booking)"
+    )
+    
+    # Links to reference data
+    room_type = models.ForeignKey(
+        'RoomType',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reservations',
+        help_text="Room type booked"
+    )
+    
+    # Store original room type name for unmatched types
+    room_type_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Original room type name from import"
+    )
+    
+    rate_plan = models.ForeignKey(
+        'RatePlan',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reservations',
+        help_text="Rate plan / meal plan"
+    )
+    
+    # Store original rate plan name
+    rate_plan_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Original rate plan name from import"
+    )
+    
+    booking_source = models.ForeignKey(
+        'BookingSource',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reservations',
+        help_text="Booking source"
+    )
+    
+    # Denormalized channel for easier querying
+    channel = models.ForeignKey(
+        'Channel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reservations',
+        help_text="Channel (from booking source)"
+    )
+    
+    guest = models.ForeignKey(
+        'Guest',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reservations',
+        help_text="Guest record"
+    )
+    
+    # Revenue
+    total_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total booking amount"
+    )
+    
+    # Calculated ADR for this booking
+    adr = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Average Daily Rate (total / nights)"
+    )
+    
+    # Status
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='confirmed',
+        db_index=True
+    )
+    
+    # Multi-room booking support
+    parent_reservation = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='linked_rooms',
+        help_text="Parent reservation for multi-room bookings"
+    )
+    
+    room_sequence = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="Room sequence in multi-room booking (1, 2, 3...)"
+    )
+    
+    is_multi_room = models.BooleanField(
+        default=False,
+        help_text="Is this part of a multi-room booking?"
+    )
+    
+    # Import tracking
+    file_import = models.ForeignKey(
+        'FileImport',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reservations',
+        help_text="Import batch this came from"
+    )
+    
+    # Raw data storage for reference
+    raw_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Original row data from import"
+    )
+    
+    # Metadata
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-booking_date', '-arrival_date']
+        verbose_name = "Reservation"
+        verbose_name_plural = "Reservations"
+        indexes = [
+            models.Index(fields=['arrival_date', 'status']),
+            models.Index(fields=['booking_date', 'arrival_date']),
+            models.Index(fields=['lead_time_days']),
+            models.Index(fields=['confirmation_no', 'room_sequence']),
+        ]
+        # Allow same confirmation_no for multi-room, but unique per sequence
+        unique_together = ['confirmation_no', 'room_sequence']
+    
+    def __str__(self):
+        return f"{self.original_confirmation_no or self.confirmation_no} - {self.arrival_date}"
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate fields before saving."""
+        # Calculate lead time
+        if self.arrival_date and self.booking_date:
+            self.lead_time_days = (self.arrival_date - self.booking_date).days
+        
+        # Calculate ADR
+        if self.nights and self.nights > 0 and self.total_amount:
+            self.adr = (self.total_amount / self.nights).quantize(Decimal('0.01'))
+        
+        # Set channel from booking source
+        if self.booking_source and self.booking_source.channel:
+            self.channel = self.booking_source.channel
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def total_guests(self):
+        """Total number of guests."""
+        return self.adults + self.children
+    
+    @property
+    def lead_time_bucket(self):
+        """Get lead time bucket for analysis."""
+        days = self.lead_time_days
+        if days <= 0:
+            return 'Same Day'
+        elif days <= 7:
+            return '1-7 days'
+        elif days <= 14:
+            return '8-14 days'
+        elif days <= 30:
+            return '15-30 days'
+        elif days <= 60:
+            return '31-60 days'
+        elif days <= 90:
+            return '61-90 days'
+        else:
+            return '90+ days'
+    
+    @property
+    def linked_room_count(self):
+        """Count of linked rooms for multi-room bookings."""
+        if self.parent_reservation:
+            return self.parent_reservation.linked_rooms.count() + 1
+        return self.linked_rooms.count() + 1 if self.is_multi_room else 1
+    
+    @classmethod
+    def parse_confirmation_no(cls, raw_confirmation):
+        """
+        Parse confirmation number to extract base and sequence.
+        
+        Examples:
+            "286" → ("286", 1)
+            "286-1" → ("286", 1)
+            "286-2" → ("286", 2)
+            "ABC123-3" → ("ABC123", 3)
+        
+        Returns:
+            tuple: (base_confirmation, sequence_number)
+        """
+        raw = str(raw_confirmation or '').strip()
+        
+        if not raw:
+            return ('', 1)
+        
+        # Pattern: base-number at the end
+        match = re.match(r'^(.+)-(\d+)$', raw)
+        if match:
+            return (match.group(1), int(match.group(2)))
+        
+        return (raw, 1)
+    
+    @classmethod
+    def get_lead_time_distribution(cls, start_date=None, end_date=None, channel=None):
+        """
+        Get lead time distribution for analysis.
+        
+        Returns dict with bucket counts and revenue.
+        """
+        queryset = cls.objects.filter(
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        )
+        
+        if start_date:
+            queryset = queryset.filter(arrival_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(arrival_date__lte=end_date)
+        if channel:
+            queryset = queryset.filter(channel=channel)
+        
+        buckets = {
+            'Same Day': {'min': -999, 'max': 0, 'count': 0, 'nights': 0, 'revenue': Decimal('0.00')},
+            '1-7 days': {'min': 1, 'max': 7, 'count': 0, 'nights': 0, 'revenue': Decimal('0.00')},
+            '8-14 days': {'min': 8, 'max': 14, 'count': 0, 'nights': 0, 'revenue': Decimal('0.00')},
+            '15-30 days': {'min': 15, 'max': 30, 'count': 0, 'nights': 0, 'revenue': Decimal('0.00')},
+            '31-60 days': {'min': 31, 'max': 60, 'count': 0, 'nights': 0, 'revenue': Decimal('0.00')},
+            '61-90 days': {'min': 61, 'max': 90, 'count': 0, 'nights': 0, 'revenue': Decimal('0.00')},
+            '90+ days': {'min': 91, 'max': 9999, 'count': 0, 'nights': 0, 'revenue': Decimal('0.00')},
+        }
+        
+        for res in queryset:
+            for bucket_name, bucket_data in buckets.items():
+                if bucket_data['min'] <= res.lead_time_days <= bucket_data['max']:
+                    bucket_data['count'] += 1
+                    bucket_data['nights'] += res.nights
+                    bucket_data['revenue'] += res.total_amount
+                    break
+        
+        # Calculate percentages
+        total_count = sum(b['count'] for b in buckets.values())
+        total_revenue = sum(b['revenue'] for b in buckets.values())
+        
+        result = []
+        for bucket_name, bucket_data in buckets.items():
+            result.append({
+                'bucket': bucket_name,
+                'count': bucket_data['count'],
+                'nights': bucket_data['nights'],
+                'revenue': bucket_data['revenue'],
+                'count_percent': (
+                    Decimal(str(bucket_data['count'])) / Decimal(str(total_count)) * 100
+                    if total_count > 0 else Decimal('0.0')
+                ).quantize(Decimal('0.1')),
+                'revenue_percent': (
+                    bucket_data['revenue'] / total_revenue * 100
+                    if total_revenue > 0 else Decimal('0.0')
+                ).quantize(Decimal('0.1')),
+                'avg_adr': (
+                    bucket_data['revenue'] / bucket_data['nights']
+                    if bucket_data['nights'] > 0 else Decimal('0.00')
+                ).quantize(Decimal('0.01')),
+            })
+        
+        return result

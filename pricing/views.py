@@ -1654,3 +1654,176 @@ def pickup_curves_ajax(request):
         'success': True,
         'curves': curves,
     })
+    
+
+"""
+Booking Analysis Views.
+
+Add these to your existing pricing/views.py file.
+"""
+
+from django.views.generic import TemplateView
+from django.http import JsonResponse
+from django.views.decorators.http import require_GET
+from datetime import date
+import json
+
+
+class BookingAnalysisDashboardView(TemplateView):
+    """
+    Booking Analysis Dashboard.
+    
+    Shows:
+    - KPI cards (Revenue, Room Nights, ADR, Occupancy, Reservations)
+    - Monthly revenue chart
+    - Monthly occupancy chart
+    - Channel mix pie chart & table
+    - Meal plan mix pie chart & table
+    - Room type performance table
+    - Monthly summary table
+    """
+    template_name = 'pricing/booking_analysis_dashboard.html'
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        from pricing.services import BookingAnalysisService
+        from pricing.models import Reservation, Property
+        
+        # Get year from query param or default to current year
+        year = self.request.GET.get('year')
+        if year:
+            try:
+                year = int(year)
+            except ValueError:
+                year = date.today().year
+        else:
+            year = date.today().year
+        
+        # Check if we have any data
+        has_data = Reservation.objects.exists()
+        context['has_data'] = has_data
+        
+        if not has_data:
+            context['year'] = year
+            return context
+        
+        # Get dashboard data
+        service = BookingAnalysisService()
+        dashboard_data = service.get_dashboard_data(year=year)
+        chart_data = service.get_chart_data(year=year)
+        
+        # Get property info
+        try:
+            property_obj = Property.get_instance()
+            context['property_name'] = property_obj.name
+            context['currency_symbol'] = property_obj.currency_symbol
+        except:
+            context['property_name'] = 'Hotel'
+            context['currency_symbol'] = '$'
+        
+        # Pass data to template
+        context['year'] = year
+        context['total_rooms'] = dashboard_data['total_rooms']
+        context['kpis'] = dashboard_data['kpis']
+        context['monthly_data'] = dashboard_data['monthly_data']
+        context['channel_mix'] = dashboard_data['channel_mix']
+        context['meal_plan_mix'] = dashboard_data['meal_plan_mix']
+        context['room_type_performance'] = dashboard_data['room_type_performance']
+        
+        # Chart data as JSON for JavaScript
+        context['chart_data_json'] = json.dumps(chart_data)
+        
+        # Available years for selector
+        years_with_data = Reservation.objects.dates('arrival_date', 'year')
+        context['available_years'] = [d.year for d in years_with_data]
+        
+        # Reservation count for subtitle
+        context['reservation_count'] = Reservation.objects.filter(
+            arrival_date__year=year,
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        ).count()
+        
+        return context
+
+
+@require_GET
+def booking_analysis_data_ajax(request):
+    """
+    AJAX endpoint to get booking analysis data.
+    
+    Query params:
+        year: Year to filter by (default: current year)
+    
+    Returns:
+        JSON with dashboard data
+    """
+    from pricing.services import BookingAnalysisService
+    
+    year = request.GET.get('year')
+    if year:
+        try:
+            year = int(year)
+        except ValueError:
+            year = date.today().year
+    else:
+        year = date.today().year
+    
+    service = BookingAnalysisService()
+    dashboard_data = service.get_dashboard_data(year=year)
+    chart_data = service.get_chart_data(year=year)
+    
+    # Convert Decimals to floats for JSON
+    kpis = dashboard_data['kpis']
+    
+    return JsonResponse({
+        'success': True,
+        'year': year,
+        'kpis': {
+            'total_revenue': float(kpis['total_revenue']),
+            'room_nights': kpis['room_nights'],
+            'avg_adr': float(kpis['avg_adr']),
+            'avg_occupancy': float(kpis['avg_occupancy']),
+            'reservations': kpis['reservations'],
+        },
+        'chart_data': chart_data,
+        'channel_mix': [
+            {
+                'name': c['name'],
+                'bookings': c['bookings'],
+                'revenue': float(c['revenue']),
+                'percent': float(c['percent']),
+            }
+            for c in dashboard_data['channel_mix']
+        ],
+        'meal_plan_mix': [
+            {
+                'name': m['name'],
+                'bookings': m['bookings'],
+                'revenue': float(m['revenue']),
+                'percent': float(m['percent']),
+            }
+            for m in dashboard_data['meal_plan_mix']
+        ],
+        'room_type_performance': [
+            {
+                'name': r['name'],
+                'bookings': r['bookings'],
+                'revenue': float(r['revenue']),
+                'percent': float(r['percent']),
+            }
+            for r in dashboard_data['room_type_performance']
+        ],
+        'monthly_data': [
+            {
+                'month': m['month'],
+                'month_name': m['month_name'],
+                'revenue': float(m['revenue']),
+                'room_nights': m['room_nights'],
+                'available': m['available'],
+                'occupancy': float(m['occupancy']),
+                'adr': float(m['adr']),
+            }
+            for m in dashboard_data['monthly_data']
+        ],
+    })

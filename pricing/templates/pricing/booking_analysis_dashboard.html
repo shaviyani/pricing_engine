@@ -1,0 +1,459 @@
+{% extends "pricing/base.html" %}
+{% load humanize %}
+
+{% block title %}Booking Analysis Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .chart-container { position: relative; }
+    .kpi-card { transition: transform 0.2s, box-shadow 0.2s; }
+    .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+    @media print {
+        .no-print { display: none; }
+        body { background: white; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Booking Analysis Dashboard</h1>
+            <p class="text-gray-600 mt-1">
+                Actual booking data from PMS export • {{ reservation_count }} reservations • {{ year }}
+            </p>
+        </div>
+        <div class="flex items-center gap-4 no-print">
+            <!-- Year Selector -->
+            <select id="yearSelector" class="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+                {% for y in available_years %}
+                <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+            </select>
+            <button onclick="window.print()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium">
+                🖨️ Print
+            </button>
+        </div>
+    </div>
+
+    {% if not has_data %}
+    <!-- No Data State -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+        <div class="text-gray-400 text-6xl mb-4">📊</div>
+        <h2 class="text-xl font-semibold text-gray-700 mb-2">No Booking Data Yet</h2>
+        <p class="text-gray-500 mb-6">Import reservations to see your booking analysis dashboard.</p>
+        <a href="{% url 'admin:pricing_fileimport_upload' %}" 
+           class="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+            📤 Import Reservations
+        </a>
+    </div>
+    {% else %}
+    
+    <!-- KPI Cards Row -->
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div class="kpi-card bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Total Revenue</p>
+            <p class="text-2xl font-bold mt-1">${{ kpis.total_revenue|floatformat:0|intcomma }}</p>
+            <p class="text-xs opacity-75 mt-1">Year to date</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Room Nights</p>
+            <p class="text-2xl font-bold mt-1">{{ kpis.room_nights|intcomma }}</p>
+            <p class="text-xs opacity-75 mt-1">Sold</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Avg ADR</p>
+            <p class="text-2xl font-bold mt-1">${{ kpis.avg_adr|floatformat:2 }}</p>
+            <p class="text-xs opacity-75 mt-1">Per room night</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Avg Occupancy</p>
+            <p class="text-2xl font-bold mt-1">{{ kpis.avg_occupancy|floatformat:1 }}%</p>
+            <p class="text-xs opacity-75 mt-1">YTD average</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Reservations</p>
+            <p class="text-2xl font-bold mt-1">{{ kpis.reservations|intcomma }}</p>
+            <p class="text-xs opacity-75 mt-1">Total bookings</p>
+        </div>
+    </div>
+
+    <!-- Charts Row: Revenue & Occupancy -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- Monthly Revenue Chart -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div class="mb-4">
+                <h2 class="text-lg font-bold text-gray-900">Monthly Revenue</h2>
+                <p class="text-sm text-gray-600">Gross revenue by arrival month</p>
+            </div>
+            <div class="chart-container" style="height: 280px;">
+                <canvas id="revenueChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Monthly Occupancy Chart -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div class="mb-4">
+                <h2 class="text-lg font-bold text-gray-900">Monthly Occupancy</h2>
+                <p class="text-sm text-gray-600">Room nights sold vs available ({{ total_rooms }} rooms)</p>
+            </div>
+            <div class="chart-container" style="height: 280px;">
+                <canvas id="occupancyChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Channel & Meal Plan Analysis -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- Channel Mix -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h2 class="text-lg font-bold text-gray-900 mb-4">Channel Mix</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="chart-container" style="height: 200px;">
+                    <canvas id="channelPieChart"></canvas>
+                </div>
+                <div>
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-gray-200">
+                                <th class="text-left py-2 font-semibold text-gray-700">Channel</th>
+                                <th class="text-right py-2 font-semibold text-gray-700">Bookings</th>
+                                <th class="text-right py-2 font-semibold text-gray-700">Revenue</th>
+                                <th class="text-right py-2 font-semibold text-gray-700">%</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for channel in channel_mix %}
+                            <tr class="border-b border-gray-100">
+                                <td class="py-2 text-gray-900">{{ channel.name }}</td>
+                                <td class="py-2 text-right text-gray-600">{{ channel.bookings }}</td>
+                                <td class="py-2 text-right text-gray-900">${{ channel.revenue|floatformat:0|intcomma }}</td>
+                                <td class="py-2 text-right text-gray-600">{{ channel.percent|floatformat:0 }}%</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Meal Plan Mix -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h2 class="text-lg font-bold text-gray-900 mb-4">Meal Plan Mix</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="chart-container" style="height: 200px;">
+                    <canvas id="mealPlanPieChart"></canvas>
+                </div>
+                <div>
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-gray-200">
+                                <th class="text-left py-2 font-semibold text-gray-700">Meal Plan</th>
+                                <th class="text-right py-2 font-semibold text-gray-700">Bookings</th>
+                                <th class="text-right py-2 font-semibold text-gray-700">Revenue</th>
+                                <th class="text-right py-2 font-semibold text-gray-700">%</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for meal in meal_plan_mix %}
+                            <tr class="border-b border-gray-100">
+                                <td class="py-2 text-gray-900">{{ meal.name }}</td>
+                                <td class="py-2 text-right text-gray-600">{{ meal.bookings }}</td>
+                                <td class="py-2 text-right text-gray-900">${{ meal.revenue|floatformat:0|intcomma }}</td>
+                                <td class="py-2 text-right text-gray-600">{{ meal.percent|floatformat:0 }}%</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monthly Summary Table -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-4">Monthly Summary</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-200">
+                        <th class="text-left py-3 px-4 font-semibold text-gray-700">Month</th>
+                        <th class="text-right py-3 px-4 font-semibold text-gray-700">Revenue</th>
+                        <th class="text-right py-3 px-4 font-semibold text-gray-700">Room Nights</th>
+                        <th class="text-right py-3 px-4 font-semibold text-gray-700">Available</th>
+                        <th class="text-right py-3 px-4 font-semibold text-gray-700">Occupancy</th>
+                        <th class="text-right py-3 px-4 font-semibold text-gray-700">ADR</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for month in monthly_data %}
+                    <tr class="border-b border-gray-100 {% if month.room_nights > 0 %}{% else %}text-gray-400{% endif %}">
+                        <td class="py-3 px-4 font-medium">{{ month.month_full }}</td>
+                        <td class="py-3 px-4 text-right">
+                            {% if month.revenue > 0 %}${{ month.revenue|floatformat:0|intcomma }}{% else %}-{% endif %}
+                        </td>
+                        <td class="py-3 px-4 text-right">
+                            {% if month.room_nights > 0 %}{{ month.room_nights }}{% else %}-{% endif %}
+                        </td>
+                        <td class="py-3 px-4 text-right text-gray-500">{{ month.available }}</td>
+                        <td class="py-3 px-4 text-right">
+                            {% if month.occupancy > 0 %}
+                            <span class="{% if month.occupancy >= 50 %}text-green-600{% elif month.occupancy >= 20 %}text-amber-600{% else %}text-gray-500{% endif %}">
+                                {{ month.occupancy|floatformat:1 }}%
+                            </span>
+                            {% else %}-{% endif %}
+                        </td>
+                        <td class="py-3 px-4 text-right">
+                            {% if month.adr > 0 %}${{ month.adr|floatformat:2 }}{% else %}-{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="bg-gray-50 font-semibold">
+                        <td class="py-3 px-4">TOTAL</td>
+                        <td class="py-3 px-4 text-right text-green-600">${{ kpis.total_revenue|floatformat:0|intcomma }}</td>
+                        <td class="py-3 px-4 text-right">{{ kpis.room_nights }}</td>
+                        <td class="py-3 px-4 text-right text-gray-500">-</td>
+                        <td class="py-3 px-4 text-right">{{ kpis.avg_occupancy|floatformat:1 }}%</td>
+                        <td class="py-3 px-4 text-right">${{ kpis.avg_adr|floatformat:2 }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- Room Type Performance -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-4">Room Type Performance</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-200">
+                        <th class="text-left py-3 px-4 font-semibold text-gray-700">Room Type</th>
+                        <th class="text-right py-3 px-4 font-semibold text-gray-700">Bookings</th>
+                        <th class="text-right py-3 px-4 font-semibold text-gray-700">Revenue</th>
+                        <th class="text-right py-3 px-4 font-semibold text-gray-700">%</th>
+                        <th class="py-3 px-4 font-semibold text-gray-700" style="width: 200px;">Share</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for room in room_type_performance %}
+                    <tr class="border-b border-gray-100">
+                        <td class="py-3 px-4 font-medium text-gray-900">{{ room.name }}</td>
+                        <td class="py-3 px-4 text-right text-gray-600">{{ room.bookings }}</td>
+                        <td class="py-3 px-4 text-right text-gray-900">${{ room.revenue|floatformat:0|intcomma }}</td>
+                        <td class="py-3 px-4 text-right text-gray-600">{{ room.percent|floatformat:0 }}%</td>
+                        <td class="py-3 px-4">
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                <div class="bg-blue-600 h-2 rounded-full" style="width: {{ room.percent }}%;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Footer Note -->
+    <div class="text-center text-sm text-gray-500 py-4">
+        <p>Note: Low occupancy in future months is expected as bookings are still coming in.</p>
+        <p class="mt-1">Generated from PMS Export • {{ property_name }} Revenue Analysis</p>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if has_data %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+    // Chart data from Django
+    const chartData = {{ chart_data_json|safe }};
+    
+    // Color palette
+    const colors = {
+        primary: 'rgb(59, 130, 246)',
+        primaryLight: 'rgba(59, 130, 246, 0.2)',
+        green: 'rgb(34, 197, 94)',
+        greenLight: 'rgba(34, 197, 94, 0.2)',
+        amber: 'rgb(245, 158, 11)',
+        purple: 'rgb(139, 92, 246)',
+        rose: 'rgb(244, 63, 94)',
+        gray: 'rgb(156, 163, 175)',
+        grayLight: 'rgba(156, 163, 175, 0.3)',
+    };
+    
+    const pieColors = [
+        'rgb(59, 130, 246)',   // blue
+        'rgb(34, 197, 94)',    // green
+        'rgb(245, 158, 11)',   // amber
+        'rgb(139, 92, 246)',   // purple
+        'rgb(244, 63, 94)',    // rose
+        'rgb(14, 165, 233)',   // sky
+        'rgb(249, 115, 22)',   // orange
+        'rgb(168, 85, 247)',   // violet
+    ];
+
+    // Monthly Revenue Chart
+    new Chart(document.getElementById('revenueChart'), {
+        type: 'bar',
+        data: {
+            labels: chartData.months,
+            datasets: [{
+                label: 'Monthly Revenue ($k)',
+                data: chartData.revenue.map(v => v / 1000),
+                backgroundColor: colors.primary,
+                borderRadius: 4,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return '$' + (context.raw * 1000).toLocaleString();
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(0,0,0,0.05)' },
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value + 'k';
+                        }
+                    }
+                },
+                x: {
+                    grid: { display: false }
+                }
+            }
+        }
+    });
+
+    // Monthly Occupancy Chart
+    new Chart(document.getElementById('occupancyChart'), {
+        type: 'bar',
+        data: {
+            labels: chartData.months,
+            datasets: [
+                {
+                    label: 'Sold',
+                    data: chartData.room_nights,
+                    backgroundColor: colors.primary,
+                    borderRadius: 4,
+                },
+                {
+                    label: 'Available',
+                    data: chartData.available,
+                    backgroundColor: colors.grayLight,
+                    borderRadius: 4,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { usePointStyle: true, padding: 15 }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                },
+                x: {
+                    grid: { display: false }
+                }
+            }
+        }
+    });
+
+    // Channel Pie Chart
+    if (chartData.channel_labels.length > 0) {
+        new Chart(document.getElementById('channelPieChart'), {
+            type: 'doughnut',
+            data: {
+                labels: chartData.channel_labels,
+                datasets: [{
+                    data: chartData.channel_values,
+                    backgroundColor: pieColors.slice(0, chartData.channel_labels.length),
+                    borderWidth: 0,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.raw;
+                                const percent = chartData.channel_percents[context.dataIndex];
+                                return context.label + ': $' + value.toLocaleString() + ' (' + percent + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Meal Plan Pie Chart
+    if (chartData.meal_plan_labels.length > 0) {
+        new Chart(document.getElementById('mealPlanPieChart'), {
+            type: 'doughnut',
+            data: {
+                labels: chartData.meal_plan_labels,
+                datasets: [{
+                    data: chartData.meal_plan_values,
+                    backgroundColor: pieColors.slice(0, chartData.meal_plan_labels.length),
+                    borderWidth: 0,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.raw;
+                                const percent = chartData.meal_plan_percents[context.dataIndex];
+                                return context.label + ': $' + value.toLocaleString() + ' (' + percent + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Year selector change handler
+    document.getElementById('yearSelector').addEventListener('change', function() {
+        const year = this.value;
+        window.location.href = '?year=' + year;
+    });
+</script>
+{% endif %}
+{% endblock %}
