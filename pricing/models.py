@@ -682,3 +682,766 @@ class SeasonModifierOverride(models.Model):
         super().save()
     def __str__(self):
         return f"{self.modifier.name} → {self.season.name}: -{self.discount_percent}%"
+
+
+#pickup analysis models  
+class DailyPickupSnapshot(models.Model):
+    """
+    Daily snapshot of on-the-books (OTB) position for a future arrival date.
+    
+    Captured once per day (via scheduled job or manual import).
+    Tracks how bookings accumulate over time for each arrival date.
+    
+    Example:
+        snapshot_date=Jan 15, arrival_date=Mar 1, days_out=45
+        otb_room_nights=23, otb_revenue=4140, otb_adr=180
+        
+        Next day:
+        snapshot_date=Jan 16, arrival_date=Mar 1, days_out=44
+        otb_room_nights=25, otb_revenue=4500, otb_adr=180
+        (picked up 2 room nights overnight)
+    """
+    # When this snapshot was taken
+    snapshot_date = models.DateField(
+        db_index=True,
+        help_text="Date when this OTB position was recorded"
+    )
+    
+    # What future date we're tracking
+    arrival_date = models.DateField(
+        db_index=True,
+        help_text="The future arrival date being tracked"
+    )
+    
+    # Calculated field for easy querying
+    days_out = models.PositiveIntegerField(
+        help_text="Days between snapshot_date and arrival_date"
+    )
+    
+    # On-the-books metrics
+    otb_room_nights = models.PositiveIntegerField(
+        default=0,
+        help_text="Total room nights booked for this arrival date"
+    )
+    otb_revenue = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total revenue booked for this arrival date"
+    )
+    otb_reservations = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of reservations for this arrival date"
+    )
+    
+    # Breakdown by segment (stored as JSON for flexibility)
+    otb_by_channel = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Room nights breakdown by channel: {'OTA': 15, 'DIRECT': 8}"
+    )
+    otb_by_room_type = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Room nights breakdown by room type"
+    )
+    otb_by_rate_plan = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Room nights breakdown by rate plan"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-snapshot_date', 'arrival_date']
+        unique_together = ['snapshot_date', 'arrival_date']
+        verbose_name = "Daily Pickup Snapshot"
+        verbose_name_plural = "Daily Pickup Snapshots"
+        indexes = [
+            models.Index(fields=['arrival_date', 'days_out']),
+            models.Index(fields=['snapshot_date']),
+            models.Index(fields=['arrival_date', 'snapshot_date']),
+        ]
+    
+    def __str__(self):
+        return f"{self.snapshot_date} → {self.arrival_date} ({self.days_out}d out): {self.otb_room_nights} RN"
+    
+    @property
+    def otb_adr(self):
+        """Calculate ADR from booked revenue and room nights."""
+        if self.otb_room_nights > 0:
+            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate days_out before saving."""
+        if self.arrival_date and self.snapshot_date:
+            self.days_out = (self.arrival_date - self.snapshot_date).days
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def get_pickup_for_date(cls, arrival_date, from_days_out=90):
+        """
+        Get pickup progression for a specific arrival date.
+        
+        Returns list of snapshots showing how OTB grew over time.
+        """
+        return cls.objects.filter(
+            arrival_date=arrival_date,
+            days_out__lte=from_days_out
+        ).order_by('-days_out')
+    
+    @classmethod
+    def get_latest_otb(cls, arrival_date):
+        """Get the most recent OTB snapshot for an arrival date."""
+        return cls.objects.filter(
+            arrival_date=arrival_date
+        ).order_by('-snapshot_date').first()
+
+
+class MonthlyPickupSnapshot(models.Model):
+    """
+    Aggregated monthly OTB snapshot.
+    
+    Summarizes all daily snapshots for a target month as of a specific date.
+    Used for month-level tracking and STLY comparisons.
+    
+    Example:
+        snapshot_date=Jan 15, target_month=Mar 2026, days_out=45
+        otb_room_nights=156, otb_revenue=28080, otb_occupancy=25.2%
+    """
+    # When this snapshot was taken
+    snapshot_date = models.DateField(
+        db_index=True,
+        help_text="Date when this snapshot was recorded"
+    )
+    
+    # Target month (stored as first day of month)
+    target_month = models.DateField(
+        db_index=True,
+        help_text="First day of the target month (e.g., 2026-03-01 for March 2026)"
+    )
+    
+    # Days until target month starts
+    days_out = models.PositiveIntegerField(
+        help_text="Days between snapshot_date and start of target_month"
+    )
+    
+    # Aggregated OTB metrics
+    otb_room_nights = models.PositiveIntegerField(
+        default=0,
+        help_text="Total room nights booked for this month"
+    )
+    otb_revenue = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total revenue booked for this month"
+    )
+    otb_reservations = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of reservations for this month"
+    )
+    
+    # Calculated occupancy (requires knowing total available rooms)
+    otb_occupancy_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="OTB occupancy percentage"
+    )
+    
+    # Available room nights for this month (for occupancy calculation)
+    available_room_nights = models.PositiveIntegerField(
+        default=0,
+        help_text="Total available room nights for this month"
+    )
+    
+    # Breakdown by segment
+    otb_by_channel = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Room nights by channel"
+    )
+    otb_by_room_type = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Room nights by room type"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-snapshot_date', 'target_month']
+        unique_together = ['snapshot_date', 'target_month']
+        verbose_name = "Monthly Pickup Snapshot"
+        verbose_name_plural = "Monthly Pickup Snapshots"
+        indexes = [
+            models.Index(fields=['target_month', 'days_out']),
+            models.Index(fields=['target_month', 'snapshot_date']),
+        ]
+    
+    def __str__(self):
+        month_str = self.target_month.strftime('%b %Y')
+        return f"{self.snapshot_date} → {month_str} ({self.days_out}d out): {self.otb_room_nights} RN ({self.otb_occupancy_percent}%)"
+    
+    @property
+    def otb_adr(self):
+        """Calculate ADR from booked revenue and room nights."""
+        if self.otb_room_nights > 0:
+            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate days_out and occupancy before saving."""
+        if self.target_month and self.snapshot_date:
+            self.days_out = (self.target_month - self.snapshot_date).days
+        
+        if self.available_room_nights > 0:
+            self.otb_occupancy_percent = (
+                Decimal(str(self.otb_room_nights)) / 
+                Decimal(str(self.available_room_nights)) * 
+                Decimal('100.00')
+            ).quantize(Decimal('0.01'))
+        
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def get_stly(cls, target_month, days_out):
+        """
+        Get Same Time Last Year snapshot for comparison.
+        
+        Args:
+            target_month: First day of target month
+            days_out: How many days before month we want to compare
+            
+        Returns:
+            MonthlyPickupSnapshot from same month last year at similar days_out
+        """
+        from dateutil.relativedelta import relativedelta
+        
+        stly_month = target_month - relativedelta(years=1)
+        
+        # Find closest days_out (within 3 days tolerance)
+        return cls.objects.filter(
+            target_month=stly_month,
+            days_out__gte=days_out - 3,
+            days_out__lte=days_out + 3
+        ).order_by('days_out').first()
+
+
+class PickupCurve(models.Model):
+    """
+    Historical pickup curve showing booking patterns by season type.
+    
+    Built from historical data, shows what percentage of final occupancy
+    is typically booked at X days out.
+    
+    Example (High Season curve):
+        days_out=90: cumulative_percent=15% (15% booked at 90 days out)
+        days_out=60: cumulative_percent=35%
+        days_out=30: cumulative_percent=65%
+        days_out=14: cumulative_percent=85%
+        days_out=7:  cumulative_percent=95%
+        days_out=0:  cumulative_percent=100%
+    """
+    SEASON_TYPES = [
+        ('peak', 'Peak Season'),
+        ('high', 'High Season'),
+        ('shoulder', 'Shoulder Season'),
+        ('low', 'Low Season'),
+    ]
+    
+    # What season type this curve represents
+    season_type = models.CharField(
+        max_length=20,
+        choices=SEASON_TYPES,
+        db_index=True,
+        help_text="Season type this curve applies to"
+    )
+    
+    # Optional: link to specific Season for more granular curves
+    season = models.ForeignKey(
+        'Season',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pickup_curves',
+        help_text="Specific season (optional - if null, applies to all seasons of this type)"
+    )
+    
+    # Days before arrival
+    days_out = models.PositiveIntegerField(
+        help_text="Days before arrival date"
+    )
+    
+    # What percentage is typically booked at this point
+    cumulative_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        help_text="Percentage of final occupancy typically booked at this days_out"
+    )
+    
+    # Statistical confidence
+    sample_size = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of historical periods used to build this data point"
+    )
+    std_deviation = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Standard deviation of the cumulative_percent"
+    )
+    
+    # Curve metadata
+    curve_version = models.PositiveIntegerField(
+        default=1,
+        help_text="Version number for tracking curve updates"
+    )
+    built_from_start = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Start date of historical data used to build curve"
+    )
+    built_from_end = models.DateField(
+        null=True,
+        blank=True,
+        help_text="End date of historical data used to build curve"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['season_type', '-days_out']
+        unique_together = ['season_type', 'season', 'days_out', 'curve_version']
+        verbose_name = "Pickup Curve"
+        verbose_name_plural = "Pickup Curves"
+        indexes = [
+            models.Index(fields=['season_type', 'days_out']),
+        ]
+    
+    def __str__(self):
+        season_name = self.season.name if self.season else self.get_season_type_display()
+        return f"{season_name} @ {self.days_out}d out: {self.cumulative_percent}%"
+    
+    @classmethod
+    def get_curve_for_season(cls, season_type, season=None):
+        """
+        Get the full pickup curve for a season type.
+        
+        Returns QuerySet ordered by days_out (descending - furthest out first).
+        """
+        filters = {'season_type': season_type}
+        if season:
+            filters['season'] = season
+        else:
+            filters['season__isnull'] = True
+        
+        return cls.objects.filter(**filters).order_by('-days_out')
+    
+    @classmethod
+    def get_expected_percent_at_days_out(cls, season_type, days_out, season=None):
+        """
+        Get expected cumulative percentage at a specific days_out.
+        
+        Interpolates if exact days_out not in curve.
+        """
+        curve = cls.get_curve_for_season(season_type, season)
+        
+        if not curve.exists():
+            return None
+        
+        # Find surrounding points for interpolation
+        point_before = curve.filter(days_out__gte=days_out).order_by('days_out').first()
+        point_after = curve.filter(days_out__lte=days_out).order_by('-days_out').first()
+        
+        if point_before and point_before.days_out == days_out:
+            return point_before.cumulative_percent
+        
+        if point_before and point_after and point_before != point_after:
+            # Linear interpolation
+            days_range = point_before.days_out - point_after.days_out
+            pct_range = point_after.cumulative_percent - point_before.cumulative_percent
+            
+            if days_range > 0:
+                days_from_before = point_before.days_out - days_out
+                interpolated = point_before.cumulative_percent + (
+                    pct_range * Decimal(str(days_from_before)) / Decimal(str(days_range))
+                )
+                return interpolated.quantize(Decimal('0.01'))
+        
+        # Fallback to nearest point
+        if point_before:
+            return point_before.cumulative_percent
+        if point_after:
+            return point_after.cumulative_percent
+        
+        return None
+
+
+class OccupancyForecast(models.Model):
+    """
+    Generated occupancy and revenue forecast for a future month.
+    
+    Contains TWO types of forecasts:
+    1. Pickup Forecast: Data-driven prediction from booking patterns
+    2. Scenario Forecast: Manual estimate from Season.expected_occupancy
+    
+    This allows comparison between actual booking pace and planning targets.
+    """
+    # Target month (stored as first day of month)
+    target_month = models.DateField(
+        db_index=True,
+        help_text="First day of the target month"
+    )
+    
+    # When this forecast was generated
+    forecast_date = models.DateField(
+        db_index=True,
+        help_text="Date when this forecast was generated"
+    )
+    
+    # Days until target month
+    days_out = models.PositiveIntegerField(
+        help_text="Days between forecast_date and start of target_month"
+    )
+    
+    # Link to season for context
+    season = models.ForeignKey(
+        'Season',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='forecasts',
+        help_text="Season this month falls into"
+    )
+    
+    # Available inventory
+    available_room_nights = models.PositiveIntegerField(
+        default=0,
+        help_text="Total available room nights for this month"
+    )
+    
+    # =========================================================================
+    # CURRENT POSITION (OTB)
+    # =========================================================================
+    otb_room_nights = models.PositiveIntegerField(
+        default=0,
+        help_text="Room nights currently on the books"
+    )
+    otb_revenue = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Revenue currently on the books"
+    )
+    otb_occupancy_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Current OTB occupancy percentage"
+    )
+    
+    # =========================================================================
+    # PICKUP FORECAST (Data-Driven)
+    # =========================================================================
+    pickup_forecast_nights = models.PositiveIntegerField(
+        default=0,
+        help_text="Forecasted total room nights (OTB + expected pickup)"
+    )
+    pickup_forecast_occupancy = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Forecasted occupancy percentage"
+    )
+    pickup_forecast_revenue = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Forecasted gross revenue"
+    )
+    pickup_expected_additional = models.PositiveIntegerField(
+        default=0,
+        help_text="Expected additional room nights to be picked up"
+    )
+    
+    # Forecast methodology breakdown
+    forecast_from_curve = models.PositiveIntegerField(
+        default=0,
+        help_text="Room nights forecast from pickup curve (50% weight)"
+    )
+    forecast_from_stly = models.PositiveIntegerField(
+        default=0,
+        help_text="Room nights forecast from STLY comparison (30% weight)"
+    )
+    forecast_from_velocity = models.PositiveIntegerField(
+        default=0,
+        help_text="Room nights forecast from recent velocity (20% weight)"
+    )
+    
+    # Confidence indicator
+    CONFIDENCE_LEVELS = [
+        ('very_low', 'Very Low (< 30 days data)'),
+        ('low', 'Low (30-60 days data)'),
+        ('medium', 'Medium (60-90 days data)'),
+        ('high', 'High (90+ days data)'),
+    ]
+    confidence_level = models.CharField(
+        max_length=20,
+        choices=CONFIDENCE_LEVELS,
+        default='medium',
+        help_text="Confidence level based on data availability"
+    )
+    confidence_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('50.00'),
+        help_text="Confidence percentage (25-95%)"
+    )
+    
+    # =========================================================================
+    # SCENARIO FORECAST (Manual - from Season.expected_occupancy)
+    # =========================================================================
+    scenario_occupancy = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Manual scenario occupancy (from Season.expected_occupancy)"
+    )
+    scenario_room_nights = models.PositiveIntegerField(
+        default=0,
+        help_text="Room nights based on scenario occupancy"
+    )
+    scenario_revenue = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Revenue based on scenario occupancy"
+    )
+    
+    # =========================================================================
+    # VARIANCE ANALYSIS
+    # =========================================================================
+    # Pickup vs Scenario
+    variance_nights = models.IntegerField(
+        default=0,
+        help_text="Pickup forecast - Scenario (can be negative)"
+    )
+    variance_percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Percentage difference from scenario"
+    )
+    
+    # vs STLY (Same Time Last Year)
+    stly_occupancy = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="STLY final occupancy (if available)"
+    )
+    stly_otb_at_same_point = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="STLY OTB at same days_out"
+    )
+    vs_stly_pace_percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Percentage ahead/behind STLY pace"
+    )
+    
+    # =========================================================================
+    # REVENUE DETAILS
+    # =========================================================================
+    forecast_adr = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Forecasted ADR"
+    )
+    forecast_revpar = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Forecasted RevPAR"
+    )
+    forecast_commission = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Forecasted commission (based on channel mix)"
+    )
+    forecast_net_revenue = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Forecasted net revenue after commission"
+    )
+    
+    # =========================================================================
+    # METADATA
+    # =========================================================================
+    notes = models.TextField(
+        blank=True,
+        help_text="Auto-generated insights or manual notes"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['target_month', '-forecast_date']
+        unique_together = ['target_month', 'forecast_date']
+        verbose_name = "Occupancy Forecast"
+        verbose_name_plural = "Occupancy Forecasts"
+        indexes = [
+            models.Index(fields=['target_month', 'days_out']),
+            models.Index(fields=['forecast_date']),
+        ]
+    
+    def __str__(self):
+        month_str = self.target_month.strftime('%b %Y')
+        return f"{month_str} forecast ({self.forecast_date}): {self.pickup_forecast_occupancy}% pickup / {self.scenario_occupancy}% scenario"
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate derived fields before saving."""
+        # Calculate days_out
+        if self.target_month and self.forecast_date:
+            self.days_out = (self.target_month - self.forecast_date).days
+        
+        # Calculate OTB occupancy
+        if self.available_room_nights > 0:
+            self.otb_occupancy_percent = (
+                Decimal(str(self.otb_room_nights)) / 
+                Decimal(str(self.available_room_nights)) * 
+                Decimal('100.00')
+            ).quantize(Decimal('0.01'))
+            
+            # Calculate pickup forecast occupancy
+            self.pickup_forecast_occupancy = (
+                Decimal(str(self.pickup_forecast_nights)) / 
+                Decimal(str(self.available_room_nights)) * 
+                Decimal('100.00')
+            ).quantize(Decimal('0.01'))
+        
+        # Calculate variance
+        self.variance_nights = self.pickup_forecast_nights - self.scenario_room_nights
+        if self.scenario_room_nights > 0:
+            self.variance_percent = (
+                Decimal(str(self.variance_nights)) / 
+                Decimal(str(self.scenario_room_nights)) * 
+                Decimal('100.00')
+            ).quantize(Decimal('0.01'))
+        
+        # Calculate RevPAR
+        if self.available_room_nights > 0:
+            self.forecast_revpar = (
+                self.pickup_forecast_revenue / 
+                Decimal(str(self.available_room_nights))
+            ).quantize(Decimal('0.01'))
+        
+        # Calculate net revenue
+        self.forecast_net_revenue = self.pickup_forecast_revenue - self.forecast_commission
+        
+        # Set confidence level based on days_out
+        if self.days_out <= 14:
+            self.confidence_level = 'high'
+            self.confidence_percent = Decimal('90.00')
+        elif self.days_out <= 30:
+            self.confidence_level = 'high'
+            self.confidence_percent = Decimal('85.00')
+        elif self.days_out <= 60:
+            self.confidence_level = 'medium'
+            self.confidence_percent = Decimal('70.00')
+        elif self.days_out <= 90:
+            self.confidence_level = 'low'
+            self.confidence_percent = Decimal('55.00')
+        else:
+            self.confidence_level = 'very_low'
+            self.confidence_percent = Decimal('35.00')
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def otb_adr(self):
+        """Current OTB ADR."""
+        if self.otb_room_nights > 0:
+            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+    
+    @property
+    def is_ahead_of_stly(self):
+        """Check if current pace is ahead of STLY."""
+        if self.vs_stly_pace_percent is not None:
+            return self.vs_stly_pace_percent > 0
+        return None
+    
+    @property
+    def is_ahead_of_scenario(self):
+        """Check if pickup forecast exceeds scenario."""
+        return self.variance_nights > 0
+    
+    @classmethod
+    def get_latest_forecast(cls, target_month):
+        """Get the most recent forecast for a month."""
+        return cls.objects.filter(
+            target_month=target_month
+        ).order_by('-forecast_date').first()
+    
+    @classmethod
+    def get_forecast_history(cls, target_month, limit=30):
+        """Get forecast progression over time for a month."""
+        return cls.objects.filter(
+            target_month=target_month
+        ).order_by('-forecast_date')[:limit]
+    
+    def generate_insight(self):
+        """Generate a human-readable insight about this forecast."""
+        insights = []
+        
+        # Compare to scenario
+        if self.variance_nights > 0:
+            insights.append(
+                f"Pickup forecast is {self.variance_nights} room nights "
+                f"({abs(self.variance_percent):.1f}%) above your scenario target."
+            )
+        elif self.variance_nights < 0:
+            insights.append(
+                f"Pickup forecast is {abs(self.variance_nights)} room nights "
+                f"({abs(self.variance_percent):.1f}%) below your scenario target."
+            )
+        
+        # Compare to STLY
+        if self.vs_stly_pace_percent is not None:
+            if self.vs_stly_pace_percent > 5:
+                insights.append(
+                    f"You're {self.vs_stly_pace_percent:.1f}% ahead of last year's pace. "
+                    "Consider rate increases."
+                )
+            elif self.vs_stly_pace_percent < -5:
+                insights.append(
+                    f"You're {abs(self.vs_stly_pace_percent):.1f}% behind last year's pace. "
+                    "Consider promotional activity."
+                )
+        
+        # Confidence note
+        if self.days_out > 60:
+            insights.append(
+                f"Forecast confidence is {self.confidence_level} ({self.confidence_percent:.0f}%) "
+                f"at {self.days_out} days out."
+            )
+        
+        return " ".join(insights) if insights else "Forecast is on track."

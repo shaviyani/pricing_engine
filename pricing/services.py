@@ -727,3 +727,850 @@ class RevenueForecastService:
             message = f"Channel distribution totals {total_percent}% (must be 100.00%)"
         
         return is_valid, total_percent, message
+    
+    
+    
+#Pickup Analysis
+
+class PickupAnalysisService:
+    """
+    Service for pickup analysis, curve building, and forecasting.
+    
+    Forecast Methodology:
+    - 50% weight: Historical pickup curve for season type
+    - 30% weight: STLY (Same Time Last Year) comparison
+    - 20% weight: Recent booking velocity trend
+    
+    This provides a data-driven forecast independent of manual estimates.
+    """
+    
+    def __init__(self):
+        """Initialize service with model references."""
+        pass
+    
+    # =========================================================================
+    # SNAPSHOT CAPTURE
+    # =========================================================================
+    
+    def capture_daily_snapshot(self, arrival_date, otb_data):
+        """
+        Record today's OTB position for a specific arrival date.
+        
+        Args:
+            arrival_date: The future arrival date
+            otb_data: Dict with keys:
+                - room_nights: int
+                - revenue: Decimal
+                - reservations: int
+                - by_channel: dict (optional)
+                - by_room_type: dict (optional)
+                - by_rate_plan: dict (optional)
+        
+        Returns:
+            DailyPickupSnapshot instance
+        """
+        from pricing.models import DailyPickupSnapshot
+        
+        today = date.today()
+        
+        snapshot, created = DailyPickupSnapshot.objects.update_or_create(
+            snapshot_date=today,
+            arrival_date=arrival_date,
+            defaults={
+                'otb_room_nights': otb_data.get('room_nights', 0),
+                'otb_revenue': otb_data.get('revenue', Decimal('0.00')),
+                'otb_reservations': otb_data.get('reservations', 0),
+                'otb_by_channel': otb_data.get('by_channel', {}),
+                'otb_by_room_type': otb_data.get('by_room_type', {}),
+                'otb_by_rate_plan': otb_data.get('by_rate_plan', {}),
+            }
+        )
+        
+        return snapshot
+    
+    def capture_monthly_snapshot(self, target_month, snapshot_date=None):
+        """
+        Capture aggregated OTB snapshot for an entire month.
+        
+        Args:
+            target_month: date object (any day in target month)
+            snapshot_date: date to record as (defaults to today)
+        
+        Returns:
+            MonthlyPickupSnapshot instance
+        """
+        from pricing.models import (
+            MonthlyPickupSnapshot, DailyPickupSnapshot, RoomType
+        )
+        
+        if snapshot_date is None:
+            snapshot_date = date.today()
+        
+        # Normalize target_month to first day
+        target_month_start = target_month.replace(day=1)
+        
+        # Calculate last day of month
+        _, last_day = calendar.monthrange(target_month.year, target_month.month)
+        target_month_end = target_month.replace(day=last_day)
+        
+        # Get all daily snapshots for this month from the snapshot_date
+        daily_snapshots = DailyPickupSnapshot.objects.filter(
+            snapshot_date=snapshot_date,
+            arrival_date__gte=target_month_start,
+            arrival_date__lte=target_month_end
+        )
+        
+        # Aggregate metrics
+        total_room_nights = 0
+        total_revenue = Decimal('0.00')
+        total_reservations = 0
+        channel_breakdown = defaultdict(int)
+        room_type_breakdown = defaultdict(int)
+        
+        for snapshot in daily_snapshots:
+            total_room_nights += snapshot.otb_room_nights
+            total_revenue += snapshot.otb_revenue
+            total_reservations += snapshot.otb_reservations
+            
+            # Aggregate channel breakdown
+            for channel, nights in snapshot.otb_by_channel.items():
+                channel_breakdown[channel] += nights
+            
+            # Aggregate room type breakdown
+            for room_type, nights in snapshot.otb_by_room_type.items():
+                room_type_breakdown[room_type] += nights
+        
+        # Calculate available room nights for this month
+        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
+        days_in_month = last_day
+        available_room_nights = total_rooms * days_in_month
+        
+        # Create or update monthly snapshot
+        monthly_snapshot, created = MonthlyPickupSnapshot.objects.update_or_create(
+            snapshot_date=snapshot_date,
+            target_month=target_month_start,
+            defaults={
+                'otb_room_nights': total_room_nights,
+                'otb_revenue': total_revenue,
+                'otb_reservations': total_reservations,
+                'available_room_nights': available_room_nights,
+                'otb_by_channel': dict(channel_breakdown),
+                'otb_by_room_type': dict(room_type_breakdown),
+            }
+        )
+        
+        return monthly_snapshot
+    
+    # =========================================================================
+    # PICKUP CURVE BUILDING
+    # =========================================================================
+    
+    def build_pickup_curve(self, season_type, historical_months, days_out_points=None):
+        """
+        Build a pickup curve from historical data.
+        
+        Args:
+            season_type: 'peak', 'high', 'shoulder', or 'low'
+            historical_months: List of date objects (first day of each month to include)
+            days_out_points: List of days_out values to calculate (default: standard set)
+        
+        Returns:
+            List of PickupCurve objects created/updated
+        """
+        from pricing.models import PickupCurve, MonthlyPickupSnapshot
+        
+        if days_out_points is None:
+            days_out_points = [90, 75, 60, 45, 30, 21, 14, 7, 3, 0]
+        
+        curves_created = []
+        
+        for days_out in days_out_points:
+            # Collect cumulative percentages at this days_out across all historical months
+            percentages = []
+            
+            for month in historical_months:
+                # Get snapshot at this days_out
+                snapshot = MonthlyPickupSnapshot.objects.filter(
+                    target_month=month,
+                    days_out__gte=days_out - 2,
+                    days_out__lte=days_out + 2
+                ).order_by('days_out').first()
+                
+                # Get final occupancy for this month (snapshot at or after month started)
+                final_snapshot = MonthlyPickupSnapshot.objects.filter(
+                    target_month=month,
+                    days_out__lte=0
+                ).order_by('days_out').first()
+                
+                if snapshot and final_snapshot and final_snapshot.otb_room_nights > 0:
+                    cumulative_pct = (
+                        Decimal(str(snapshot.otb_room_nights)) /
+                        Decimal(str(final_snapshot.otb_room_nights)) *
+                        Decimal('100.00')
+                    )
+                    percentages.append(cumulative_pct)
+            
+            if percentages:
+                # Calculate average and std deviation
+                avg_pct = sum(percentages) / len(percentages)
+                
+                if len(percentages) > 1:
+                    variance = sum((p - avg_pct) ** 2 for p in percentages) / len(percentages)
+                    std_dev = variance ** Decimal('0.5')
+                else:
+                    std_dev = Decimal('0.00')
+                
+                # Get current version
+                current_version = PickupCurve.objects.filter(
+                    season_type=season_type,
+                    season__isnull=True
+                ).order_by('-curve_version').values_list('curve_version', flat=True).first() or 0
+                
+                # Create curve point
+                curve, created = PickupCurve.objects.update_or_create(
+                    season_type=season_type,
+                    season=None,
+                    days_out=days_out,
+                    curve_version=current_version + 1,
+                    defaults={
+                        'cumulative_percent': avg_pct.quantize(Decimal('0.01')),
+                        'sample_size': len(percentages),
+                        'std_deviation': std_dev.quantize(Decimal('0.01')),
+                        'built_from_start': min(historical_months),
+                        'built_from_end': max(historical_months),
+                    }
+                )
+                curves_created.append(curve)
+        
+        return curves_created
+    
+    def get_default_pickup_curves(self):
+        """
+        Return default pickup curves if no historical data is available.
+        
+        These are industry-standard patterns for different season types.
+        """
+        default_curves = {
+            'peak': [
+                (90, 25), (75, 35), (60, 50), (45, 65), (30, 80), 
+                (21, 88), (14, 94), (7, 98), (3, 99), (0, 100)
+            ],
+            'high': [
+                (90, 20), (75, 30), (60, 42), (45, 55), (30, 70),
+                (21, 80), (14, 90), (7, 96), (3, 98), (0, 100)
+            ],
+            'shoulder': [
+                (90, 15), (75, 22), (60, 32), (45, 45), (30, 60),
+                (21, 72), (14, 85), (7, 94), (3, 97), (0, 100)
+            ],
+            'low': [
+                (90, 10), (75, 15), (60, 25), (45, 38), (30, 52),
+                (21, 65), (14, 80), (7, 92), (3, 96), (0, 100)
+            ],
+        }
+        return default_curves
+    
+    # =========================================================================
+    # BOOKING VELOCITY
+    # =========================================================================
+    
+    def calculate_booking_velocity(self, target_month, days=7):
+        """
+        Calculate recent booking velocity for a target month.
+        
+        Args:
+            target_month: date object (first day of month)
+            days: Number of days to look back (default 7)
+        
+        Returns:
+            dict with velocity metrics
+        """
+        from pricing.models import MonthlyPickupSnapshot
+        
+        today = date.today()
+        week_ago = today - timedelta(days=days)
+        
+        # Get snapshots for this period
+        recent_snapshot = MonthlyPickupSnapshot.objects.filter(
+            target_month=target_month,
+            snapshot_date=today
+        ).first()
+        
+        past_snapshot = MonthlyPickupSnapshot.objects.filter(
+            target_month=target_month,
+            snapshot_date__lte=week_ago
+        ).order_by('-snapshot_date').first()
+        
+        if not recent_snapshot or not past_snapshot:
+            return {
+                'daily_room_nights': Decimal('0.00'),
+                'daily_revenue': Decimal('0.00'),
+                'daily_bookings': Decimal('0.00'),
+                'total_pickup': 0,
+                'days_measured': 0,
+                'velocity_trend': 'unknown',
+            }
+        
+        # Calculate pickup over period
+        days_between = (recent_snapshot.snapshot_date - past_snapshot.snapshot_date).days
+        
+        if days_between <= 0:
+            return {
+                'daily_room_nights': Decimal('0.00'),
+                'daily_revenue': Decimal('0.00'),
+                'daily_bookings': Decimal('0.00'),
+                'total_pickup': 0,
+                'days_measured': 0,
+                'velocity_trend': 'unknown',
+            }
+        
+        nights_pickup = recent_snapshot.otb_room_nights - past_snapshot.otb_room_nights
+        revenue_pickup = recent_snapshot.otb_revenue - past_snapshot.otb_revenue
+        reservations_pickup = recent_snapshot.otb_reservations - past_snapshot.otb_reservations
+        
+        daily_nights = Decimal(str(nights_pickup)) / Decimal(str(days_between))
+        daily_revenue = revenue_pickup / Decimal(str(days_between))
+        daily_bookings = Decimal(str(reservations_pickup)) / Decimal(str(days_between))
+        
+        # Determine trend (compare to previous period)
+        # This is a simplified version - could be enhanced
+        velocity_trend = 'stable'
+        if daily_nights > Decimal('2.0'):
+            velocity_trend = 'accelerating'
+        elif daily_nights < Decimal('0.5'):
+            velocity_trend = 'slowing'
+        
+        return {
+            'daily_room_nights': daily_nights.quantize(Decimal('0.01')),
+            'daily_revenue': daily_revenue.quantize(Decimal('0.01')),
+            'daily_bookings': daily_bookings.quantize(Decimal('0.01')),
+            'total_pickup': nights_pickup,
+            'days_measured': days_between,
+            'velocity_trend': velocity_trend,
+        }
+    
+    # =========================================================================
+    # FORECAST GENERATION
+    # =========================================================================
+    
+    def generate_forecast(self, target_month, force_refresh=False):
+        """
+        Generate occupancy and revenue forecast for a future month.
+        
+        Uses weighted blend:
+        - 50% Historical pickup curve
+        - 30% STLY comparison
+        - 20% Recent velocity
+        
+        Args:
+            target_month: date object (any day in target month)
+            force_refresh: If True, regenerate even if recent forecast exists
+        
+        Returns:
+            OccupancyForecast instance
+        """
+        from pricing.models import (
+            OccupancyForecast, MonthlyPickupSnapshot, PickupCurve,
+            Season, RoomType, Channel
+        )
+        from dateutil.relativedelta import relativedelta
+        
+        today = date.today()
+        target_month_start = target_month.replace(day=1)
+        
+        # Check for existing recent forecast
+        if not force_refresh:
+            existing = OccupancyForecast.objects.filter(
+                target_month=target_month_start,
+                forecast_date=today
+            ).first()
+            if existing:
+                return existing
+        
+        # Get current OTB position
+        current_otb = MonthlyPickupSnapshot.objects.filter(
+            target_month=target_month_start,
+            snapshot_date=today
+        ).first()
+        
+        # If no current snapshot, try to capture one
+        if not current_otb:
+            current_otb = self.capture_monthly_snapshot(target_month_start, today)
+        
+        # Calculate days out
+        days_out = (target_month_start - today).days
+        
+        # Get season for this month
+        season = Season.objects.filter(
+            start_date__lte=target_month_start,
+            end_date__gte=target_month_start
+        ).first()
+        
+        # Determine season type
+        season_type = self._get_season_type(season)
+        
+        # Calculate available room nights
+        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
+        _, last_day = calendar.monthrange(target_month.year, target_month.month)
+        available_room_nights = total_rooms * last_day
+        
+        # =====================================================================
+        # COMPONENT 1: Pickup Curve Forecast (50% weight)
+        # =====================================================================
+        curve_forecast = self._forecast_from_curve(
+            current_otb, days_out, season_type, available_room_nights
+        )
+        
+        # =====================================================================
+        # COMPONENT 2: STLY Forecast (30% weight)
+        # =====================================================================
+        stly_forecast, stly_data = self._forecast_from_stly(
+            current_otb, target_month_start, days_out
+        )
+        
+        # =====================================================================
+        # COMPONENT 3: Velocity Forecast (20% weight)
+        # =====================================================================
+        velocity_forecast = self._forecast_from_velocity(
+            current_otb, target_month_start, days_out, available_room_nights
+        )
+        
+        # =====================================================================
+        # WEIGHTED BLEND
+        # =====================================================================
+        # Weights
+        curve_weight = Decimal('0.50')
+        stly_weight = Decimal('0.30') if stly_forecast else Decimal('0.00')
+        velocity_weight = Decimal('0.20')
+        
+        # If no STLY, redistribute weight
+        if not stly_forecast:
+            curve_weight = Decimal('0.65')
+            velocity_weight = Decimal('0.35')
+        
+        total_weight = curve_weight + stly_weight + velocity_weight
+        
+        blended_forecast = (
+            (Decimal(str(curve_forecast or 0)) * curve_weight) +
+            (Decimal(str(stly_forecast or 0)) * stly_weight) +
+            (Decimal(str(velocity_forecast or 0)) * velocity_weight)
+        ) / total_weight
+        
+        # Cap at available room nights (can't exceed 100% occupancy)
+        forecast_nights = min(int(blended_forecast), available_room_nights)
+        
+        # =====================================================================
+        # REVENUE CALCULATIONS
+        # =====================================================================
+        otb_room_nights = current_otb.otb_room_nights if current_otb else 0
+        otb_revenue = current_otb.otb_revenue if current_otb else Decimal('0.00')
+        
+        # Calculate ADR from OTB
+        if otb_room_nights > 0:
+            otb_adr = otb_revenue / otb_room_nights
+        else:
+            # Use weighted average ADR from pricing system
+            otb_adr = self._calculate_weighted_adr(season)
+        
+        # Forecast revenue
+        forecast_revenue = otb_adr * Decimal(str(forecast_nights))
+        
+        # Calculate commission based on channel mix
+        channel_mix = self._get_channel_mix()
+        forecast_commission = self._calculate_commission(forecast_revenue, channel_mix)
+        
+        # =====================================================================
+        # SCENARIO DATA (from Season.expected_occupancy)
+        # =====================================================================
+        scenario_occupancy = season.expected_occupancy if season else Decimal('70.00')
+        scenario_room_nights = int(
+            available_room_nights * (scenario_occupancy / Decimal('100.00'))
+        )
+        scenario_revenue = otb_adr * Decimal(str(scenario_room_nights))
+        
+        # =====================================================================
+        # CREATE/UPDATE FORECAST
+        # =====================================================================
+        forecast, created = OccupancyForecast.objects.update_or_create(
+            target_month=target_month_start,
+            forecast_date=today,
+            defaults={
+                'season': season,
+                'available_room_nights': available_room_nights,
+                
+                # Current OTB
+                'otb_room_nights': otb_room_nights,
+                'otb_revenue': otb_revenue,
+                
+                # Pickup forecast
+                'pickup_forecast_nights': forecast_nights,
+                'pickup_forecast_revenue': forecast_revenue,
+                'pickup_expected_additional': max(0, forecast_nights - otb_room_nights),
+                
+                # Methodology breakdown
+                'forecast_from_curve': curve_forecast or 0,
+                'forecast_from_stly': stly_forecast or 0,
+                'forecast_from_velocity': velocity_forecast or 0,
+                
+                # Scenario
+                'scenario_occupancy': scenario_occupancy,
+                'scenario_room_nights': scenario_room_nights,
+                'scenario_revenue': scenario_revenue,
+                
+                # STLY
+                'stly_occupancy': stly_data.get('final_occupancy') if stly_data else None,
+                'stly_otb_at_same_point': stly_data.get('otb_at_point') if stly_data else None,
+                'vs_stly_pace_percent': stly_data.get('pace_percent') if stly_data else None,
+                
+                # Revenue
+                'forecast_adr': otb_adr,
+                'forecast_commission': forecast_commission,
+            }
+        )
+        
+        # Generate insight note
+        forecast.notes = forecast.generate_insight()
+        forecast.save()
+        
+        return forecast
+    
+    def _get_season_type(self, season):
+        """Map Season to season_type for pickup curve lookup."""
+        if not season:
+            return 'shoulder'
+        
+        index = season.season_index
+        
+        if index >= Decimal('1.30'):
+            return 'peak'
+        elif index >= Decimal('1.20'):
+            return 'high'
+        elif index >= Decimal('1.05'):
+            return 'shoulder'
+        else:
+            return 'low'
+    
+    def _forecast_from_curve(self, current_otb, days_out, season_type, available_room_nights):
+        """
+        Calculate forecast using pickup curve.
+        
+        Logic: If curve shows 35% is typically booked at 60 days out,
+        and we have 200 room nights OTB, then forecast = 200 / 0.35 = 571
+        """
+        from pricing.models import PickupCurve
+        
+        if not current_otb or current_otb.otb_room_nights == 0:
+            return None
+        
+        # Get expected percentage at this days_out from curve
+        expected_pct = PickupCurve.get_expected_percent_at_days_out(
+            season_type, days_out
+        )
+        
+        if not expected_pct:
+            # Use default curves
+            defaults = self.get_default_pickup_curves()
+            curve_points = defaults.get(season_type, defaults['shoulder'])
+            
+            # Find closest point
+            for d, pct in sorted(curve_points, key=lambda x: abs(x[0] - days_out)):
+                expected_pct = Decimal(str(pct))
+                break
+        
+        if expected_pct and expected_pct > 0:
+            # Calculate forecast: OTB / (expected_pct / 100)
+            forecast = (
+                Decimal(str(current_otb.otb_room_nights)) / 
+                (expected_pct / Decimal('100.00'))
+            )
+            
+            # Cap at available
+            return min(int(forecast), available_room_nights)
+        
+        return None
+    
+    def _forecast_from_stly(self, current_otb, target_month, days_out):
+        """
+        Calculate forecast using STLY comparison.
+        
+        Logic: If STLY had 150 nights at 60 days out and ended at 500,
+        ratio = 500/150 = 3.33. Current OTB of 180 → forecast = 180 * 3.33 = 600
+        """
+        from pricing.models import MonthlyPickupSnapshot
+        from dateutil.relativedelta import relativedelta
+        
+        if not current_otb or current_otb.otb_room_nights == 0:
+            return None, None
+        
+        # Get STLY month
+        stly_month = target_month - relativedelta(years=1)
+        
+        # Get STLY snapshot at similar days_out
+        stly_snapshot = MonthlyPickupSnapshot.get_stly(target_month, days_out)
+        
+        # Get STLY final position
+        stly_final = MonthlyPickupSnapshot.objects.filter(
+            target_month=stly_month,
+            days_out__lte=0
+        ).order_by('days_out').first()
+        
+        if not stly_snapshot or not stly_final or stly_snapshot.otb_room_nights == 0:
+            return None, None
+        
+        # Calculate STLY ratio
+        stly_ratio = (
+            Decimal(str(stly_final.otb_room_nights)) / 
+            Decimal(str(stly_snapshot.otb_room_nights))
+        )
+        
+        # Apply ratio to current OTB
+        forecast = current_otb.otb_room_nights * stly_ratio
+        
+        # Calculate pace comparison
+        pace_percent = (
+            (Decimal(str(current_otb.otb_room_nights)) - 
+             Decimal(str(stly_snapshot.otb_room_nights))) /
+            Decimal(str(stly_snapshot.otb_room_nights)) *
+            Decimal('100.00')
+        )
+        
+        stly_data = {
+            'otb_at_point': stly_snapshot.otb_room_nights,
+            'final_occupancy': stly_final.otb_occupancy_percent,
+            'final_room_nights': stly_final.otb_room_nights,
+            'ratio': stly_ratio,
+            'pace_percent': pace_percent.quantize(Decimal('0.01')),
+        }
+        
+        return int(forecast), stly_data
+    
+    def _forecast_from_velocity(self, current_otb, target_month, days_out, available_room_nights):
+        """
+        Calculate forecast using recent booking velocity.
+        
+        Logic: If picking up 3 room nights/day and have 45 days left,
+        expect 3 * 45 = 135 additional room nights
+        """
+        if not current_otb or days_out <= 0:
+            return None
+        
+        velocity = self.calculate_booking_velocity(target_month)
+        
+        daily_nights = velocity.get('daily_room_nights', Decimal('0.00'))
+        
+        if daily_nights <= 0:
+            return None
+        
+        # Apply decay factor (velocity typically decreases as arrival approaches)
+        # Simple decay: reduce velocity by 20% for each 30-day period closer to arrival
+        decay_factor = Decimal('1.00')
+        if days_out <= 30:
+            decay_factor = Decimal('0.60')
+        elif days_out <= 60:
+            decay_factor = Decimal('0.80')
+        elif days_out <= 90:
+            decay_factor = Decimal('0.90')
+        
+        # Project remaining pickup
+        expected_pickup = daily_nights * Decimal(str(days_out)) * decay_factor
+        
+        forecast = current_otb.otb_room_nights + int(expected_pickup)
+        
+        return min(forecast, available_room_nights)
+    
+    def _calculate_weighted_adr(self, season):
+        """Calculate weighted ADR from pricing setup."""
+        from pricing.services import calculate_final_rate_with_modifier
+        from pricing.models import RoomType, RatePlan, Channel, RateModifier
+        
+        if not season:
+            return Decimal('150.00')  # Default fallback
+        
+        total_rate = Decimal('0.00')
+        total_weight = 0
+        
+        rooms = RoomType.objects.all()
+        rate_plans = RatePlan.objects.all()
+        channels = Channel.objects.all()
+        
+        for room in rooms:
+            room_weight = room.number_of_rooms
+            
+            for rate_plan in rate_plans:
+                for channel in channels:
+                    # Get standard modifier (or first active one)
+                    modifier = RateModifier.objects.filter(
+                        channel=channel, active=True
+                    ).first()
+                    
+                    modifier_discount = Decimal('0.00')
+                    if modifier:
+                        modifier_discount = modifier.get_discount_for_season(season)
+                    
+                    rate, _ = calculate_final_rate_with_modifier(
+                        room_base_rate=room.get_effective_base_rate(),
+                        season_index=season.season_index,
+                        meal_supplement=rate_plan.meal_supplement,
+                        channel_base_discount=channel.base_discount_percent,
+                        modifier_discount=modifier_discount,
+                        commission_percent=Decimal('0.00'),  # Gross ADR
+                        occupancy=2
+                    )
+                    
+                    total_rate += rate * room_weight
+                    total_weight += room_weight
+        
+        if total_weight > 0:
+            return (total_rate / total_weight).quantize(Decimal('0.01'))
+        
+        return Decimal('150.00')
+    
+    def _get_channel_mix(self):
+        """Get channel distribution mix from Channel model."""
+        from pricing.models import Channel
+        
+        channels = Channel.objects.all()
+        mix = {}
+        
+        for channel in channels:
+            if channel.distribution_share_percent > 0:
+                mix[channel.id] = {
+                    'share': channel.distribution_share_percent / Decimal('100.00'),
+                    'commission': channel.commission_percent,
+                }
+        
+        return mix
+    
+    def _calculate_commission(self, gross_revenue, channel_mix):
+        """Calculate expected commission based on channel mix."""
+        if not channel_mix:
+            return Decimal('0.00')
+        
+        total_commission = Decimal('0.00')
+        
+        for channel_id, data in channel_mix.items():
+            channel_revenue = gross_revenue * data['share']
+            channel_commission = channel_revenue * (data['commission'] / Decimal('100.00'))
+            total_commission += channel_commission
+        
+        return total_commission.quantize(Decimal('0.01'))
+    
+    # =========================================================================
+    # LEAD TIME ANALYSIS
+    # =========================================================================
+    
+    def analyze_lead_time_distribution(self, start_date, end_date):
+        """
+        Analyze lead time distribution from historical snapshots.
+        
+        Returns breakdown of bookings by lead time bucket.
+        """
+        from pricing.models import DailyPickupSnapshot
+        
+        buckets = {
+            '0-7': {'min': 0, 'max': 7, 'count': 0, 'revenue': Decimal('0.00')},
+            '8-14': {'min': 8, 'max': 14, 'count': 0, 'revenue': Decimal('0.00')},
+            '15-30': {'min': 15, 'max': 30, 'count': 0, 'revenue': Decimal('0.00')},
+            '31-60': {'min': 31, 'max': 60, 'count': 0, 'revenue': Decimal('0.00')},
+            '61-90': {'min': 61, 'max': 90, 'count': 0, 'revenue': Decimal('0.00')},
+            '90+': {'min': 91, 'max': 999, 'count': 0, 'revenue': Decimal('0.00')},
+        }
+        
+        # Get snapshots and calculate pickup between consecutive days
+        snapshots = DailyPickupSnapshot.objects.filter(
+            arrival_date__gte=start_date,
+            arrival_date__lte=end_date
+        ).order_by('arrival_date', 'snapshot_date')
+        
+        # Group by arrival date
+        by_arrival = defaultdict(list)
+        for snapshot in snapshots:
+            by_arrival[snapshot.arrival_date].append(snapshot)
+        
+        # Calculate daily pickup and assign to buckets
+        for arrival_date, arrival_snapshots in by_arrival.items():
+            arrival_snapshots.sort(key=lambda x: x.snapshot_date)
+            
+            for i in range(1, len(arrival_snapshots)):
+                prev = arrival_snapshots[i-1]
+                curr = arrival_snapshots[i]
+                
+                # Pickup that occurred
+                nights_pickup = curr.otb_room_nights - prev.otb_room_nights
+                revenue_pickup = curr.otb_revenue - prev.otb_revenue
+                
+                if nights_pickup > 0:
+                    # Assign to bucket based on days_out when pickup occurred
+                    days_out = curr.days_out
+                    
+                    for bucket_name, bucket_data in buckets.items():
+                        if bucket_data['min'] <= days_out <= bucket_data['max']:
+                            bucket_data['count'] += nights_pickup
+                            bucket_data['revenue'] += revenue_pickup
+                            break
+        
+        # Calculate percentages
+        total_nights = sum(b['count'] for b in buckets.values())
+        total_revenue = sum(b['revenue'] for b in buckets.values())
+        
+        result = []
+        for bucket_name, bucket_data in buckets.items():
+            result.append({
+                'bucket': bucket_name,
+                'room_nights': bucket_data['count'],
+                'revenue': bucket_data['revenue'],
+                'nights_percent': (
+                    Decimal(str(bucket_data['count'])) / Decimal(str(total_nights)) * 100
+                    if total_nights > 0 else Decimal('0.00')
+                ).quantize(Decimal('0.1')),
+                'revenue_percent': (
+                    bucket_data['revenue'] / total_revenue * 100
+                    if total_revenue > 0 else Decimal('0.00')
+                ).quantize(Decimal('0.1')),
+            })
+        
+        return result
+    
+    # =========================================================================
+    # FORECAST SUMMARY
+    # =========================================================================
+    
+    def get_forecast_summary(self, months_ahead=6):
+        """
+        Get forecast summary for the next N months.
+        
+        Returns list of forecasts for dashboard display.
+        """
+        from pricing.models import OccupancyForecast
+        from dateutil.relativedelta import relativedelta
+        
+        today = date.today()
+        summaries = []
+        
+        for i in range(months_ahead):
+            target_month = (today + relativedelta(months=i)).replace(day=1)
+            
+            # Generate or get existing forecast
+            forecast = self.generate_forecast(target_month)
+            
+            if forecast:
+                summaries.append({
+                    'month': target_month,
+                    'month_name': target_month.strftime('%b %Y'),
+                    'days_out': forecast.days_out,
+                    'otb_occupancy': forecast.otb_occupancy_percent,
+                    'otb_room_nights': forecast.otb_room_nights,
+                    'pickup_forecast_occupancy': forecast.pickup_forecast_occupancy,
+                    'pickup_forecast_nights': forecast.pickup_forecast_nights,
+                    'scenario_occupancy': forecast.scenario_occupancy,
+                    'scenario_room_nights': forecast.scenario_room_nights,
+                    'variance_nights': forecast.variance_nights,
+                    'variance_percent': forecast.variance_percent,
+                    'vs_stly_pace': forecast.vs_stly_pace_percent,
+                    'confidence': forecast.confidence_level,
+                    'forecast_revenue': forecast.pickup_forecast_revenue,
+                    'forecast_net_revenue': forecast.forecast_net_revenue,
+                    'insight': forecast.notes,
+                })
+        
+        return summaries

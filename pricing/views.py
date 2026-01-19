@@ -11,6 +11,8 @@ from django.views.decorators.csrf import csrf_exempt
 from decimal import Decimal
 from .models import Season, RoomType, RatePlan, Channel
 from .services import calculate_final_rate
+from dateutil.relativedelta import relativedelta
+from datetime import date, timedelta
 import json
 
 
@@ -1158,3 +1160,497 @@ def revenue_forecast_ajax(request):
             'success': False,
             'message': str(e)
         }, status=500)
+        
+        
+        
+#Pickup Analysis 
+
+class PickupDashboardView(TemplateView):
+    """
+    Main pickup analysis dashboard.
+    
+    Shows:
+    - KPI cards (velocity, OTB, lead time)
+    - Forecast overview table for next 6 months
+    - Booking pace chart
+    - Lead time distribution
+    - Pickup curves by season
+    """
+    template_name = 'pricing/pickup_dashboard.html'
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        from pricing.models import (
+            DailyPickupSnapshot, MonthlyPickupSnapshot, 
+            PickupCurve, OccupancyForecast, RoomType
+        )
+        from pricing.services import PickupAnalysisService
+        
+        service = PickupAnalysisService()
+        today = date.today()
+        
+        # Check if we have any data
+        has_data = MonthlyPickupSnapshot.objects.exists()
+        context['has_data'] = has_data
+        
+        if not has_data:
+            return context
+        
+        # =====================================================================
+        # KPI CARDS
+        # =====================================================================
+        
+        # Bookings this week
+        week_ago = today - timedelta(days=7)
+        recent_snapshots = MonthlyPickupSnapshot.objects.filter(
+            snapshot_date__gte=week_ago,
+            snapshot_date__lte=today
+        )
+        
+        # Calculate total pickup this week across all months
+        weekly_pickup = 0
+        for target_month in recent_snapshots.values_list('target_month', flat=True).distinct():
+            latest = recent_snapshots.filter(
+                target_month=target_month, 
+                snapshot_date=today
+            ).first()
+            earliest = MonthlyPickupSnapshot.objects.filter(
+                target_month=target_month,
+                snapshot_date__lte=week_ago
+            ).order_by('-snapshot_date').first()
+            
+            if latest and earliest:
+                weekly_pickup += latest.otb_room_nights - earliest.otb_room_nights
+        
+        # Total OTB for next 90 days
+        next_90_days = today + timedelta(days=90)
+        total_otb = MonthlyPickupSnapshot.objects.filter(
+            snapshot_date=today,
+            target_month__lte=next_90_days
+        ).aggregate(
+            total_nights=models.Sum('otb_room_nights'),
+            total_revenue=models.Sum('otb_revenue')
+        )
+        
+        # Calculate occupancy for next 90 days
+        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
+        available_90_days = total_rooms * 90
+        otb_occupancy_90 = Decimal('0.00')
+        if available_90_days > 0 and total_otb['total_nights']:
+            otb_occupancy_90 = (
+                Decimal(str(total_otb['total_nights'])) / 
+                Decimal(str(available_90_days)) * Decimal('100.00')
+            ).quantize(Decimal('0.1'))
+        
+        # Booking velocity
+        velocity_data = {}
+        next_month = (today + relativedelta(months=1)).replace(day=1)
+        velocity = service.calculate_booking_velocity(next_month)
+        
+        context['kpis'] = {
+            'weekly_pickup': weekly_pickup,
+            'total_otb_nights': total_otb.get('total_nights') or 0,
+            'total_otb_revenue': total_otb.get('total_revenue') or Decimal('0.00'),
+            'otb_occupancy_90': otb_occupancy_90,
+            'daily_velocity': velocity.get('daily_room_nights', Decimal('0.00')),
+            'velocity_trend': velocity.get('velocity_trend', 'stable'),
+        }
+        
+        # =====================================================================
+        # FORECAST OVERVIEW (Next 6 Months)
+        # =====================================================================
+        forecast_summary = service.get_forecast_summary(months_ahead=6)
+        context['forecast_summary'] = forecast_summary
+        
+        # =====================================================================
+        # LEAD TIME ANALYSIS
+        # =====================================================================
+        # Get lead time distribution for last 3 months
+        three_months_ago = today - timedelta(days=90)
+        lead_time_data = service.analyze_lead_time_distribution(three_months_ago, today)
+        context['lead_time_data'] = lead_time_data
+        
+        # =====================================================================
+        # PICKUP CURVES
+        # =====================================================================
+        curves = {}
+        for season_type in ['peak', 'high', 'shoulder', 'low']:
+            curve_data = PickupCurve.objects.filter(
+                season_type=season_type,
+                season__isnull=True
+            ).order_by('-days_out')
+            
+            if curve_data.exists():
+                curves[season_type] = [
+                    {'days_out': c.days_out, 'percent': float(c.cumulative_percent)}
+                    for c in curve_data
+                ]
+            else:
+                # Use defaults
+                default_curves = service.get_default_pickup_curves()
+                curves[season_type] = [
+                    {'days_out': d, 'percent': p}
+                    for d, p in default_curves[season_type]
+                ]
+        
+        context['pickup_curves'] = curves
+        
+        return context
+
+
+# =============================================================================
+# PICKUP DETAIL VIEW (Monthly)
+# =============================================================================
+
+class PickupDetailView(TemplateView):
+    """
+    Detailed pickup analysis for a specific month.
+    
+    Shows:
+    - Full forecast breakdown (OTB, Pickup, Scenario)
+    - Revenue projections
+    - Booking pace vs STLY chart
+    - Channel breakdown
+    - Daily OTB progression table
+    """
+    template_name = 'pricing/pickup_detail.html'
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        from pricing.models import (
+            DailyPickupSnapshot, MonthlyPickupSnapshot, 
+            OccupancyForecast, Season, RoomType
+        )
+        from pricing.services import PickupAnalysisService
+        
+        year = self.kwargs.get('year')
+        month = self.kwargs.get('month')
+        
+        target_month = date(year, month, 1)
+        context['target_month'] = target_month
+        context['month_name'] = target_month.strftime('%B %Y')
+        
+        today = date.today()
+        service = PickupAnalysisService()
+        
+        # Get or generate forecast
+        forecast = service.generate_forecast(target_month)
+        context['forecast'] = forecast
+        
+        if not forecast:
+            context['has_data'] = False
+            return context
+        
+        context['has_data'] = True
+        
+        # Get season info
+        season = Season.objects.filter(
+            start_date__lte=target_month,
+            end_date__gte=target_month
+        ).first()
+        context['season'] = season
+        
+        # Calculate month details
+        import calendar
+        _, last_day = calendar.monthrange(year, month)
+        context['days_in_month'] = last_day
+        
+        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
+        context['total_rooms'] = total_rooms
+        context['available_room_nights'] = total_rooms * last_day
+        
+        # =====================================================================
+        # BOOKING PACE DATA (for chart)
+        # =====================================================================
+        # Get historical snapshots for this month
+        pace_data = MonthlyPickupSnapshot.objects.filter(
+            target_month=target_month
+        ).order_by('snapshot_date').values(
+            'snapshot_date', 'days_out', 'otb_room_nights', 'otb_occupancy_percent'
+        )
+        
+        context['pace_data'] = list(pace_data)
+        
+        # Get STLY pace data
+        stly_month = target_month - relativedelta(years=1)
+        stly_pace_data = MonthlyPickupSnapshot.objects.filter(
+            target_month=stly_month
+        ).order_by('snapshot_date').values(
+            'snapshot_date', 'days_out', 'otb_room_nights', 'otb_occupancy_percent'
+        )
+        
+        context['stly_pace_data'] = list(stly_pace_data)
+        
+        # =====================================================================
+        # CHANNEL BREAKDOWN
+        # =====================================================================
+        latest_snapshot = MonthlyPickupSnapshot.objects.filter(
+            target_month=target_month
+        ).order_by('-snapshot_date').first()
+        
+        if latest_snapshot and latest_snapshot.otb_by_channel:
+            channel_breakdown = []
+            total_nights = latest_snapshot.otb_room_nights
+            
+            for channel_name, nights in latest_snapshot.otb_by_channel.items():
+                channel_breakdown.append({
+                    'channel': channel_name,
+                    'room_nights': nights,
+                    'percent': (
+                        Decimal(str(nights)) / Decimal(str(total_nights)) * 100
+                        if total_nights > 0 else Decimal('0.00')
+                    ).quantize(Decimal('0.1'))
+                })
+            
+            context['channel_breakdown'] = sorted(
+                channel_breakdown, 
+                key=lambda x: x['room_nights'], 
+                reverse=True
+            )
+        
+        # =====================================================================
+        # ROOM TYPE BREAKDOWN
+        # =====================================================================
+        if latest_snapshot and latest_snapshot.otb_by_room_type:
+            room_type_breakdown = []
+            total_nights = latest_snapshot.otb_room_nights
+            
+            for room_type, nights in latest_snapshot.otb_by_room_type.items():
+                room_type_breakdown.append({
+                    'room_type': room_type,
+                    'room_nights': nights,
+                    'percent': (
+                        Decimal(str(nights)) / Decimal(str(total_nights)) * 100
+                        if total_nights > 0 else Decimal('0.00')
+                    ).quantize(Decimal('0.1'))
+                })
+            
+            context['room_type_breakdown'] = sorted(
+                room_type_breakdown,
+                key=lambda x: x['room_nights'],
+                reverse=True
+            )
+        
+        # =====================================================================
+        # DAILY OTB PROGRESSION (Last 14 days)
+        # =====================================================================
+        two_weeks_ago = today - timedelta(days=14)
+        daily_progression = MonthlyPickupSnapshot.objects.filter(
+            target_month=target_month,
+            snapshot_date__gte=two_weeks_ago
+        ).order_by('-snapshot_date')
+        
+        progression_list = []
+        prev_nights = None
+        
+        for snapshot in daily_progression:
+            pickup = 0
+            if prev_nights is not None:
+                pickup = prev_nights - snapshot.otb_room_nights
+            
+            progression_list.append({
+                'date': snapshot.snapshot_date,
+                'otb_nights': snapshot.otb_room_nights,
+                'otb_revenue': snapshot.otb_revenue,
+                'days_out': snapshot.days_out,
+                'pickup': pickup,
+                'occupancy': snapshot.otb_occupancy_percent,
+            })
+            
+            prev_nights = snapshot.otb_room_nights
+        
+        context['daily_progression'] = progression_list
+        
+        # =====================================================================
+        # FORECAST HISTORY (how forecast evolved)
+        # =====================================================================
+        forecast_history = OccupancyForecast.objects.filter(
+            target_month=target_month
+        ).order_by('-forecast_date')[:14]
+        
+        context['forecast_history'] = forecast_history
+        
+        return context
+
+
+# =============================================================================
+# AJAX ENDPOINTS
+# =============================================================================
+
+@require_GET
+def pickup_summary_ajax(request):
+    """
+    AJAX endpoint for pickup summary card on home dashboard.
+    
+    Returns HTML partial for the pickup summary section.
+    """
+    from pricing.services import PickupAnalysisService
+    from pricing.models import MonthlyPickupSnapshot
+    
+    service = PickupAnalysisService()
+    
+    # Check if we have data
+    has_data = MonthlyPickupSnapshot.objects.exists()
+    
+    if not has_data:
+        html = render_to_string('pricing/partials/pickup_summary.html', {
+            'has_data': False,
+        })
+        return JsonResponse({'success': True, 'html': html, 'has_data': False})
+    
+    # Get forecast summary for next 3 months
+    forecast_summary = service.get_forecast_summary(months_ahead=3)
+    
+    # Get velocity
+    today = date.today()
+    next_month = (today + relativedelta(months=1)).replace(day=1)
+    velocity = service.calculate_booking_velocity(next_month)
+    
+    # Find any alerts
+    alerts = []
+    for forecast in forecast_summary:
+        if forecast.get('vs_stly_pace') and forecast['vs_stly_pace'] < -5:
+            alerts.append({
+                'month': forecast['month_name'],
+                'message': f"{forecast['month_name']} is {abs(forecast['vs_stly_pace']):.1f}% behind STLY pace",
+                'type': 'warning'
+            })
+        elif forecast.get('variance_percent') and forecast['variance_percent'] < -10:
+            alerts.append({
+                'month': forecast['month_name'],
+                'message': f"{forecast['month_name']} pickup forecast is below scenario target",
+                'type': 'info'
+            })
+    
+    html = render_to_string('pricing/partials/pickup_summary.html', {
+        'has_data': True,
+        'forecast_summary': forecast_summary,
+        'velocity': velocity,
+        'alerts': alerts[:2],  # Max 2 alerts
+    })
+    
+    return JsonResponse({
+        'success': True,
+        'html': html,
+        'has_data': True,
+    })
+
+
+@require_GET  
+def forecast_data_ajax(request, year, month):
+    """
+    AJAX endpoint for forecast data for a specific month.
+    
+    Returns JSON with forecast details for charts.
+    """
+    from pricing.services import PickupAnalysisService
+    from pricing.models import MonthlyPickupSnapshot, OccupancyForecast
+    
+    target_month = date(year, month, 1)
+    service = PickupAnalysisService()
+    
+    # Generate forecast
+    forecast = service.generate_forecast(target_month)
+    
+    if not forecast:
+        return JsonResponse({
+            'success': False,
+            'message': 'Unable to generate forecast'
+        })
+    
+    # Get pace data for chart
+    pace_data = MonthlyPickupSnapshot.objects.filter(
+        target_month=target_month
+    ).order_by('snapshot_date').values(
+        'snapshot_date', 'days_out', 'otb_room_nights', 'otb_occupancy_percent'
+    )
+    
+    # Get STLY pace
+    stly_month = target_month - relativedelta(years=1)
+    stly_pace = MonthlyPickupSnapshot.objects.filter(
+        target_month=stly_month
+    ).order_by('snapshot_date').values(
+        'snapshot_date', 'days_out', 'otb_room_nights', 'otb_occupancy_percent'
+    )
+    
+    return JsonResponse({
+        'success': True,
+        'forecast': {
+            'target_month': target_month.isoformat(),
+            'days_out': forecast.days_out,
+            'otb_room_nights': forecast.otb_room_nights,
+            'otb_occupancy': float(forecast.otb_occupancy_percent),
+            'pickup_forecast_nights': forecast.pickup_forecast_nights,
+            'pickup_forecast_occupancy': float(forecast.pickup_forecast_occupancy),
+            'pickup_forecast_revenue': float(forecast.pickup_forecast_revenue),
+            'scenario_occupancy': float(forecast.scenario_occupancy),
+            'scenario_room_nights': forecast.scenario_room_nights,
+            'variance_nights': forecast.variance_nights,
+            'variance_percent': float(forecast.variance_percent),
+            'vs_stly_pace': float(forecast.vs_stly_pace_percent) if forecast.vs_stly_pace_percent else None,
+            'confidence': forecast.confidence_level,
+            'insight': forecast.notes,
+        },
+        'pace_data': [
+            {
+                'date': p['snapshot_date'].isoformat(),
+                'days_out': p['days_out'],
+                'otb_nights': p['otb_room_nights'],
+                'otb_occupancy': float(p['otb_occupancy_percent']),
+            }
+            for p in pace_data
+        ],
+        'stly_pace_data': [
+            {
+                'date': p['snapshot_date'].isoformat(),
+                'days_out': p['days_out'],
+                'otb_nights': p['otb_room_nights'],
+                'otb_occupancy': float(p['otb_occupancy_percent']),
+            }
+            for p in stly_pace
+        ],
+    })
+
+
+@require_GET
+def pickup_curves_ajax(request):
+    """
+    AJAX endpoint for pickup curves data.
+    
+    Returns JSON with curve data for all season types.
+    """
+    from pricing.models import PickupCurve
+    from pricing.services import PickupAnalysisService
+    
+    service = PickupAnalysisService()
+    
+    curves = {}
+    for season_type in ['peak', 'high', 'shoulder', 'low']:
+        curve_data = PickupCurve.objects.filter(
+            season_type=season_type,
+            season__isnull=True
+        ).order_by('-days_out')
+        
+        if curve_data.exists():
+            curves[season_type] = [
+                {
+                    'days_out': c.days_out, 
+                    'percent': float(c.cumulative_percent),
+                    'std_dev': float(c.std_deviation),
+                }
+                for c in curve_data
+            ]
+        else:
+            # Use defaults
+            default_curves = service.get_default_pickup_curves()
+            curves[season_type] = [
+                {'days_out': d, 'percent': p, 'std_dev': 0}
+                for d, p in default_curves[season_type]
+            ]
+    
+    return JsonResponse({
+        'success': True,
+        'curves': curves,
+    })
