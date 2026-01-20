@@ -6,7 +6,66 @@ from django.db import models
 from decimal import Decimal, ROUND_HALF_UP
 from django.core.validators import MinValueValidator, MaxValueValidator
 
-
+class Organization(models.Model):
+    """
+    Top-level organization that owns multiple properties.
+    
+    Example: "Atoll Resorts Group" owns "Biosphere Inn" and "Thundi Resort"
+    """
+    name = models.CharField(
+        max_length=200,
+        help_text="Organization name (e.g., 'Atoll Resorts Group')"
+    )
+    code = models.SlugField(
+        max_length=50,
+        unique=True,
+        help_text="URL-friendly code (e.g., 'atoll-resorts')"
+    )
+    
+    # Settings
+    default_currency = models.CharField(
+        max_length=3,
+        default='USD',
+        help_text="Default currency code (e.g., USD, EUR)"
+    )
+    currency_symbol = models.CharField(
+        max_length=5,
+        default='$',
+        help_text="Currency symbol for display"
+    )
+    
+    # Status
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this organization is active"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['name']
+        verbose_name = "Organization"
+        verbose_name_plural = "Organizations"
+    
+    def __str__(self):
+        return self.name
+    
+    @property
+    def property_count(self):
+        """Return count of active properties."""
+        return self.properties.filter(is_active=True).count()
+    
+    @property
+    def total_rooms(self):
+        """Return total rooms across all properties."""
+        from django.db.models import Sum
+        return self.properties.filter(
+            is_active=True
+        ).aggregate(
+            total=Sum('room_types__number_of_rooms')
+        )['total'] or 0
 
 class Property(models.Model):
     """
@@ -15,10 +74,22 @@ class Property(models.Model):
     This holds property-wide settings including the reference base rate
     used for room index calculations.
     """
+    
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.PROTECT,
+        related_name='properties',
+        help_text="Parent organization"
+    )
+    
     name = models.CharField(
         max_length=200,
         default="My Hotel",
         help_text="Property name"
+    )
+    code = models.SlugField(
+        max_length=50,
+        help_text="URL-friendly code (e.g., 'biosphere-inn')"
     )
     
     reference_base_rate = models.DecimalField(
@@ -34,23 +105,98 @@ class Property(models.Model):
         help_text="Currency symbol to display"
     )
     
+    # Capacity
+    total_rooms = models.PositiveIntegerField(
+        default=0,
+        help_text="Total number of rooms (auto-calculated from room types)"
+    )
+    
+    # Status
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this property is active"
+    )
+    
     class Meta:
-        verbose_name = "Property Settings"
-        verbose_name_plural = "Property Settings"
+        ordering = ['organization', 'name']
+        unique_together = ['organization', 'code']
+        verbose_name = "Property"
+        verbose_name_plural = "Properties"
     
     def __str__(self):
-        return self.name
-    
-    @classmethod
-    def get_instance(cls):
-        """Get or create the singleton property instance."""
-        instance, created = cls.objects.get_or_create(pk=1)
-        return instance
+        return f"{self.name} ({self.organization.name})"
     
     def save(self, *args, **kwargs):
-        """Ensure only one instance exists."""
-        self.pk = 1
+        """Auto-calculate total_rooms from room types."""
         super().save(*args, **kwargs)
+        self._update_total_rooms()
+    
+    def _update_total_rooms(self):
+        """Update total_rooms from sum of room types."""
+        from django.db.models import Sum
+        total = self.room_types.aggregate(
+            total=Sum('number_of_rooms')
+        )['total'] or 0
+        
+        if self.total_rooms != total:
+            Property.objects.filter(pk=self.pk).update(total_rooms=total)
+    
+    def get_currency_symbol(self):
+        """Get currency symbol (property or organization default)."""
+        return self.currency_symbol or self.organization.currency_symbol
+    
+    @property
+    def room_count(self):
+        """Return count of room types."""
+        return self.room_types.count()
+    
+    def get_absolute_url(self):
+        """URL for property dashboard."""
+        from django.urls import reverse
+        return reverse('pricing:property_dashboard', kwargs={
+            'org_code': self.organization.code,
+            'prop_code': self.code,
+        })
+
+
+# =============================================================================
+# Helper function to get current property from request
+# =============================================================================
+
+def get_current_property(request):
+    """
+    Get current property from request (URL kwargs or session).
+    
+    Usage in views:
+        property = get_current_property(request)
+        rooms = RoomType.objects.filter(property=property)
+    """
+    # Try URL kwargs first
+    org_code = request.resolver_match.kwargs.get('org_code')
+    prop_code = request.resolver_match.kwargs.get('prop_code')
+    
+    if org_code and prop_code:
+        try:
+            return Property.objects.select_related('organization').get(
+                organization__code=org_code,
+                code=prop_code,
+                is_active=True
+            )
+        except Property.DoesNotExist:
+            return None
+    
+    # Fall back to session
+    property_id = request.session.get('current_property_id')
+    if property_id:
+        try:
+            return Property.objects.select_related('organization').get(
+                pk=property_id,
+                is_active=True
+            )
+        except Property.DoesNotExist:
+            return None
+    
+    return None
 
 
 class Season(models.Model):
@@ -1901,6 +2047,11 @@ class Reservation(models.Model):
         help_text="Check-out date"
     )
     
+    cancellation_date = models.DateField(
+    null=True, 
+    blank=True,
+    help_text="Date when reservation was cancelled"
+)
     # Stay details
     nights = models.PositiveIntegerField(
         default=1,

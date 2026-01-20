@@ -1577,31 +1577,22 @@ class PickupAnalysisService:
     
     
 """
-Reservation Import Service.
+Reservation Import Service - Updated for multiple PMS formats.
 
-Handles importing reservation data from Excel/CSV files with:
-- Column mapping
-- Room type extraction from room number
-- Source to channel mapping
-- Multi-room booking detection and linking
-- Lead time calculation
-- Deduplication by confirmation number
-
-Usage:
-    from pricing.services.import_service import ReservationImportService
-    
-    service = ReservationImportService()
-    result = service.import_file('/path/to/file.xlsx')
+Supports:
+- ABS PMS (Reservation Activity Report, Arrival List)
+- Thundi/Biosphere PMS (BookingList export)
+- Generic CSV/Excel formats
 """
 
 import re
 import hashlib
+import pandas as pd
+from pathlib import Path
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
-from typing import Dict, List, Optional, Tuple, Any
-from pathlib import Path
+from typing import Dict, Optional, Tuple, Any
 
-import pandas as pd
 from django.db import transaction
 from django.utils import timezone
 
@@ -1610,92 +1601,149 @@ class ReservationImportService:
     """
     Service for importing reservation data from Excel/CSV files.
     
-    Column Mapping (default - can be customized):
-        'Conf. No' → confirmation_no
-        'Booked On' → booking_date
-        'Arrival' → arrival_date
-        'Departure' → departure_date
-        'Nights' → nights
-        'Adults' → adults
-        'Children' → children
-        'Room No' → room_type (extracted from format "116 Standard")
-        'Source' → booking_source
-        'User' → for source mapping when Source is empty
-        'Rate Plan' → rate_plan
-        'Grand Total' → total_amount
-        'Country' → guest country
-        'Guest' → guest name
-        'Status' → status
+    Supports multiple PMS formats including:
+    - ABS PMS: "Res#", "Arr", "Dept", "Revenue($)"
+    - Thundi/Biosphere: "Res #", "Arrival", "Dept", "Total"
+    
+    Column Mapping handles various naming conventions automatically.
     """
     
     DEFAULT_COLUMN_MAPPING = {
-    'confirmation_no': [
-        'Res#', 'Res #', 'Res. No', 'Res No', 'Res.No',  # ABS formats
-        'Conf. No', 'Conf No', 'Confirmation', 'Confirmation No', 'ConfNo'
-    ],
-    
-    # Booking date
-    'booking_date': [
-        'Res. Date', 'Res Date', 'Booked On', 'Booking Date', 'Created', 'Book Date'
-    ],
-    
-    # Arrival date - both formats
-    'arrival_date': [
-        'Arr', 'Arrival',  # ABS formats
-        'Check In', 'CheckIn', 'Arrival Date'
-    ],
-    
-    # Departure date - both formats  
-    'departure_date': [
-        'Dept', 'Departure',  # ABS formats
-        'Check Out', 'CheckOut', 'Departure Date'
-    ],
-    
-    # Nights
-    'nights': ['Nights', 'Night', 'LOS', 'Length of Stay'],
-    
-    # Pax - will need special parsing for "2 / 0" format
-    'adults': ['Adults', 'Adult', 'Pax'],
-    'children': ['Children', 'Child', 'Kids'],
-    
-    # Room
-    'room_no': ['Room', 'Room No', 'Room Number', 'RoomNo'],
-    
-    # Source - both formats
-    'source': [
-        'Source', 'Business Source',  # ABS formats
-        'Channel', 'Booking Source'
-    ],
-    
-    # User
-    'user': ['User', 'Created By', 'Agent'],
-    
-    # Rate plan
-    'rate_plan': ['Rate Type', 'Rate Plan', 'RatePlan', 'Meal Plan', 'Board'],
-    
-    # Total amount - both formats
-    'total_amount': [
-        'Revenue($)', 'Balance Due($)',  # ABS formats
-        'Grand Total', 'Total', 'Amount', 'Revenue', 'Total Amount'
-    ],
-    
-    # Guest
-    'guest_name': ['Name', 'Guest', 'Guest Name', 'Customer'],
-    
-    # Other fields
-    'country': ['Country', 'Nationality', 'Guest Country'],
-    'status': ['Status', 'Booking Status', 'State', 'Res.Type'],
-    'email': ['Email', 'Guest Email', 'E-mail'],
-
-}
+        # Confirmation number - all formats
+        'confirmation_no': [
+            'Res #', 'Res#', 'Res. No', 'Res No', 'Res.No',  # Various PMS formats
+            'Conf. No', 'Conf No', 'Confirmation', 'Confirmation No', 'ConfNo',
+            'Reservation', 'Reservation No', 'Booking No', 'BookingNo',
+        ],
+        
+        # Booking date
+        'booking_date': [
+            'Booking Date', 'Res. Date', 'Res Date', 'Booked On', 
+            'Created', 'Book Date', 'Created Date',
+        ],
+        
+        # Booking time (new - for Thundi format)
+        'booking_time': [
+            'Booking Time', 'Time', 'Created Time',
+        ],
+        
+        # Arrival date - all formats
+        'arrival_date': [
+            'Arrival', 'Arr',  # Common formats
+            'Check In', 'CheckIn', 'Arrival Date', 'Check-In',
+        ],
+        
+        # Departure date - all formats  
+        'departure_date': [
+            'Dept', 'Departure',  # Common formats
+            'Check Out', 'CheckOut', 'Departure Date', 'Check-Out',
+        ],
+        
+        # Nights
+        'nights': [
+            'No Of Nights', 'Nights', 'Night', 'LOS', 'Length of Stay',
+            'NoOfNights', 'Number of Nights',
+        ],
+        
+        # Pax - will need special parsing for "2 \ 0" or "2 / 0" format
+        'pax': ['Pax', 'Guests', 'Occupancy'],
+        'adults': ['Adults', 'Adult', 'No of Adults'],
+        'children': ['Children', 'Child', 'Kids', 'No of Children'],
+        
+        # Room
+        'room_no': [
+            'Room', 'Room No', 'Room Number', 'RoomNo', 
+            'Room Type', 'RoomType', 'Room Name',
+        ],
+        
+        # Source/Channel - all formats
+        'source': [
+            'Source', 'Business Source',  # ABS formats
+            'Channel', 'Booking Source', 'channel',  # Thundi format (lowercase 'channel' column)
+        ],
+        
+        # User/Agent
+        'user': ['User', 'Created By', 'Agent', 'Booked By'],
+        
+        # Rate plan
+        'rate_plan': [
+            'Rate Type', 'Rate Plan', 'RatePlan', 'Meal Plan', 'Board',
+            'Board Type', 'Package',
+        ],
+        
+        # Total amount - all formats
+        'total_amount': [
+            'Total', 'Grand Total', 'Total Amount',  # Thundi format
+            'Revenue($)', 'Balance Due($)', 'Revenue',  # ABS formats
+            'Amount', 'Net Amount',
+        ],
+        
+        # ADR (new)
+        'adr': ['ADR', 'Average Daily Rate', 'Daily Rate', 'Rate'],
+        
+        # Deposit (new)
+        'deposit': ['Deposit', 'Deposit Amount', 'Advance'],
+        
+        # Total charges (new)
+        'total_charges': ['Total Charges', 'Charges', 'Extra Charges'],
+        
+        # Guest name
+        'guest_name': [
+            'Guest Name', 'Name', 'Guest', 'Customer', 'Customer Name',
+        ],
+        
+        # Location fields
+        'country': ['Country', 'Nationality', 'Guest Country'],
+        'city': ['City', 'Guest City'],
+        'state': ['State', 'Province', 'Guest State'],
+        'zip_code': ['Zip Code', 'Postal Code', 'Zip', 'Postcode'],
+        
+        # Status
+        'status': [
+            'Status', 'Booking Status', 'State', 'Res.Type',
+            'Reservation Status',
+        ],
+        
+        # Reservation type (new)
+        'reservation_type': [
+            'Reservationn Type', 'Reservation Type', 'Res Type',  # Note: typo in source 'Reservationn'
+            'Booking Type',
+        ],
+        
+        # Market code (new)
+        'market_code': ['Market Code', 'Market', 'Segment'],
+        
+        # Payment type (new)
+        'payment_type': ['Payment Type', 'Payment Method', 'Payment'],
+        
+        # Cancellation date (new)
+        'cancellation_date': [
+            'Cancellation Date', 'Cancelled Date', 'Cancel Date',
+        ],
+        
+        # Other
+        'email': ['Email', 'Guest Email', 'E-mail'],
+        'hotel_name': ['Hotel Name', 'Property', 'Hotel'],
+    }
     
     # Status mapping from import values to model choices
     STATUS_MAPPING = {
-        'confirmed': ['confirmed', 'confirm', 'active', 'booked'],
-        'cancelled': ['cancelled', 'canceled', 'cancel', 'void'],
-        'checked_in': ['checked in', 'checkedin', 'in house', 'inhouse', 'arrived'],
-        'checked_out': ['checked out', 'checkedout', 'departed', 'completed'],
-        'no_show': ['no show', 'noshow', 'no-show'],
+        'confirmed': [
+            'confirmed', 'confirm', 'active', 'booked',
+            'confirm booking',  # Thundi format
+        ],
+        'cancelled': [
+            'cancelled', 'canceled', 'cancel', 'void',
+        ],
+        'checked_in': [
+            'checked in', 'checkedin', 'in house', 'inhouse', 'arrived',
+        ],
+        'checked_out': [
+            'checked out', 'checkedout', 'departed', 'completed',
+        ],
+        'no_show': [
+            'no show', 'noshow', 'no-show',
+        ],
     }
     
     def __init__(self, column_mapping: Dict = None):
@@ -1761,19 +1809,23 @@ class ReservationImportService:
             file_import.rows_total = len(df)
             file_import.save()
             
+            # Clean Excel-escaped values (="314" format)
+            df = self._clean_excel_escapes(df)
+            
             # Map columns
             df = self._map_columns(df)
             
             # Filter out day-use bookings (Nights == 0)
-            initial_count = len(df)
-            df = df[df['nights'].fillna(0).astype(int) > 0]
-            day_use_filtered = initial_count - len(df)
-            
-            if day_use_filtered > 0:
-                self.errors.append({
-                    'row': 0,
-                    'message': f'Filtered out {day_use_filtered} day-use bookings (Nights=0)'
-                })
+            if 'nights' in df.columns:
+                initial_count = len(df)
+                df = df[df['nights'].fillna(0).astype(float).astype(int) > 0]
+                day_use_filtered = initial_count - len(df)
+                
+                if day_use_filtered > 0:
+                    self.errors.append({
+                        'row': 0,
+                        'message': f'Filtered out {day_use_filtered} day-use bookings (Nights=0)'
+                    })
             
             # Process rows
             self._process_dataframe(df, file_import)
@@ -1816,6 +1868,7 @@ class ReservationImportService:
                 # Try different encodings
                 for encoding in ['utf-8', 'latin1', 'cp1252']:
                     try:
+                        # Use index_col=False to prevent first column being used as index
                         return pd.read_csv(file_path, encoding=encoding, index_col=False)
                     except UnicodeDecodeError:
                         continue
@@ -1833,14 +1886,41 @@ class ReservationImportService:
             })
             return None
     
+    def _clean_excel_escapes(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Clean Excel-escaped values like ="314" to just 314.
+        
+        This format is common when exporting from some PMS systems.
+        """
+        def clean_value(val):
+            if pd.isna(val):
+                return val
+            val_str = str(val).strip()
+            # Match pattern: ="value" or ='value'
+            match = re.match(r'^[=]?["\'](.+)["\']$', val_str)
+            if match:
+                return match.group(1)
+            return val_str
+        
+        # Apply to all object (string) columns
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = df[col].apply(clean_value)
+        
+        return df
+    
     def _map_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """Map source columns to standard column names."""
         # Create mapping from source column names to standard names
         column_map = {}
         
+        # Clean column names (remove trailing spaces, etc.)
+        df.columns = [col.strip() for col in df.columns]
+        
         for standard_name, possible_names in self.column_mapping.items():
             for col in df.columns:
-                if col.strip().lower() in [name.lower() for name in possible_names]:
+                col_lower = col.strip().lower()
+                if col_lower in [name.lower() for name in possible_names]:
                     column_map[col] = standard_name
                     break
         
@@ -1899,6 +1979,7 @@ class ReservationImportService:
         booking_date = self._parse_date(row.get('booking_date'))
         arrival_date = self._parse_date(row.get('arrival_date'))
         departure_date = self._parse_date(row.get('departure_date'))
+        cancellation_date = self._parse_date(row.get('cancellation_date'))
         
         if not arrival_date or not departure_date:
             self.errors.append({
@@ -1913,7 +1994,10 @@ class ReservationImportService:
         if not nights:
             nights = (departure_date - arrival_date).days
         
-        # Extract room type from room number
+        # Parse pax (handles "2 \ 0" and "2 / 0" formats)
+        adults, children = self._parse_pax(row)
+        
+        # Extract room type from room field
         room_type, room_type_name = self._extract_room_type(
             row.get('room_no', ''), room_types
         )
@@ -1923,9 +2007,15 @@ class ReservationImportService:
             row.get('rate_plan', ''), rate_plans
         )
         
-        # Map booking source
+        # Map booking source - check both 'source' and direct channel column
+        source_str = str(row.get('source', '')).strip()
+        
+        # If source is empty or "PMS", it's likely a direct booking
+        if not source_str or source_str == 'nan' or source_str.upper() == 'PMS':
+            source_str = 'Direct'
+        
         booking_source = BookingSource.find_source(
-            str(row.get('source', '')),
+            source_str,
             str(row.get('user', ''))
         )
         
@@ -1935,22 +2025,30 @@ class ReservationImportService:
         # Find or create guest
         guest_name = str(row.get('guest_name', '')).strip()
         country = str(row.get('country', '')).strip()
+        city = str(row.get('city', '')).strip()
         email = str(row.get('email', '')).strip()
         
         if guest_name and guest_name != 'nan':
             guest = Guest.find_or_create(
                 name=guest_name,
-                country=country if country != 'nan' else None,
-                email=email if email != 'nan' else None
+                country=country if country not in ['nan', '-', ''] else None,
+                email=email if email not in ['nan', '-', ''] else None
             )
         else:
             guest = None
         
         # Parse amounts
         total_amount = self._parse_decimal(row.get('total_amount'))
+        adr = self._parse_decimal(row.get('adr'))
+        deposit = self._parse_decimal(row.get('deposit'))
         
         # Map status
-        status = self._map_status(row.get('status', 'confirmed'))
+        raw_status = str(row.get('status', 'confirmed')).strip()
+        status = self._map_status(raw_status)
+        
+        # If status is Active but there's a cancellation date, it might be cancelled
+        if cancellation_date and status == 'confirmed':
+            status = 'cancelled'
         
         # Determine if multi-room
         is_multi_room = sequence > 1
@@ -1969,8 +2067,8 @@ class ReservationImportService:
                     'arrival_date': arrival_date,
                     'departure_date': departure_date,
                     'nights': nights,
-                    'adults': self._parse_int(row.get('adults'), default=2),
-                    'children': self._parse_int(row.get('children'), default=0),
+                    'adults': adults,
+                    'children': children,
                     'room_type': room_type,
                     'room_type_name': room_type_name,
                     'rate_plan': rate_plan,
@@ -1980,6 +2078,7 @@ class ReservationImportService:
                     'guest': guest,
                     'total_amount': total_amount,
                     'status': status,
+                    'cancellation_date': cancellation_date,  # Save cancellation date
                     'is_multi_room': is_multi_room,
                     'file_import': file_import,
                     'raw_data': raw_data,
@@ -1995,42 +2094,128 @@ class ReservationImportService:
             if guest:
                 guest.update_stats()
     
-    def _extract_room_type(self, room_no: str, room_types: Dict) -> Tuple[Optional[Any], str]:
+    def _parse_pax(self, row: pd.Series) -> Tuple[int, int]:
         """
-        Extract room type from room number.
+        Parse pax/adults/children from row.
         
-        Format: "116 Standard" → room type "Standard"
+        Handles formats:
+        - "2 \\ 0" (backslash separator)
+        - "2 / 0" (forward slash separator)
+        - " 2 / 0" (with leading space)
+        - Separate adults/children columns
         
         Returns:
-            Tuple of (RoomType or None, original room type name)
+            Tuple of (adults, children)
         """
-        room_no = str(room_no or '').strip()
+        # First check for combined pax field
+        pax_value = row.get('pax', '')
         
-        if not room_no or room_no == 'nan':
+        if pd.notna(pax_value):
+            pax_str = str(pax_value).strip()
+            
+            # Try backslash separator: "2 \ 0" or "2 \\ 0"
+            if '\\' in pax_str:
+                parts = pax_str.split('\\')
+                if len(parts) >= 2:
+                    try:
+                        adults = int(float(parts[0].strip()))
+                        children = int(float(parts[1].strip()))
+                        return (adults, children)
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Try forward slash separator: "2 / 0"
+            if '/' in pax_str:
+                parts = pax_str.split('/')
+                if len(parts) >= 2:
+                    try:
+                        adults = int(float(parts[0].strip()))
+                        children = int(float(parts[1].strip()))
+                        return (adults, children)
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Try single number (just adults)
+            try:
+                adults = int(float(pax_str))
+                return (adults, 0)
+            except (ValueError, TypeError):
+                pass
+        
+        # Fall back to separate columns
+        adults = self._parse_int(row.get('adults'), default=2)
+        children = self._parse_int(row.get('children'), default=0)
+        
+        return (adults, children)
+    
+    def _extract_room_type(self, room_input: Any, room_types: Dict[str, Any]) -> Tuple[Optional[Any], str]:
+        """
+        Extracts room type from a 'Room' column.
+        
+        Handles:
+        - "116 Standard" -> "Standard"
+        - "Room 101 - Deluxe" -> "Deluxe"
+        - "Premium Seaview" -> "Premium Seaview"
+        
+        Args:
+            room_input: The raw value from the 'Room' column.
+            room_types: Dict mapping lowercase names to RoomType objects.
+            
+        Returns:
+            Tuple of (Matched Object or None, Extracted String Name)
+        """
+        # 1. Basic Cleaning
+        room_str = str(room_input or '').strip()
+        if not room_str or room_str.lower() == 'nan':
             return None, ''
         
-        # Try to extract room type name (everything after the number)
-        # Pattern: "116 Standard Room" → "Standard Room"
-        match = re.match(r'^\d+\s+(.+)$', room_no)
-        
+        # 2. Extract Name (Removing Room Numbers)
+        # Handles "116 Standard" or "116 - Standard"
+        # The regex looks for leading digits and optional separators
+        match = re.match(r'^\d+[\s\-\:]*(.+)$', room_str)
         if match:
             room_type_name = match.group(1).strip()
         else:
-            # No number prefix, use the whole string
-            room_type_name = room_no
-        
-        # Try to find matching RoomType
+            room_type_name = room_str
+
         room_type_lower = room_type_name.lower()
         
-        # Exact match
+        # 3. Layered Matching Logic (Waterfall)
+        
+        # Tier 1: Exact Match
         if room_type_lower in room_types:
             return room_types[room_type_lower], room_type_name
         
-        # Partial match (room type name contains or is contained in)
-        for rt_name, rt in room_types.items():
+        # Tier 2: Substring Matching (Known type inside input OR input inside known type)
+        for rt_name, rt_obj in room_types.items():
             if rt_name in room_type_lower or room_type_lower in rt_name:
-                return rt, room_type_name
+                return rt_obj, room_type_name
+                
+        # Tier 3: Keyword Mapping
+        # Maps common variations to a root concept
+        keywords_map = {
+            'standard': ['standard', 'std'],
+            'deluxe': ['deluxe', 'premium', 'dlx'],
+            'suite': ['suite', 'family', 'executive'],
+            'superior': ['superior', 'sup'],
+            'villa': ['villa', 'bungalow'],
+            'view': ['sea', 'seaview', 'ocean', 'beach', 'garden', 'pool', 'island']
+        }
         
+        # Identify which keyword groups are present in the input string
+        found_groups = {
+            group for group, synonyms in keywords_map.items()
+            if any(syn in room_type_lower for syn in synonyms)
+        }
+        
+        if found_groups:
+            for rt_name, rt_obj in room_types.items():
+                # Check if this specific RoomType object matches any of the found keyword groups
+                rt_name_lower = rt_name.lower()
+                if any(any(syn in rt_name_lower for syn in keywords_map[group]) for group in found_groups):
+                    return rt_obj, room_type_name
+
+        # 4. Fallback: No structured match found
         return None, room_type_name
     
     def _map_rate_plan(self, rate_plan_str: str, rate_plans: Dict) -> Tuple[Optional[Any], str]:
@@ -2056,6 +2241,7 @@ class ReservationImportService:
             'ro': 'room only',
             'bb': 'bed & breakfast',
             'b&b': 'bed & breakfast',
+            'bed and breakfast': 'bed & breakfast',
             'hb': 'half board',
             'fb': 'full board',
             'ai': 'all inclusive',
@@ -2064,6 +2250,12 @@ class ReservationImportService:
         expanded = abbreviation_map.get(rate_plan_lower)
         if expanded and expanded in rate_plans:
             return rate_plans[expanded], rate_plan_str
+        
+        # Also try the expanded form directly
+        if rate_plan_lower in abbreviation_map.values():
+            for rp_name, rp in rate_plans.items():
+                if rate_plan_lower in rp_name or rp_name in rate_plan_lower:
+                    return rp, rate_plan_str
         
         # Partial match
         for rp_name, rp in rate_plans.items():
@@ -2082,11 +2274,8 @@ class ReservationImportService:
         
         return 'confirmed'  # Default
     
-    def _parse_date(self, value):
+    def _parse_date(self, value) -> Optional[date]:
         """Parse date from various formats including datetime with AM/PM."""
-        from datetime import datetime, date
-        import pandas as pd
-        
         if pd.isna(value):
             return None
         
@@ -2095,19 +2284,19 @@ class ReservationImportService:
         
         value = str(value).strip()
         
-        if not value or value == 'nan':
+        if not value or value == 'nan' or value == '-':
             return None
         
         # Date formats to try - ORDER MATTERS (most specific first)
         formats = [
-            # DateTime formats with AM/PM (ABS Arrival List format)
+            # DateTime formats with AM/PM
             '%d-%m-%Y %I:%M:%S %p',    # 19-01-2026 11:31:00 AM
             '%d-%m-%Y %H:%M:%S',       # 19-01-2026 11:31:00
             '%d/%m/%Y %I:%M:%S %p',    # 19/01/2026 11:31:00 AM
             '%d/%m/%Y %H:%M:%S',       # 19/01/2026 11:31:00
             
             # Date-only formats
-            '%d-%m-%Y',    # 02-01-2026 (ABS Reservation Activity format)
+            '%d-%m-%Y',    # 02-01-2026
             '%d/%m/%Y',    # 02/01/2026
             '%Y-%m-%d',    # 2026-01-02
             '%m/%d/%Y',    # 01/02/2026
@@ -2132,7 +2321,11 @@ class ReservationImportService:
             return default
         
         try:
-            return int(float(value))
+            # Handle string values that might have extra characters
+            val_str = str(value).strip()
+            if not val_str or val_str == 'nan' or val_str == '-':
+                return default
+            return int(float(val_str))
         except (ValueError, TypeError):
             return default
     
@@ -2145,8 +2338,17 @@ class ReservationImportService:
             return default
         
         try:
-            # Remove currency symbols and commas
-            value_str = str(value).replace('$', '').replace(',', '').strip()
+            # Remove currency symbols, commas, and handle negative with prefix
+            value_str = str(value).strip()
+            
+            if not value_str or value_str == 'nan' or value_str == '-':
+                return default
+            
+            # Handle "-0" format
+            if value_str == '-0':
+                return Decimal('0.00')
+            
+            value_str = value_str.replace('$', '').replace(',', '').strip()
             return Decimal(value_str).quantize(Decimal('0.01'))
         except (InvalidOperation, ValueError):
             return default
@@ -2203,9 +2405,9 @@ class ReservationImportService:
             'rows_created': file_import.rows_created,
             'rows_updated': file_import.rows_updated,
             'rows_skipped': file_import.rows_skipped,
-            'success_rate': float(file_import.success_rate),
+            'success_rate': float(file_import.success_rate) if hasattr(file_import, 'success_rate') else 0,
             'errors': file_import.errors,
-            'duration_seconds': file_import.duration_seconds,
+            'duration_seconds': file_import.duration_seconds if hasattr(file_import, 'duration_seconds') else 0,
         }
     
     def validate_file(self, file_path: str) -> Dict:
@@ -2243,6 +2445,9 @@ class ReservationImportService:
                 'warnings': [],
             }
         
+        # Clean Excel escapes
+        df = self._clean_excel_escapes(df)
+        
         # Map columns
         df = self._map_columns(df)
         
@@ -2258,10 +2463,18 @@ class ReservationImportService:
         
         # Check for day-use bookings
         if 'nights' in df.columns:
-            day_use_count = len(df[df['nights'].fillna(0).astype(int) == 0])
+            day_use_count = len(df[df['nights'].fillna(0).astype(float).astype(int) == 0])
             if day_use_count > 0:
                 warnings.append({
                     'message': f'{day_use_count} day-use bookings will be filtered out'
+                })
+        
+        # Check for cancelled reservations
+        if 'status' in df.columns:
+            cancelled_count = len(df[df['status'].str.lower().str.contains('cancel', na=False)])
+            if cancelled_count > 0:
+                warnings.append({
+                    'message': f'{cancelled_count} cancelled reservations found'
                 })
         
         # Check date validity
@@ -2305,6 +2518,7 @@ Booking Analysis Service.
 
 Calculates dashboard metrics from Reservation data:
 - KPIs (Total Revenue, Room Nights, ADR, Occupancy, Reservations)
+- Cancellation Metrics (Count, Rate, Lost Revenue, by Channel)
 - Monthly breakdown (Revenue, Room Nights, Available, Occupancy, ADR)
 - Channel mix
 - Meal plan mix
@@ -2320,7 +2534,8 @@ Usage:
 from datetime import date, timedelta
 from decimal import Decimal
 from collections import defaultdict
-from django.db.models import Sum, Count, Avg, Min, Max, Q
+from django.db.models import Sum, Count, Avg, Min, Max, Q, F
+from django.db.models.functions import TruncMonth
 import calendar
 
 
@@ -2328,14 +2543,15 @@ class BookingAnalysisService:
     """
     Service for analyzing booking/reservation data.
     
-    Generates metrics for the Booking Analysis Dashboard.
+    Generates metrics for the Booking Analysis Dashboard including
+    cancellation analysis.
     """
     
     def __init__(self):
         """Initialize the service."""
         pass
     
-    def get_dashboard_data(self, year=None, start_date=None, end_date=None):
+    def get_dashboard_data(self, year=None, start_date=None, end_date=None, include_cancelled=False):
         """
         Get all dashboard data for a given period.
         
@@ -2343,6 +2559,7 @@ class BookingAnalysisService:
             year: Optional year to filter by arrival date (default: current year)
             start_date: Optional start date for custom range
             end_date: Optional end date for custom range
+            include_cancelled: If True, include cancelled bookings in main metrics
         
         Returns:
             Dict with all dashboard data
@@ -2353,29 +2570,54 @@ class BookingAnalysisService:
         if year is None and start_date is None:
             year = date.today().year
         
-        # Build base queryset - exclude cancelled
-        queryset = Reservation.objects.filter(
+        # Build base queryset for ACTIVE bookings (exclude cancelled)
+        active_queryset = Reservation.objects.filter(
             status__in=['confirmed', 'checked_in', 'checked_out']
         )
         
+        # Build queryset for CANCELLED bookings
+        cancelled_queryset = Reservation.objects.filter(
+            status='cancelled'
+        )
+        
+        # Build queryset for ALL bookings
+        all_queryset = Reservation.objects.all()
+        
         # Apply date filters
         if start_date and end_date:
-            queryset = queryset.filter(
+            active_queryset = active_queryset.filter(
+                arrival_date__gte=start_date,
+                arrival_date__lte=end_date
+            )
+            cancelled_queryset = cancelled_queryset.filter(
+                arrival_date__gte=start_date,
+                arrival_date__lte=end_date
+            )
+            all_queryset = all_queryset.filter(
                 arrival_date__gte=start_date,
                 arrival_date__lte=end_date
             )
         elif year:
-            queryset = queryset.filter(arrival_date__year=year)
+            active_queryset = active_queryset.filter(arrival_date__year=year)
+            cancelled_queryset = cancelled_queryset.filter(arrival_date__year=year)
+            all_queryset = all_queryset.filter(arrival_date__year=year)
         
         # Get total rooms for occupancy calculation
         total_rooms = sum(rt.number_of_rooms for rt in RoomType.objects.all()) or 20
         
         # Calculate all metrics
-        kpis = self._calculate_kpis(queryset, total_rooms, year)
-        monthly_data = self._calculate_monthly_data(queryset, total_rooms, year)
-        channel_mix = self._calculate_channel_mix(queryset)
-        meal_plan_mix = self._calculate_meal_plan_mix(queryset)
-        room_type_performance = self._calculate_room_type_performance(queryset)
+        kpis = self._calculate_kpis(active_queryset, total_rooms, year)
+        cancellation_metrics = self._calculate_cancellation_metrics(
+            cancelled_queryset, all_queryset, year
+        )
+        monthly_data = self._calculate_monthly_data(active_queryset, total_rooms, year)
+        monthly_cancellations = self._calculate_monthly_cancellations(cancelled_queryset, year)
+        channel_mix = self._calculate_channel_mix(active_queryset)
+        cancellation_by_channel = self._calculate_cancellation_by_channel(
+            cancelled_queryset, all_queryset
+        )
+        meal_plan_mix = self._calculate_meal_plan_mix(active_queryset)
+        room_type_performance = self._calculate_room_type_performance(active_queryset)
         
         return {
             'year': year,
@@ -2383,8 +2625,11 @@ class BookingAnalysisService:
             'end_date': end_date,
             'total_rooms': total_rooms,
             'kpis': kpis,
+            'cancellation_metrics': cancellation_metrics,
             'monthly_data': monthly_data,
+            'monthly_cancellations': monthly_cancellations,
             'channel_mix': channel_mix,
+            'cancellation_by_channel': cancellation_by_channel,
             'meal_plan_mix': meal_plan_mix,
             'room_type_performance': room_type_performance,
         }
@@ -2433,6 +2678,84 @@ class BookingAnalysisService:
             'reservations': reservation_count,
         }
     
+    def _calculate_cancellation_metrics(self, cancelled_queryset, all_queryset, year):
+        """
+        Calculate cancellation-specific metrics.
+        
+        Returns:
+            Dict with cancellation count, rate, lost revenue, avg lead time
+        """
+        # Count cancelled bookings
+        cancelled_stats = cancelled_queryset.aggregate(
+            count=Count('id'),
+            lost_revenue=Sum('total_amount'),
+            lost_room_nights=Sum('nights'),
+        )
+        
+        # Total bookings (all statuses)
+        total_bookings = all_queryset.count()
+        
+        cancelled_count = cancelled_stats['count'] or 0
+        lost_revenue = cancelled_stats['lost_revenue'] or Decimal('0.00')
+        lost_room_nights = cancelled_stats['lost_room_nights'] or 0
+        
+        # Calculate cancellation rate
+        cancellation_rate = Decimal('0.0')
+        if total_bookings > 0:
+            cancellation_rate = (
+                Decimal(str(cancelled_count)) / Decimal(str(total_bookings)) * 100
+            ).quantize(Decimal('0.1'))
+        
+        # Calculate average cancellation lead time
+        # (days between booking_date and cancellation_date)
+        cancellations_with_dates = cancelled_queryset.filter(
+            cancellation_date__isnull=False,
+            booking_date__isnull=False
+        ).annotate(
+            lead_time=F('cancellation_date') - F('booking_date')
+        )
+        
+        avg_cancel_lead_time = 0
+        if cancellations_with_dates.exists():
+            # Calculate average days
+            total_days = 0
+            count = 0
+            for res in cancellations_with_dates:
+                if res.lead_time:
+                    total_days += res.lead_time.days
+                    count += 1
+            if count > 0:
+                avg_cancel_lead_time = round(total_days / count, 1)
+        
+        # Calculate average days before arrival when cancelled
+        # (days between cancellation_date and arrival_date)
+        avg_days_before_arrival = 0
+        cancellations_with_arrival = cancelled_queryset.filter(
+            cancellation_date__isnull=False,
+            arrival_date__isnull=False
+        )
+        
+        if cancellations_with_arrival.exists():
+            total_days = 0
+            count = 0
+            for res in cancellations_with_arrival:
+                days_before = (res.arrival_date - res.cancellation_date).days
+                if days_before >= 0:  # Only count if cancelled before arrival
+                    total_days += days_before
+                    count += 1
+            if count > 0:
+                avg_days_before_arrival = round(total_days / count, 1)
+        
+        return {
+            'count': cancelled_count,
+            'rate': cancellation_rate,
+            'lost_revenue': lost_revenue,
+            'lost_room_nights': lost_room_nights,
+            'total_bookings': total_bookings,
+            'avg_cancel_lead_time': avg_cancel_lead_time,  # Days after booking
+            'avg_days_before_arrival': avg_days_before_arrival,  # Days before arrival
+        }
+    
     def _calculate_monthly_data(self, queryset, total_rooms, year):
         """
         Calculate monthly breakdown.
@@ -2460,6 +2783,7 @@ class BookingAnalysisService:
                 'available': available,
                 'occupancy': Decimal('0.0'),
                 'adr': Decimal('0.00'),
+                'bookings': 0,
             })
         
         # Aggregate by arrival month
@@ -2491,6 +2815,41 @@ class BookingAnalysisService:
                 monthly_data[month_idx]['adr'] = (
                     revenue / room_nights
                 ).quantize(Decimal('0.01'))
+        
+        return monthly_data
+    
+    def _calculate_monthly_cancellations(self, cancelled_queryset, year):
+        """
+        Calculate monthly cancellation breakdown.
+        
+        Returns:
+            List of dicts with month, cancelled_count, lost_revenue, lost_room_nights
+        """
+        monthly_data = []
+        
+        # Initialize all 12 months
+        for month_num in range(1, 13):
+            monthly_data.append({
+                'month': month_num,
+                'month_name': calendar.month_abbr[month_num],
+                'cancelled_count': 0,
+                'lost_revenue': Decimal('0.00'),
+                'lost_room_nights': 0,
+            })
+        
+        # Aggregate cancellations by arrival month
+        monthly_stats = cancelled_queryset.values('arrival_date__month').annotate(
+            cancelled_count=Count('id'),
+            lost_revenue=Sum('total_amount'),
+            lost_room_nights=Sum('nights'),
+        ).order_by('arrival_date__month')
+        
+        # Fill in actual data
+        for stat in monthly_stats:
+            month_idx = stat['arrival_date__month'] - 1
+            monthly_data[month_idx]['cancelled_count'] = stat['cancelled_count'] or 0
+            monthly_data[month_idx]['lost_revenue'] = stat['lost_revenue'] or Decimal('0.00')
+            monthly_data[month_idx]['lost_room_nights'] = stat['lost_room_nights'] or 0
         
         return monthly_data
     
@@ -2534,7 +2893,7 @@ class BookingAnalysisService:
             
             percent = Decimal('0')
             if total_revenue > 0:
-                percent = (revenue / total_revenue * 100).quantize(Decimal('0'))
+                percent = (revenue / total_revenue * 100).quantize(Decimal('0.1'))
             
             channel_data.append({
                 'name': name,
@@ -2543,6 +2902,63 @@ class BookingAnalysisService:
                 'room_nights': stat['room_nights'] or 0,
                 'percent': percent,
             })
+        
+        return channel_data
+    
+    def _calculate_cancellation_by_channel(self, cancelled_queryset, all_queryset):
+        """
+        Calculate cancellation rate by channel.
+        
+        Returns:
+            List of dicts with channel, cancelled_count, total_count, rate, lost_revenue
+        """
+        channel_data = []
+        
+        # Get cancelled by channel
+        cancelled_by_channel = cancelled_queryset.values(
+            'channel__name'
+        ).annotate(
+            cancelled_count=Count('id'),
+            lost_revenue=Sum('total_amount'),
+            lost_room_nights=Sum('nights'),
+        ).order_by('-cancelled_count')
+        
+        # Get total by channel
+        total_by_channel = all_queryset.values(
+            'channel__name'
+        ).annotate(
+            total_count=Count('id'),
+        )
+        
+        # Build lookup for totals
+        total_lookup = {
+            stat['channel__name']: stat['total_count'] 
+            for stat in total_by_channel
+        }
+        
+        for stat in cancelled_by_channel:
+            name = stat.get('channel__name') or 'Unknown'
+            cancelled_count = stat['cancelled_count'] or 0
+            total_count = total_lookup.get(name, cancelled_count)
+            
+            # Calculate cancellation rate for this channel
+            rate = Decimal('0.0')
+            if total_count > 0:
+                rate = (
+                    Decimal(str(cancelled_count)) / Decimal(str(total_count)) * 100
+                ).quantize(Decimal('0.1'))
+            
+            channel_data.append({
+                'name': name,
+                'cancelled_count': cancelled_count,
+                'total_count': total_count,
+                'rate': rate,
+                'lost_revenue': stat['lost_revenue'] or Decimal('0.00'),
+                'lost_room_nights': stat['lost_room_nights'] or 0,
+            })
+        
+        # Sort by cancellation rate (highest first)
+        channel_data.sort(key=lambda x: x['rate'], reverse=True)
         
         return channel_data
     
@@ -2586,7 +3002,7 @@ class BookingAnalysisService:
             
             percent = Decimal('0')
             if total_revenue > 0:
-                percent = (revenue / total_revenue * 100).quantize(Decimal('0'))
+                percent = (revenue / total_revenue * 100).quantize(Decimal('0.1'))
             
             meal_plan_data.append({
                 'name': name,
@@ -2602,13 +3018,17 @@ class BookingAnalysisService:
         """
         Calculate room type breakdown.
         
+        Groups by room_type FK if available, otherwise by room_type_name.
+        
         Returns:
             List of dicts with room_type, bookings, revenue, percent
         """
         room_type_data = []
         
-        # Group by room_type
-        rt_stats = queryset.values(
+        # First, try to get stats for reservations WITH room_type FK
+        rt_stats_fk = queryset.filter(
+            room_type__isnull=False
+        ).values(
             'room_type__name'
         ).annotate(
             bookings=Count('id'),
@@ -2616,29 +3036,32 @@ class BookingAnalysisService:
             room_nights=Sum('nights'),
         ).order_by('-revenue')
         
-        # If no room_type data, try room_type_name
-        if not rt_stats.exists() or all(s['room_type__name'] is None for s in rt_stats):
-            rt_stats = queryset.values(
-                'room_type_name'
-            ).annotate(
-                bookings=Count('id'),
-                revenue=Sum('total_amount'),
-                room_nights=Sum('nights'),
-            ).order_by('-revenue')
-            
-            name_field = 'room_type_name'
-        else:
-            name_field = 'room_type__name'
+        # Then, get stats for reservations WITHOUT room_type FK (use room_type_name)
+        rt_stats_name = queryset.filter(
+            room_type__isnull=True
+        ).values(
+            'room_type_name'
+        ).annotate(
+            bookings=Count('id'),
+            revenue=Sum('total_amount'),
+            room_nights=Sum('nights'),
+        ).order_by('-revenue')
         
         total_revenue = queryset.aggregate(total=Sum('total_amount'))['total'] or Decimal('1.00')
         
-        for stat in rt_stats:
-            name = stat.get(name_field) or 'Unknown'
-            revenue = stat['revenue'] or Decimal('0.00')
+        # Combine results - first from FK, then from name
+        seen_names = set()
+        
+        for stat in rt_stats_fk:
+            name = stat.get('room_type__name') or 'Unknown'
+            if name in seen_names:
+                continue
+            seen_names.add(name.lower())
             
+            revenue = stat['revenue'] or Decimal('0.00')
             percent = Decimal('0')
             if total_revenue > 0:
-                percent = (revenue / total_revenue * 100).quantize(Decimal('0'))
+                percent = (revenue / total_revenue * 100).quantize(Decimal('0.1'))
             
             room_type_data.append({
                 'name': name,
@@ -2648,6 +3071,28 @@ class BookingAnalysisService:
                 'percent': percent,
             })
         
+        for stat in rt_stats_name:
+            name = stat.get('room_type_name') or 'Unknown'
+            if not name or name.lower() in seen_names:
+                continue
+            seen_names.add(name.lower())
+            
+            revenue = stat['revenue'] or Decimal('0.00')
+            percent = Decimal('0')
+            if total_revenue > 0:
+                percent = (revenue / total_revenue * 100).quantize(Decimal('0.1'))
+            
+            room_type_data.append({
+                'name': name,
+                'bookings': stat['bookings'],
+                'revenue': revenue,
+                'room_nights': stat['room_nights'] or 0,
+                'percent': percent,
+            })
+        
+        # Sort by revenue descending
+        room_type_data.sort(key=lambda x: x['revenue'], reverse=True)
+        
         return room_type_data
     
     def get_chart_data(self, year=None):
@@ -2656,21 +3101,135 @@ class BookingAnalysisService:
         
         Returns:
             Dict with chart-ready data (lists for labels, values, etc.)
+            All Decimal values are converted to float for JSON serialization.
         """
         dashboard_data = self.get_dashboard_data(year=year)
         monthly = dashboard_data['monthly_data']
+        monthly_cancel = dashboard_data['monthly_cancellations']
+        
+        # Helper to convert Decimal to float
+        def to_float(val):
+            if isinstance(val, Decimal):
+                return float(val)
+            return val
+        
+        # Convert KPIs to JSON-safe format
+        kpis_safe = {
+            'total_revenue': to_float(dashboard_data['kpis']['total_revenue']),
+            'room_nights': dashboard_data['kpis']['room_nights'],
+            'avg_adr': to_float(dashboard_data['kpis']['avg_adr']),
+            'avg_occupancy': to_float(dashboard_data['kpis']['avg_occupancy']),
+            'reservations': dashboard_data['kpis']['reservations'],
+        }
+        
+        # Convert cancellation metrics to JSON-safe format
+        cancel_metrics_safe = {
+            'count': dashboard_data['cancellation_metrics']['count'],
+            'rate': to_float(dashboard_data['cancellation_metrics']['rate']),
+            'lost_revenue': to_float(dashboard_data['cancellation_metrics']['lost_revenue']),
+            'lost_room_nights': dashboard_data['cancellation_metrics']['lost_room_nights'],
+            'total_bookings': dashboard_data['cancellation_metrics']['total_bookings'],
+            'avg_cancel_lead_time': dashboard_data['cancellation_metrics']['avg_cancel_lead_time'],
+            'avg_days_before_arrival': dashboard_data['cancellation_metrics']['avg_days_before_arrival'],
+        }
         
         return {
+            # Monthly metrics
             'months': [m['month_name'] for m in monthly],
             'revenue': [float(m['revenue']) for m in monthly],
             'room_nights': [m['room_nights'] for m in monthly],
             'available': [m['available'] for m in monthly],
             'occupancy': [float(m['occupancy']) for m in monthly],
             'adr': [float(m['adr']) for m in monthly],
+            'bookings': [m['bookings'] for m in monthly],
+            
+            # Cancellation metrics
+            'cancelled_count': [m['cancelled_count'] for m in monthly_cancel],
+            'lost_revenue': [float(m['lost_revenue']) for m in monthly_cancel],
+            'lost_room_nights': [m['lost_room_nights'] for m in monthly_cancel],
+            
+            # Channel mix
             'channel_labels': [c['name'] for c in dashboard_data['channel_mix']],
             'channel_values': [float(c['revenue']) for c in dashboard_data['channel_mix']],
             'channel_percents': [float(c['percent']) for c in dashboard_data['channel_mix']],
+            
+            # Cancellation by channel
+            'cancel_channel_labels': [c['name'] for c in dashboard_data['cancellation_by_channel']],
+            'cancel_channel_counts': [c['cancelled_count'] for c in dashboard_data['cancellation_by_channel']],
+            'cancel_channel_rates': [float(c['rate']) for c in dashboard_data['cancellation_by_channel']],
+            
+            # Meal plan mix
             'meal_plan_labels': [m['name'] for m in dashboard_data['meal_plan_mix']],
             'meal_plan_values': [float(m['revenue']) for m in dashboard_data['meal_plan_mix']],
             'meal_plan_percents': [float(m['percent']) for m in dashboard_data['meal_plan_mix']],
+            
+            # KPIs for display (JSON-safe)
+            'kpis': kpis_safe,
+            'cancellation_metrics': cancel_metrics_safe,
+        }
+    
+    def get_net_pickup(self, start_date=None, end_date=None, days=30):
+        """
+        Calculate net pickup (new bookings - cancellations) for a period.
+        
+        Args:
+            start_date: Start of period (default: days ago)
+            end_date: End of period (default: today)
+            days: Number of days to look back (default: 30)
+        
+        Returns:
+            Dict with gross_bookings, cancellations, net_bookings, net_revenue
+        """
+        from pricing.models import Reservation
+        
+        if end_date is None:
+            end_date = date.today()
+        if start_date is None:
+            start_date = end_date - timedelta(days=days)
+        
+        # New bookings created in this period
+        new_bookings = Reservation.objects.filter(
+            booking_date__gte=start_date,
+            booking_date__lte=end_date
+        ).exclude(status='cancelled')
+        
+        new_stats = new_bookings.aggregate(
+            count=Count('id'),
+            revenue=Sum('total_amount'),
+            room_nights=Sum('nights'),
+        )
+        
+        # Cancellations in this period
+        cancellations = Reservation.objects.filter(
+            cancellation_date__gte=start_date,
+            cancellation_date__lte=end_date,
+            status='cancelled'
+        )
+        
+        cancel_stats = cancellations.aggregate(
+            count=Count('id'),
+            revenue=Sum('total_amount'),
+            room_nights=Sum('nights'),
+        )
+        
+        gross_bookings = new_stats['count'] or 0
+        gross_revenue = new_stats['revenue'] or Decimal('0.00')
+        gross_room_nights = new_stats['room_nights'] or 0
+        
+        cancelled_count = cancel_stats['count'] or 0
+        cancelled_revenue = cancel_stats['revenue'] or Decimal('0.00')
+        cancelled_room_nights = cancel_stats['room_nights'] or 0
+        
+        return {
+            'period_start': start_date,
+            'period_end': end_date,
+            'gross_bookings': gross_bookings,
+            'gross_revenue': gross_revenue,
+            'gross_room_nights': gross_room_nights,
+            'cancellations': cancelled_count,
+            'cancelled_revenue': cancelled_revenue,
+            'cancelled_room_nights': cancelled_room_nights,
+            'net_bookings': gross_bookings - cancelled_count,
+            'net_revenue': gross_revenue - cancelled_revenue,
+            'net_room_nights': gross_room_nights - cancelled_room_nights,
         }
