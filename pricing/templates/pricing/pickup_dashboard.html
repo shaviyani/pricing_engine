@@ -1,8 +1,11 @@
 {% extends 'pricing/base.html' %}
+{% load humanize %}
 
-{% block title %}Pickup Analysis - Pricing Engine{% endblock %}
+{% block title %}Pickup Analysis - {{ prop.name }}{% endblock %}
 
 {% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
 <div class="space-y-6">
     <!-- Header -->
     <div class="flex items-center justify-between">
@@ -11,6 +14,13 @@
             <p class="text-gray-600 mt-1">Track booking pace and forecast future occupancy</p>
         </div>
         <div class="flex items-center space-x-3">
+            <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}" 
+               class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                </svg>
+                Back to Dashboard
+            </a>
             <button onclick="refreshData()" 
                     class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">
                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -18,67 +28,85 @@
                 </svg>
                 Refresh
             </button>
-            <a href="{% url 'pricing:home' %}" 
-               class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                </svg>
-                Back to Home
+        </div>
+    </div>
+
+    {% if not has_data %}
+    <!-- No Data State -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        <h3 class="mt-4 text-lg font-medium text-gray-900">No Reservation Data</h3>
+        <p class="mt-2 text-sm text-gray-500">Import reservations to see pickup analysis and forecasts.</p>
+        <div class="mt-6">
+            <a href="{% url 'admin:pricing_reservation_changelist' %}" 
+               class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">
+                Import Reservations
             </a>
         </div>
     </div>
+    {% else %}
 
     <!-- KPI Cards Row -->
     <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
             <p class="text-sm font-medium opacity-90">Bookings This Week</p>
-            <p class="text-3xl font-bold mt-1" id="kpi-bookings-week">12</p>
+            <p class="text-3xl font-bold mt-1">{{ kpis.bookings_this_week|intcomma }}</p>
             <p class="text-xs opacity-75 mt-1">
                 <span class="inline-flex items-center">
+                    {% if kpis.wow_change >= 0 %}
                     <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
                     </svg>
-                    +15% WoW
+                    +{{ kpis.wow_change }}% WoW
+                    {% else %}
+                    <svg class="w-3 h-3 mr-1 transform rotate-180" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    {{ kpis.wow_change }}% WoW
+                    {% endif %}
                 </span>
             </p>
         </div>
         
         <div class="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
             <p class="text-sm font-medium opacity-90">Room Nights OTB</p>
-            <p class="text-3xl font-bold mt-1" id="kpi-room-nights">423</p>
-            <p class="text-xs opacity-75 mt-1">
-                <span class="inline-flex items-center">
-                    <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
-                    </svg>
-                    +8% MoM
-                </span>
-            </p>
+            <p class="text-3xl font-bold mt-1">{{ kpis.room_nights_otb|intcomma }}</p>
+            <p class="text-xs opacity-75 mt-1">Future arrivals</p>
         </div>
         
         <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
             <p class="text-sm font-medium opacity-90">Booking Velocity</p>
-            <p class="text-3xl font-bold mt-1" id="kpi-velocity">2.8</p>
+            <p class="text-3xl font-bold mt-1">{{ kpis.booking_velocity }}</p>
             <p class="text-xs opacity-75 mt-1">
                 <span class="inline-flex items-center">
+                    {% if kpis.velocity_change >= 0 %}
                     <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
                     </svg>
-                    +12% bookings/day
+                    +{{ kpis.velocity_change }}%
+                    {% else %}
+                    <svg class="w-3 h-3 mr-1 transform rotate-180" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    {{ kpis.velocity_change }}%
+                    {% endif %}
+                    bookings/day
                 </span>
             </p>
         </div>
         
         <div class="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
             <p class="text-sm font-medium opacity-90">Avg Lead Time</p>
-            <p class="text-3xl font-bold mt-1" id="kpi-lead-time">42</p>
+            <p class="text-3xl font-bold mt-1">{{ kpis.avg_lead_time }}</p>
             <p class="text-xs opacity-75 mt-1">days to arrival</p>
         </div>
         
         <div class="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
             <p class="text-sm font-medium opacity-90">OTB Next 90 Days</p>
-            <p class="text-3xl font-bold mt-1" id="kpi-otb-revenue">$78,400</p>
-            <p class="text-xs opacity-75 mt-1">45% occupancy</p>
+            <p class="text-3xl font-bold mt-1">${{ kpis.otb_90_revenue|floatformat:0|intcomma }}</p>
+            <p class="text-xs opacity-75 mt-1">{{ kpis.otb_90_occupancy }}% occupancy</p>
         </div>
     </div>
 
@@ -122,197 +150,55 @@
                         <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Confidence</th>
                     </tr>
                 </thead>
-                <tbody class="bg-white divide-y divide-gray-200" id="forecast-table-body">
-                    <!-- Sample data rows -->
-                    <tr class="hover:bg-gray-50 transition cursor-pointer" onclick="showMonthDetail('feb-2026')">
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for forecast in forecast_summary %}
+                    <tr class="hover:bg-gray-50 transition cursor-pointer" 
+                        onclick="showMonthDetail('{{ forecast.month|date:'Y' }}', '{{ forecast.month|date:'n' }}')">
                         <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="font-medium text-gray-900">Feb 2026</div>
-                            <div class="text-xs text-gray-500">Peak Season</div>
+                            <div class="font-medium text-gray-900">{{ forecast.month_name }}</div>
+                            <div class="text-xs text-gray-500">{{ forecast.season_name }}</div>
                         </td>
-                        <td class="px-4 py-4 text-center text-sm text-gray-600">12</td>
+                        <td class="px-4 py-4 text-center text-sm text-gray-600">{{ forecast.days_out }}</td>
                         <td class="px-4 py-4 text-center">
-                            <div class="text-lg font-semibold text-blue-600">324</div>
+                            <div class="text-lg font-semibold text-blue-600">{{ forecast.otb_nights|intcomma }}</div>
                         </td>
                         <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">52%</div>
+                            <div class="text-sm font-medium text-gray-900">{{ forecast.otb_occupancy }}%</div>
                             <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-blue-500 h-1.5 rounded-full" style="width: 52%"></div>
+                                <div class="bg-blue-500 h-1.5 rounded-full" style="width: {{ forecast.otb_occupancy }}%"></div>
                             </div>
                         </td>
                         <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-lg font-bold text-green-600">485</div>
+                            <div class="text-lg font-bold text-green-600">{{ forecast.forecast_nights|intcomma }}</div>
                         </td>
                         <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-sm font-bold text-green-700">78%</div>
+                            <div class="text-sm font-bold text-green-700">{{ forecast.forecast_occupancy }}%</div>
                             <div class="w-full bg-green-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-green-500 h-1.5 rounded-full" style="width: 78%"></div>
+                                <div class="bg-green-500 h-1.5 rounded-full" style="width: {{ forecast.forecast_occupancy }}%"></div>
                             </div>
                         </td>
                         <td class="px-4 py-4 text-center bg-purple-50">
-                            <div class="text-sm font-medium text-purple-700">95%</div>
+                            <div class="text-sm font-medium text-purple-700">{{ forecast.scenario_occupancy }}%</div>
                         </td>
                         <td class="px-4 py-4 text-center">
-                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                +14% 🟢
+                            {% if forecast.vs_stly is not None %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
+                                {% if forecast.vs_stly >= 5 %}bg-green-100 text-green-800{% elif forecast.vs_stly <= -5 %}bg-red-100 text-red-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                                {% if forecast.vs_stly >= 0 %}+{% endif %}{{ forecast.vs_stly }}%
+                                {% if forecast.vs_stly >= 5 %}🟢{% elif forecast.vs_stly <= -5 %}🔴{% else %}🟡{% endif %}
                             </span>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">89%</div>
-                            <div class="text-xs text-gray-500">High</div>
-                        </td>
-                    </tr>
-                    
-                    <tr class="hover:bg-gray-50 transition cursor-pointer" onclick="showMonthDetail('mar-2026')">
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="font-medium text-gray-900">Mar 2026</div>
-                            <div class="text-xs text-gray-500">Low Season</div>
-                        </td>
-                        <td class="px-4 py-4 text-center text-sm text-gray-600">40</td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-lg font-semibold text-blue-600">168</div>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">27%</div>
-                            <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-blue-500 h-1.5 rounded-full" style="width: 27%"></div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-lg font-bold text-green-600">403</div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-sm font-bold text-green-700">65%</div>
-                            <div class="w-full bg-green-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-green-500 h-1.5 rounded-full" style="width: 65%"></div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-purple-50">
-                            <div class="text-sm font-medium text-purple-700">65%</div>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                +8% 🟢
-                            </span>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">72%</div>
-                            <div class="text-xs text-gray-500">Medium</div>
-                        </td>
-                    </tr>
-                    
-                    <tr class="hover:bg-gray-50 transition cursor-pointer" onclick="showMonthDetail('apr-2026')">
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="font-medium text-gray-900">Apr 2026</div>
-                            <div class="text-xs text-gray-500">Shoulder Season</div>
-                        </td>
-                        <td class="px-4 py-4 text-center text-sm text-gray-600">71</td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-lg font-semibold text-blue-600">74</div>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">12%</div>
-                            <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-blue-500 h-1.5 rounded-full" style="width: 12%"></div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-lg font-bold text-green-600">348</div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-sm font-bold text-green-700">58%</div>
-                            <div class="w-full bg-green-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-green-500 h-1.5 rounded-full" style="width: 58%"></div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-purple-50">
-                            <div class="text-sm font-medium text-purple-700">70%</div>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                -3% 🟡
-                            </span>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">54%</div>
-                            <div class="text-xs text-gray-500">Low</div>
-                        </td>
-                    </tr>
-                    
-                    <tr class="hover:bg-gray-50 transition cursor-pointer" onclick="showMonthDetail('may-2026')">
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="font-medium text-gray-900">May 2026</div>
-                            <div class="text-xs text-gray-500">Shoulder Season</div>
-                        </td>
-                        <td class="px-4 py-4 text-center text-sm text-gray-600">101</td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-lg font-semibold text-blue-600">31</div>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">5%</div>
-                            <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-blue-500 h-1.5 rounded-full" style="width: 5%"></div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-lg font-bold text-green-600">310</div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-sm font-bold text-green-700">50%</div>
-                            <div class="w-full bg-green-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-green-500 h-1.5 rounded-full" style="width: 50%"></div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-purple-50">
-                            <div class="text-sm font-medium text-purple-700">70%</div>
-                        </td>
-                        <td class="px-4 py-4 text-center">
+                            {% else %}
                             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                                 N/A
                             </span>
+                            {% endif %}
                         </td>
                         <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">38%</div>
-                            <div class="text-xs text-gray-500">Very Low</div>
+                            <div class="text-sm font-medium text-gray-900">{{ forecast.confidence }}%</div>
+                            <div class="text-xs text-gray-500">{{ forecast.confidence_label }}</div>
                         </td>
                     </tr>
-                    
-                    <tr class="hover:bg-gray-50 transition cursor-pointer" onclick="showMonthDetail('jun-2026')">
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="font-medium text-gray-900">Jun 2026</div>
-                            <div class="text-xs text-gray-500">High Season</div>
-                        </td>
-                        <td class="px-4 py-4 text-center text-sm text-gray-600">132</td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-lg font-semibold text-blue-600">12</div>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">2%</div>
-                            <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-blue-500 h-1.5 rounded-full" style="width: 2%"></div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-lg font-bold text-green-600">527</div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-green-50">
-                            <div class="text-sm font-bold text-green-700">85%</div>
-                            <div class="w-full bg-green-200 rounded-full h-1.5 mt-1">
-                                <div class="bg-green-500 h-1.5 rounded-full" style="width: 85%"></div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-4 text-center bg-purple-50">
-                            <div class="text-sm font-medium text-purple-700">85%</div>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-                                N/A
-                            </span>
-                        </td>
-                        <td class="px-4 py-4 text-center">
-                            <div class="text-sm font-medium text-gray-900">25%</div>
-                            <div class="text-xs text-gray-500">Very Low</div>
-                        </td>
-                    </tr>
+                    {% endfor %}
                 </tbody>
             </table>
         </div>
@@ -359,23 +245,23 @@
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
             <div class="bg-gray-50 rounded-lg p-4">
                 <p class="text-xs text-gray-500 uppercase tracking-wide">Avg Daily Bookings</p>
-                <p class="text-2xl font-bold text-gray-900 mt-1">2.9</p>
+                <p class="text-2xl font-bold text-gray-900 mt-1">{{ velocity.daily_bookings }}</p>
                 <p class="text-xs text-gray-500">per day</p>
             </div>
             <div class="bg-gray-50 rounded-lg p-4">
                 <p class="text-xs text-gray-500 uppercase tracking-wide">Avg Daily Revenue</p>
-                <p class="text-2xl font-bold text-gray-900 mt-1">$3,136</p>
+                <p class="text-2xl font-bold text-gray-900 mt-1">${{ velocity.daily_revenue|floatformat:0|intcomma }}</p>
                 <p class="text-xs text-gray-500">per day</p>
             </div>
             <div class="bg-gray-50 rounded-lg p-4">
-                <p class="text-xs text-gray-500 uppercase tracking-wide">Peak Booking Day</p>
-                <p class="text-2xl font-bold text-gray-900 mt-1">Jan 18</p>
-                <p class="text-xs text-gray-500">6 bookings</p>
+                <p class="text-xs text-gray-500 uppercase tracking-wide">Velocity Trend</p>
+                <p class="text-2xl font-bold text-gray-900 mt-1 capitalize">{{ velocity.velocity_trend }}</p>
+                <p class="text-xs text-gray-500">{{ velocity.lookback_days }}-day trend</p>
             </div>
             <div class="bg-gray-50 rounded-lg p-4">
-                <p class="text-xs text-gray-500 uppercase tracking-wide">Revenue/Booking</p>
-                <p class="text-2xl font-bold text-gray-900 mt-1">$1,094</p>
-                <p class="text-xs text-gray-500">avg value</p>
+                <p class="text-xs text-gray-500 uppercase tracking-wide">Total Pickup</p>
+                <p class="text-2xl font-bold text-gray-900 mt-1">{{ velocity.total_room_nights|intcomma }}</p>
+                <p class="text-xs text-gray-500">room nights</p>
             </div>
         </div>
     </div>
@@ -406,85 +292,22 @@
                             <th class="text-right py-2 font-semibold text-gray-700">Share</th>
                         </tr>
                     </thead>
-                    <tbody id="lead-time-table">
+                    <tbody>
+                        {% for bucket in lead_time.buckets %}
                         <tr class="border-b border-gray-100 hover:bg-gray-50">
                             <td class="py-2">
                                 <span class="inline-flex items-center">
-                                    <span class="w-2 h-2 rounded-full bg-red-500 mr-2"></span>
-                                    0-7d (Last Minute)
+                                    <span class="w-2 h-2 rounded-full mr-2" style="background-color: var(--color-{{ bucket.color }})"></span>
+                                    {{ bucket.label }}
                                 </span>
                             </td>
-                            <td class="text-right py-2 font-medium">7</td>
-                            <td class="text-right py-2">$4,086</td>
+                            <td class="text-right py-2 font-medium">{{ bucket.count|intcomma }}</td>
+                            <td class="text-right py-2">${{ bucket.revenue|floatformat:0|intcomma }}</td>
                             <td class="text-right py-2">
-                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">16%</span>
+                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{{ bucket.percent }}%</span>
                             </td>
                         </tr>
-                        <tr class="border-b border-gray-100 hover:bg-gray-50">
-                            <td class="py-2">
-                                <span class="inline-flex items-center">
-                                    <span class="w-2 h-2 rounded-full bg-orange-500 mr-2"></span>
-                                    8-14d
-                                </span>
-                            </td>
-                            <td class="text-right py-2 font-medium">2</td>
-                            <td class="text-right py-2">$1,206</td>
-                            <td class="text-right py-2">
-                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">5%</span>
-                            </td>
-                        </tr>
-                        <tr class="border-b border-gray-100 hover:bg-gray-50">
-                            <td class="py-2">
-                                <span class="inline-flex items-center">
-                                    <span class="w-2 h-2 rounded-full bg-yellow-500 mr-2"></span>
-                                    15-30d
-                                </span>
-                            </td>
-                            <td class="text-right py-2 font-medium">7</td>
-                            <td class="text-right py-2">$6,773</td>
-                            <td class="text-right py-2">
-                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">16%</span>
-                            </td>
-                        </tr>
-                        <tr class="border-b border-gray-100 hover:bg-gray-50">
-                            <td class="py-2">
-                                <span class="inline-flex items-center">
-                                    <span class="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
-                                    31-60d
-                                </span>
-                            </td>
-                            <td class="text-right py-2 font-medium">15</td>
-                            <td class="text-right py-2">$20,020</td>
-                            <td class="text-right py-2">
-                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">35%</span>
-                            </td>
-                        </tr>
-                        <tr class="border-b border-gray-100 hover:bg-gray-50">
-                            <td class="py-2">
-                                <span class="inline-flex items-center">
-                                    <span class="w-2 h-2 rounded-full bg-blue-500 mr-2"></span>
-                                    61-90d
-                                </span>
-                            </td>
-                            <td class="text-right py-2 font-medium">3</td>
-                            <td class="text-right py-2">$3,389</td>
-                            <td class="text-right py-2">
-                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">7%</span>
-                            </td>
-                        </tr>
-                        <tr class="hover:bg-gray-50">
-                            <td class="py-2">
-                                <span class="inline-flex items-center">
-                                    <span class="w-2 h-2 rounded-full bg-purple-500 mr-2"></span>
-                                    90+d (Early Bird)
-                                </span>
-                            </td>
-                            <td class="text-right py-2 font-medium">9</td>
-                            <td class="text-right py-2">$11,559</td>
-                            <td class="text-right py-2">
-                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">21%</span>
-                            </td>
-                        </tr>
+                        {% endfor %}
                     </tbody>
                 </table>
             </div>
@@ -496,7 +319,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
                     <div class="text-xs text-blue-900">
-                        <strong>Insight:</strong> 35% of bookings come 31-60 days out, generating 43% of revenue. Target promotions in this window.
+                        <strong>Insight:</strong> Average lead time is {{ lead_time.avg_lead_time }} days. Target promotions in the 31-60 day window for maximum impact.
                     </div>
                 </div>
             </div>
@@ -517,71 +340,53 @@
                 </div>
                 
                 <div class="space-y-3">
+                    {% for channel in channel_data.channels %}
                     <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                         <span class="flex items-center text-sm">
-                            <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
-                            OTA (Booking.com)
+                            <span class="w-3 h-3 rounded-full mr-2" style="background-color: var(--color-{{ channel.color }})"></span>
+                            {{ channel.name }}
                         </span>
                         <div class="text-right">
-                            <span class="font-bold text-gray-900">74%</span>
-                            <p class="text-xs text-gray-500">32 bookings</p>
+                            <span class="font-bold text-gray-900">{{ channel.percent }}%</span>
+                            <p class="text-xs text-gray-500">{{ channel.bookings }} bookings</p>
                         </div>
                     </div>
-                    <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                        <span class="flex items-center text-sm">
-                            <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
-                            Direct
-                        </span>
-                        <div class="text-right">
-                            <span class="font-bold text-gray-900">17%</span>
-                            <p class="text-xs text-gray-500">7 bookings</p>
-                        </div>
-                    </div>
-                    <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                        <span class="flex items-center text-sm">
-                            <span class="w-3 h-3 rounded-full bg-purple-500 mr-2"></span>
-                            Agent
-                        </span>
-                        <div class="text-right">
-                            <span class="font-bold text-gray-900">6%</span>
-                            <p class="text-xs text-gray-500">3 bookings</p>
-                        </div>
-                    </div>
-                    <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                        <span class="flex items-center text-sm">
-                            <span class="w-3 h-3 rounded-full bg-gray-400 mr-2"></span>
-                            Other
-                        </span>
-                        <div class="text-right">
-                            <span class="font-bold text-gray-900">3%</span>
-                            <p class="text-xs text-gray-500">1 booking</p>
-                        </div>
-                    </div>
+                    {% empty %}
+                    <div class="text-sm text-gray-500 text-center py-4">No channel data available</div>
+                    {% endfor %}
                 </div>
             </div>
             
             <!-- Channel Performance Comparison -->
+            {% if channel_data.channels|length >= 2 %}
             <div class="mt-6 pt-4 border-t border-gray-200">
                 <h4 class="text-sm font-semibold text-gray-700 mb-3">Channel Performance</h4>
                 <div class="grid grid-cols-2 gap-4 text-sm">
+                    {% with first=channel_data.channels.0 %}
                     <div class="bg-blue-50 rounded-lg p-3">
-                        <p class="text-xs text-blue-700 font-medium">OTA Avg Lead Time</p>
-                        <p class="text-lg font-bold text-blue-900">38 days</p>
-                    </div>
-                    <div class="bg-green-50 rounded-lg p-3">
-                        <p class="text-xs text-green-700 font-medium">Direct Avg Lead Time</p>
-                        <p class="text-lg font-bold text-green-900">52 days</p>
+                        <p class="text-xs text-blue-700 font-medium">{{ first.name }} Avg Lead Time</p>
+                        <p class="text-lg font-bold text-blue-900">{{ first.avg_lead_time }} days</p>
                     </div>
                     <div class="bg-blue-50 rounded-lg p-3">
-                        <p class="text-xs text-blue-700 font-medium">OTA Avg ADR</p>
-                        <p class="text-lg font-bold text-blue-900">$172</p>
+                        <p class="text-xs text-blue-700 font-medium">{{ first.name }} Avg ADR</p>
+                        <p class="text-lg font-bold text-blue-900">${{ first.avg_adr|floatformat:0|intcomma }}</p>
+                    </div>
+                    {% endwith %}
+                    {% if channel_data.channels|length >= 2 %}
+                    {% with second=channel_data.channels.1 %}
+                    <div class="bg-green-50 rounded-lg p-3">
+                        <p class="text-xs text-green-700 font-medium">{{ second.name }} Avg Lead Time</p>
+                        <p class="text-lg font-bold text-green-900">{{ second.avg_lead_time }} days</p>
                     </div>
                     <div class="bg-green-50 rounded-lg p-3">
-                        <p class="text-xs text-green-700 font-medium">Direct Avg ADR</p>
-                        <p class="text-lg font-bold text-green-900">$195</p>
+                        <p class="text-xs text-green-700 font-medium">{{ second.name }} Avg ADR</p>
+                        <p class="text-lg font-bold text-green-900">${{ second.avg_adr|floatformat:0|intcomma }}</p>
                     </div>
+                    {% endwith %}
+                    {% endif %}
                 </div>
             </div>
+            {% endif %}
         </div>
     </div>
 
@@ -644,12 +449,12 @@
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
             <div class="bg-red-50 rounded-lg p-4 border border-red-100">
                 <p class="text-xs text-red-700 font-semibold uppercase">Peak Season</p>
-                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>60 days</strong></p>
+                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>45 days</strong></p>
                 <p class="text-xs text-gray-500">Fast early pickup</p>
             </div>
             <div class="bg-orange-50 rounded-lg p-4 border border-orange-100">
                 <p class="text-xs text-orange-700 font-semibold uppercase">High Season</p>
-                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>45 days</strong></p>
+                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>40 days</strong></p>
                 <p class="text-xs text-gray-500">Steady buildup</p>
             </div>
             <div class="bg-blue-50 rounded-lg p-4 border border-blue-100">
@@ -666,6 +471,7 @@
     </div>
 
     <!-- Alert & Recommendations -->
+    {% if alerts %}
     <div class="bg-amber-50 border border-amber-200 rounded-xl p-6">
         <div class="flex items-start">
             <svg class="w-6 h-6 text-amber-600 mr-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -674,22 +480,17 @@
             <div>
                 <h3 class="text-lg font-semibold text-amber-900 mb-2">Actionable Insights</h3>
                 <ul class="space-y-2 text-sm text-amber-800">
+                    {% for alert in alerts %}
                     <li class="flex items-start">
                         <span class="font-bold mr-2">•</span>
-                        <span><strong>April 2026</strong> is 3% behind STLY pace. Consider a promotional campaign targeting the 31-60 day booking window.</span>
+                        <span>{{ alert.message }}</span>
                     </li>
-                    <li class="flex items-start">
-                        <span class="font-bold mr-2">•</span>
-                        <span><strong>Direct bookings</strong> have higher ADR ($195 vs $172 OTA). Increase direct channel marketing to improve revenue mix.</span>
-                    </li>
-                    <li class="flex items-start">
-                        <span class="font-bold mr-2">•</span>
-                        <span><strong>February 2026</strong> forecast (78%) exceeds scenario (95%). Consider raising rates for remaining inventory.</span>
-                    </li>
+                    {% endfor %}
                 </ul>
             </div>
         </div>
     </div>
+    {% endif %}
 
     <!-- Data Source Note -->
     <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
@@ -698,18 +499,20 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
             <div class="text-sm text-gray-600">
-                <strong>Data Source:</strong> Sample data for demonstration. Connect your reservation system to see live pickup analysis.
-                Last updated: <span id="last-updated">Jan 19, 2026 at 2:30 PM</span>
+                <strong>Data Source:</strong> Analysis based on {{ lead_time.total|intcomma }} reservations.
+                Last updated: <span id="last-updated">{{ last_updated }}</span>
             </div>
         </div>
     </div>
+
+    {% endif %}
 </div>
 
 <!-- Month Detail Modal -->
 <div id="monthDetailModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50">
     <div class="relative top-10 mx-auto p-5 border w-full max-w-4xl shadow-lg rounded-xl bg-white">
         <div class="flex items-center justify-between pb-4 border-b">
-            <h3 class="text-2xl font-bold text-gray-900" id="modal-month-title">February 2026 Forecast</h3>
+            <h3 class="text-2xl font-bold text-gray-900" id="modal-month-title">Monthly Forecast</h3>
             <button onclick="closeMonthDetail()" class="text-gray-400 hover:text-gray-600 transition">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -718,9 +521,14 @@
         </div>
         
         <div class="mt-4" id="modal-content">
-            <!-- Content loaded dynamically -->
+            <div class="text-center py-8">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                <p class="mt-2 text-gray-500">Loading forecast details...</p>
+            </div>
         </div>
     </div>
+</div>
+
 </div>
 {% endblock %}
 
@@ -729,6 +537,17 @@
     .chart-container { position: relative; }
     .kpi-card { transition: transform 0.2s; }
     .kpi-card:hover { transform: translateY(-2px); }
+    
+    /* Color variables for dynamic colors */
+    :root {
+        --color-red: #ef4444;
+        --color-orange: #f97316;
+        --color-yellow: #eab308;
+        --color-green: #22c55e;
+        --color-blue: #3b82f6;
+        --color-purple: #a855f7;
+        --color-gray: #9ca3af;
+    }
 </style>
 {% endblock %}
 
@@ -736,68 +555,22 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <script>
-// ============================================================================
-// SAMPLE DATA (Replace with AJAX calls when backend is ready)
-// ============================================================================
+// Chart data from Django
+var chartData = {{ chart_data_json|safe }};
 
-const sampleData = {
-    // Booking pace data
-    bookingPace: {
-        dates: ['Jan 2', 'Jan 4', 'Jan 6', 'Jan 8', 'Jan 10', 'Jan 12', 'Jan 14', 'Jan 16', 'Jan 18', 'Jan 19'],
-        cumNights: [16, 32, 50, 74, 81, 103, 146, 194, 248, 264],
-        cumRevenue: [3373, 4638, 6990, 10571, 11831, 15588, 23013, 33211, 43905, 47033],
-        stlyNights: [14, 28, 42, 65, 72, 95, 130, 175, 220, 240]
-    },
-    
-    // Lead time distribution
-    leadTime: {
-        labels: ['0-7d', '8-14d', '15-30d', '31-60d', '61-90d', '90+d'],
-        counts: [7, 2, 7, 15, 3, 9],
-        revenue: [4086, 1206, 6773, 20020, 3389, 11559],
-        colors: [
-            'rgba(239, 68, 68, 0.8)',
-            'rgba(249, 115, 22, 0.8)',
-            'rgba(234, 179, 8, 0.8)',
-            'rgba(34, 197, 94, 0.8)',
-            'rgba(59, 130, 246, 0.8)',
-            'rgba(168, 85, 247, 0.8)'
-        ]
-    },
-    
-    // Channel mix
-    channels: {
-        labels: ['OTA', 'Direct', 'Agent', 'Other'],
-        data: [74, 17, 6, 3],
-        colors: [
-            'rgba(59, 130, 246, 0.8)',
-            'rgba(34, 197, 94, 0.8)',
-            'rgba(168, 85, 247, 0.8)',
-            'rgba(156, 163, 175, 0.8)'
-        ]
-    },
-    
-    // Daily velocity
-    velocity: {
-        dates: ['Jan 2', 'Jan 3', 'Jan 4', 'Jan 5', 'Jan 6', 'Jan 10', 'Jan 11', 'Jan 12', 'Jan 13', 'Jan 14', 'Jan 15', 'Jan 16', 'Jan 17', 'Jan 18', 'Jan 19'],
-        dailyCount: [3, 1, 1, 3, 4, 2, 3, 1, 5, 1, 4, 4, 2, 6, 3],
-        dailyRevenue: [3373, 1266, 0, 2352, 3581, 1259, 3193, 565, 5784, 1640, 4796, 5402, 2009, 8685, 3128]
-    },
-    
-    // Pickup curves by season (% of final booked at X days out)
-    pickupCurves: {
-        daysOut: [90, 75, 60, 45, 30, 15, 7, 0],
-        peak: [15, 25, 40, 55, 70, 85, 92, 100],
-        high: [10, 20, 35, 50, 65, 80, 90, 100],
-        shoulder: [5, 12, 22, 35, 50, 70, 85, 100],
-        low: [3, 8, 15, 25, 40, 60, 80, 100]
-    }
+// Chart instances
+var bookingPaceChart, leadTimeChart, channelChart, velocityChart, pickupCurvesChart;
+
+// Color definitions
+var chartColors = {
+    red: 'rgba(239, 68, 68, 0.8)',
+    orange: 'rgba(249, 115, 22, 0.8)',
+    yellow: 'rgba(234, 179, 8, 0.8)',
+    green: 'rgba(34, 197, 94, 0.8)',
+    blue: 'rgba(59, 130, 246, 0.8)',
+    purple: 'rgba(168, 85, 247, 0.8)',
+    gray: 'rgba(156, 163, 175, 0.8)'
 };
-
-// ============================================================================
-// CHART INITIALIZATION
-// ============================================================================
-
-let bookingPaceChart, leadTimeChart, channelChart, velocityChart, pickupCurvesChart;
 
 function initCharts() {
     initBookingPaceChart();
@@ -808,19 +581,21 @@ function initCharts() {
 }
 
 function initBookingPaceChart() {
-    const ctx = document.getElementById('bookingPaceChart');
-    if (!ctx) return;
+    var ctx = document.getElementById('bookingPaceChart');
+    if (!ctx || !chartData.bookingPace) return;
     
     if (bookingPaceChart) bookingPaceChart.destroy();
+    
+    var data = chartData.bookingPace;
     
     bookingPaceChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: sampleData.bookingPace.dates,
+            labels: data.dates,
             datasets: [
                 {
                     label: 'Room Nights',
-                    data: sampleData.bookingPace.cumNights,
+                    data: data.cum_nights,
                     borderColor: 'rgb(59, 130, 246)',
                     backgroundColor: 'rgba(59, 130, 246, 0.1)',
                     borderWidth: 3,
@@ -830,7 +605,7 @@ function initBookingPaceChart() {
                 },
                 {
                     label: 'Revenue ($)',
-                    data: sampleData.bookingPace.cumRevenue,
+                    data: data.cum_revenue,
                     borderColor: 'rgb(34, 197, 94)',
                     backgroundColor: 'rgba(34, 197, 94, 0.1)',
                     borderWidth: 3,
@@ -840,7 +615,7 @@ function initBookingPaceChart() {
                 },
                 {
                     label: 'STLY Room Nights',
-                    data: sampleData.bookingPace.stlyNights,
+                    data: data.stly_nights,
                     borderColor: 'rgb(156, 163, 175)',
                     backgroundColor: 'transparent',
                     borderWidth: 2,
@@ -895,19 +670,22 @@ function initBookingPaceChart() {
 }
 
 function initLeadTimeChart() {
-    const ctx = document.getElementById('leadTimeChart');
-    if (!ctx) return;
+    var ctx = document.getElementById('leadTimeChart');
+    if (!ctx || !chartData.leadTime) return;
     
     if (leadTimeChart) leadTimeChart.destroy();
+    
+    var data = chartData.leadTime;
+    var colorMap = [chartColors.red, chartColors.orange, chartColors.yellow, chartColors.green, chartColors.blue, chartColors.purple];
     
     leadTimeChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: sampleData.leadTime.labels,
+            labels: data.labels,
             datasets: [{
                 label: 'Bookings',
-                data: sampleData.leadTime.counts,
-                backgroundColor: sampleData.leadTime.colors,
+                data: data.counts,
+                backgroundColor: colorMap,
                 borderRadius: 4,
                 barThickness: 24
             }]
@@ -921,8 +699,8 @@ function initLeadTimeChart() {
                 tooltip: {
                     callbacks: {
                         afterLabel: function(context) {
-                            const idx = context.dataIndex;
-                            return 'Revenue: $' + sampleData.leadTime.revenue[idx].toLocaleString();
+                            var idx = context.dataIndex;
+                            return 'Revenue: $' + data.revenue[idx].toLocaleString();
                         }
                     }
                 }
@@ -930,8 +708,7 @@ function initLeadTimeChart() {
             scales: {
                 x: {
                     beginAtZero: true,
-                    grid: { color: 'rgba(0,0,0,0.05)' },
-                    ticks: { stepSize: 5 }
+                    grid: { color: 'rgba(0,0,0,0.05)' }
                 },
                 y: { grid: { display: false } }
             }
@@ -940,18 +717,21 @@ function initLeadTimeChart() {
 }
 
 function initChannelChart() {
-    const ctx = document.getElementById('channelChart');
-    if (!ctx) return;
+    var ctx = document.getElementById('channelChart');
+    if (!ctx || !chartData.channels) return;
     
     if (channelChart) channelChart.destroy();
+    
+    var data = chartData.channels;
+    var colorList = [chartColors.blue, chartColors.green, chartColors.purple, chartColors.orange, chartColors.red, chartColors.gray];
     
     channelChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: sampleData.channels.labels,
+            labels: data.labels,
             datasets: [{
-                data: sampleData.channels.data,
-                backgroundColor: sampleData.channels.colors,
+                data: data.data,
+                backgroundColor: colorList.slice(0, data.labels.length),
                 borderWidth: 0
             }]
         },
@@ -965,26 +745,28 @@ function initChannelChart() {
 }
 
 function initVelocityChart() {
-    const ctx = document.getElementById('velocityChart');
-    if (!ctx) return;
+    var ctx = document.getElementById('velocityChart');
+    if (!ctx || !chartData.dailyVelocity) return;
     
     if (velocityChart) velocityChart.destroy();
+    
+    var data = chartData.dailyVelocity;
     
     velocityChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: sampleData.velocity.dates,
+            labels: data.dates,
             datasets: [
                 {
                     label: 'Daily Bookings',
-                    data: sampleData.velocity.dailyCount,
+                    data: data.bookings,
                     backgroundColor: 'rgba(59, 130, 246, 0.8)',
                     borderRadius: 4,
                     yAxisID: 'y'
                 },
                 {
                     label: 'Daily Revenue',
-                    data: sampleData.velocity.dailyRevenue,
+                    data: data.revenue,
                     type: 'line',
                     borderColor: 'rgb(34, 197, 94)',
                     borderWidth: 2,
@@ -1017,7 +799,6 @@ function initVelocityChart() {
                     type: 'linear',
                     position: 'left',
                     beginAtZero: true,
-                    max: 8,
                     title: { display: true, text: 'Bookings' },
                     grid: { color: 'rgba(0,0,0,0.05)' }
                 },
@@ -1040,19 +821,21 @@ function initVelocityChart() {
 }
 
 function initPickupCurvesChart() {
-    const ctx = document.getElementById('pickupCurvesChart');
-    if (!ctx) return;
+    var ctx = document.getElementById('pickupCurvesChart');
+    if (!ctx || !chartData.pickupCurves) return;
     
     if (pickupCurvesChart) pickupCurvesChart.destroy();
+    
+    var data = chartData.pickupCurves;
     
     pickupCurvesChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: sampleData.pickupCurves.daysOut.map(d => d + 'd'),
+            labels: data.days_out.map(function(d) { return d + 'd'; }),
             datasets: [
                 {
                     label: 'Peak Season',
-                    data: sampleData.pickupCurves.peak,
+                    data: data.peak,
                     borderColor: 'rgb(239, 68, 68)',
                     backgroundColor: 'transparent',
                     borderWidth: 3,
@@ -1062,7 +845,7 @@ function initPickupCurvesChart() {
                 },
                 {
                     label: 'High Season',
-                    data: sampleData.pickupCurves.high,
+                    data: data.high,
                     borderColor: 'rgb(249, 115, 22)',
                     backgroundColor: 'transparent',
                     borderWidth: 3,
@@ -1072,7 +855,7 @@ function initPickupCurvesChart() {
                 },
                 {
                     label: 'Shoulder Season',
-                    data: sampleData.pickupCurves.shoulder,
+                    data: data.shoulder,
                     borderColor: 'rgb(59, 130, 246)',
                     backgroundColor: 'transparent',
                     borderWidth: 3,
@@ -1082,7 +865,7 @@ function initPickupCurvesChart() {
                 },
                 {
                     label: 'Low Season',
-                    data: sampleData.pickupCurves.low,
+                    data: data.low,
                     borderColor: 'rgb(156, 163, 175)',
                     backgroundColor: 'transparent',
                     borderWidth: 3,
@@ -1131,167 +914,109 @@ function initPickupCurvesChart() {
     });
 }
 
-// ============================================================================
-// INTERACTIONS
-// ============================================================================
-
+// Refresh data
 function refreshData() {
-    // Show loading state
-    const btn = event.target.closest('button');
-    const originalText = btn.innerHTML;
+    var btn = event.target.closest('button');
+    var originalText = btn.innerHTML;
     btn.innerHTML = '<svg class="animate-spin w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Loading...';
     btn.disabled = true;
     
-    // Simulate refresh (replace with actual AJAX call)
+    // Reload the page to get fresh data
     setTimeout(function() {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-        
-        // Update timestamp
-        const now = new Date();
-        document.getElementById('last-updated').textContent = now.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit'
-        });
-        
-        showToast('Data refreshed successfully', 'success');
-    }, 1500);
+        window.location.reload();
+    }, 500);
 }
 
-function showMonthDetail(monthId) {
-    const modal = document.getElementById('monthDetailModal');
-    const title = document.getElementById('modal-month-title');
-    const content = document.getElementById('modal-content');
+// Show month detail modal
+function showMonthDetail(year, month) {
+    var modal = document.getElementById('monthDetailModal');
+    var title = document.getElementById('modal-month-title');
+    var content = document.getElementById('modal-content');
     
-    // Sample detail content
-    const monthData = {
-        'feb-2026': {
-            title: 'February 2026 Forecast',
-            season: 'Peak Season',
-            days: 28,
-            available: 560,
-            otb: { nights: 324, occ: 52, revenue: 58320, adr: 180 },
-            forecast: { nights: 485, occ: 78, revenue: 87300, adr: 180 },
-            scenario: { occ: 95, nights: 532 },
-            stly: { occ: 68, variance: '+14%' },
-            confidence: 89
-        },
-        'mar-2026': {
-            title: 'March 2026 Forecast',
-            season: 'Low Season',
-            days: 31,
-            available: 620,
-            otb: { nights: 168, occ: 27, revenue: 28560, adr: 170 },
-            forecast: { nights: 403, occ: 65, revenue: 68510, adr: 170 },
-            scenario: { occ: 65, nights: 403 },
-            stly: { occ: 60, variance: '+8%' },
-            confidence: 72
-        },
-        'apr-2026': {
-            title: 'April 2026 Forecast',
-            season: 'Shoulder Season',
-            days: 30,
-            available: 600,
-            otb: { nights: 74, occ: 12, revenue: 12950, adr: 175 },
-            forecast: { nights: 348, occ: 58, revenue: 60900, adr: 175 },
-            scenario: { occ: 70, nights: 420 },
-            stly: { occ: 60, variance: '-3%' },
-            confidence: 54
-        },
-        'may-2026': {
-            title: 'May 2026 Forecast',
-            season: 'Shoulder Season',
-            days: 31,
-            available: 620,
-            otb: { nights: 31, occ: 5, revenue: 5425, adr: 175 },
-            forecast: { nights: 310, occ: 50, revenue: 54250, adr: 175 },
-            scenario: { occ: 70, nights: 434 },
-            stly: null,
-            confidence: 38
-        },
-        'jun-2026': {
-            title: 'June 2026 Forecast',
-            season: 'High Season',
-            days: 30,
-            available: 600,
-            otb: { nights: 12, occ: 2, revenue: 2280, adr: 190 },
-            forecast: { nights: 527, occ: 85, revenue: 100130, adr: 190 },
-            scenario: { occ: 85, nights: 510 },
-            stly: null,
-            confidence: 25
+    // Find the forecast data for this month from the table
+    var forecasts = {{ forecast_summary|safe }};
+    var forecast = null;
+    
+    for (var i = 0; i < forecasts.length; i++) {
+        var f = forecasts[i];
+        var fDate = new Date(f.month);
+        if (fDate.getFullYear() == year && (fDate.getMonth() + 1) == month) {
+            forecast = f;
+            break;
         }
-    };
+    }
     
-    const data = monthData[monthId] || monthData['feb-2026'];
+    if (!forecast) {
+        content.innerHTML = '<div class="text-center py-8 text-gray-500">Forecast data not available.</div>';
+        modal.classList.remove('hidden');
+        return;
+    }
     
-    title.textContent = data.title;
+    title.textContent = forecast.month_name + ' Forecast';
     
-    content.innerHTML = `
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div class="bg-blue-50 rounded-lg p-4">
-                <p class="text-xs text-blue-700 font-medium uppercase">OTB (Current)</p>
-                <p class="text-3xl font-bold text-blue-900 mt-1">${data.otb.occ}%</p>
-                <p class="text-sm text-blue-700">${data.otb.nights} room nights</p>
-                <p class="text-sm text-blue-600">$${data.otb.revenue.toLocaleString()} revenue</p>
-            </div>
-            <div class="bg-green-50 rounded-lg p-4">
-                <p class="text-xs text-green-700 font-medium uppercase">Pickup Forecast</p>
-                <p class="text-3xl font-bold text-green-900 mt-1">${data.forecast.occ}%</p>
-                <p class="text-sm text-green-700">${data.forecast.nights} room nights</p>
-                <p class="text-sm text-green-600">$${data.forecast.revenue.toLocaleString()} revenue</p>
-            </div>
-            <div class="bg-purple-50 rounded-lg p-4">
-                <p class="text-xs text-purple-700 font-medium uppercase">Your Scenario</p>
-                <p class="text-3xl font-bold text-purple-900 mt-1">${data.scenario.occ}%</p>
-                <p class="text-sm text-purple-700">${data.scenario.nights} room nights</p>
-                <p class="text-sm text-purple-600">From Season settings</p>
-            </div>
-        </div>
-        
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-gray-50 rounded-lg p-3">
-                <p class="text-xs text-gray-500">Season</p>
-                <p class="text-sm font-semibold text-gray-900">${data.season}</p>
-            </div>
-            <div class="bg-gray-50 rounded-lg p-3">
-                <p class="text-xs text-gray-500">Days in Month</p>
-                <p class="text-sm font-semibold text-gray-900">${data.days}</p>
-            </div>
-            <div class="bg-gray-50 rounded-lg p-3">
-                <p class="text-xs text-gray-500">Available Room Nights</p>
-                <p class="text-sm font-semibold text-gray-900">${data.available}</p>
-            </div>
-            <div class="bg-gray-50 rounded-lg p-3">
-                <p class="text-xs text-gray-500">Forecast Confidence</p>
-                <p class="text-sm font-semibold text-gray-900">${data.confidence}%</p>
-            </div>
-        </div>
-        
-        ${data.stly ? `
-        <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
-            <div class="flex items-center justify-between">
-                <div>
-                    <p class="text-sm font-semibold text-amber-900">vs Same Time Last Year (STLY)</p>
-                    <p class="text-xs text-amber-700">Last year ended at ${data.stly.occ}% occupancy</p>
-                </div>
-                <span class="text-2xl font-bold ${data.stly.variance.startsWith('+') ? 'text-green-600' : 'text-red-600'}">
-                    ${data.stly.variance}
-                </span>
-            </div>
-        </div>
-        ` : ''}
-        
-        <div class="flex items-center justify-between pt-4 border-t">
-            <p class="text-sm text-gray-500">Click anywhere outside to close</p>
-            <button onclick="closeMonthDetail()" 
-                    class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
-                Close
-            </button>
-        </div>
-    `;
+    content.innerHTML = '\
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">\
+            <div class="bg-blue-50 rounded-lg p-4">\
+                <p class="text-xs text-blue-700 font-medium uppercase">OTB (Current)</p>\
+                <p class="text-3xl font-bold text-blue-900 mt-1">' + forecast.otb_occupancy + '%</p>\
+                <p class="text-sm text-blue-700">' + forecast.otb_nights.toLocaleString() + ' room nights</p>\
+                <p class="text-sm text-blue-600">$' + forecast.otb_revenue.toLocaleString() + ' revenue</p>\
+            </div>\
+            <div class="bg-green-50 rounded-lg p-4">\
+                <p class="text-xs text-green-700 font-medium uppercase">Pickup Forecast</p>\
+                <p class="text-3xl font-bold text-green-900 mt-1">' + forecast.forecast_occupancy + '%</p>\
+                <p class="text-sm text-green-700">' + forecast.forecast_nights.toLocaleString() + ' room nights</p>\
+                <p class="text-sm text-green-600">$' + forecast.forecast_revenue.toLocaleString() + ' revenue</p>\
+            </div>\
+            <div class="bg-purple-50 rounded-lg p-4">\
+                <p class="text-xs text-purple-700 font-medium uppercase">Your Scenario</p>\
+                <p class="text-3xl font-bold text-purple-900 mt-1">' + forecast.scenario_occupancy + '%</p>\
+                <p class="text-sm text-purple-700">' + forecast.scenario_nights.toLocaleString() + ' room nights</p>\
+                <p class="text-sm text-purple-600">From Season settings</p>\
+            </div>\
+        </div>\
+        \
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">\
+            <div class="bg-gray-50 rounded-lg p-3">\
+                <p class="text-xs text-gray-500">Season</p>\
+                <p class="text-sm font-semibold text-gray-900">' + forecast.season_name + '</p>\
+            </div>\
+            <div class="bg-gray-50 rounded-lg p-3">\
+                <p class="text-xs text-gray-500">Days Out</p>\
+                <p class="text-sm font-semibold text-gray-900">' + forecast.days_out + '</p>\
+            </div>\
+            <div class="bg-gray-50 rounded-lg p-3">\
+                <p class="text-xs text-gray-500">Available Room Nights</p>\
+                <p class="text-sm font-semibold text-gray-900">' + forecast.available_nights.toLocaleString() + '</p>\
+            </div>\
+            <div class="bg-gray-50 rounded-lg p-3">\
+                <p class="text-xs text-gray-500">Forecast Confidence</p>\
+                <p class="text-sm font-semibold text-gray-900">' + forecast.confidence + '% (' + forecast.confidence_label + ')</p>\
+            </div>\
+        </div>\
+        \
+        ' + (forecast.vs_stly !== null ? '\
+        <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">\
+            <div class="flex items-center justify-between">\
+                <div>\
+                    <p class="text-sm font-semibold text-amber-900">vs Same Time Last Year (STLY)</p>\
+                    <p class="text-xs text-amber-700">Last year ended at ' + forecast.stly_occupancy + '% occupancy</p>\
+                </div>\
+                <span class="text-2xl font-bold ' + (forecast.vs_stly >= 0 ? 'text-green-600' : 'text-red-600') + '">\
+                    ' + (forecast.vs_stly >= 0 ? '+' : '') + forecast.vs_stly + '%\
+                </span>\
+            </div>\
+        </div>\
+        ' : '') + '\
+        \
+        <div class="flex items-center justify-between pt-4 border-t">\
+            <p class="text-sm text-gray-500">Click anywhere outside to close</p>\
+            <button onclick="closeMonthDetail()" \
+                    class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">\
+                Close\
+            </button>\
+        </div>\
+    ';
     
     modal.classList.remove('hidden');
 }
@@ -1307,31 +1032,15 @@ document.getElementById('monthDetailModal').addEventListener('click', function(e
     }
 });
 
-// Toast notification
-function showToast(message, type) {
-    const toast = document.createElement('div');
-    toast.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg text-white z-50 transition-all duration-300 ${
-        type === 'success' ? 'bg-green-500' : 
-        type === 'error' ? 'bg-red-500' : 
-        'bg-blue-500'
-    }`;
-    toast.textContent = message;
-    
-    document.body.appendChild(toast);
-    
-    setTimeout(function() {
-        toast.style.opacity = '0';
-        setTimeout(function() { toast.remove(); }, 300);
-    }, 3000);
-}
-
-// ============================================================================
-// INITIALIZE ON PAGE LOAD
-// ============================================================================
-
+// Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Initializing Pickup Analysis Dashboard...');
     initCharts();
 });
+</script>
+
+<!-- Pass forecast data for modal -->
+<script>
+var forecasts = {{ forecast_summary|safe }};
 </script>
 {% endblock %}

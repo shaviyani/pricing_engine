@@ -35,6 +35,12 @@
             visibility: visible;
             opacity: 1;
         }
+        
+        /* Active nav link */
+        .nav-link-active {
+            background-color: #EBF5FF;
+            color: #1D4ED8;
+        }
     </style>
     
     {% block extra_css %}{% endblock %}
@@ -45,52 +51,184 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between items-center h-16">
                 <div class="flex items-center space-x-8">
-                    <a href="{% url 'pricing:home' %}" class="text-xl font-bold text-gray-900">
+                    <!-- Logo / Brand -->
+                    <a href="{% url 'pricing:root' %}" class="text-xl font-bold text-gray-900 flex items-center">
+                        <svg class="w-6 h-6 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                        </svg>
                         Pricing Engine
                     </a>
-                    <div class="hidden md:flex space-x-4">
-                        <a href="{% url 'pricing:home' %}" 
-                           class="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                            Home
+                    
+                    <!-- Main Navigation -->
+                    <div class="hidden md:flex space-x-1">
+                        {% if org and prop %}
+                        <!-- Property-level navigation -->
+                        <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}" 
+                           class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Dashboard
                         </a>
-                        <a href="{% url 'pricing:matrix' %}" 
-                           class="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                        <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}" 
+                           class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
                             Pricing Matrix
                         </a>
-                        <a href="{% url 'pricing:all_seasons' %}" 
-                           class="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                            All Seasons
+                        <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" 
+                           class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Booking Analysis
                         </a>
-                        <a href="{% url 'pricing:revenue_analysis' %}" 
-                           class="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                            Revenue Analysis
+                        <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}" 
+                           class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Pickup
                         </a>
+                        {% elif org %}
+                        <!-- Organization-level navigation -->
+                        <a href="{% url 'pricing:org_dashboard' org_code=org.code %}" 
+                           class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Properties
+                        </a>
+                        {% else %}
+                        <!-- Root-level navigation -->
+                        <a href="{% url 'pricing:org_selector' %}" 
+                           class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Organizations
+                        </a>
+                        {% endif %}
+                        
                         <a href="{% url 'admin:index' %}" 
-                           class="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                           class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
                             Admin
                         </a>
                     </div>
                 </div>
-                <div class="flex items-center">
-                    <span class="text-sm text-gray-500">Simplified MVP</span>
+                
+                <!-- Right side: Context breadcrumb -->
+                <div class="flex items-center space-x-4">
+                    {% if org and prop %}
+                    <!-- Property context -->
+                    <div class="hidden sm:flex items-center space-x-2 text-sm">
+                        <a href="{% url 'pricing:org_selector' %}" class="text-gray-400 hover:text-gray-600" title="All Organizations">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                            </svg>
+                        </a>
+                        <span class="text-gray-300">/</span>
+                        <a href="{% url 'pricing:org_dashboard' org_code=org.code %}" class="text-gray-500 hover:text-gray-700">
+                            {{ org.name }}
+                        </a>
+                        <span class="text-gray-300">/</span>
+                        <span class="text-gray-900 font-medium">{{ prop.name }}</span>
+                    </div>
+                    
+                    <!-- Property switcher dropdown -->
+                    <div class="relative" x-data="{ open: false }">
+                        <button onclick="togglePropertyDropdown()" 
+                                class="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-900 px-2 py-1 rounded border border-gray-200 hover:border-gray-300 transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4"/>
+                            </svg>
+                            <span class="hidden sm:inline">Switch</span>
+                        </button>
+                        <div id="propertyDropdown" 
+                             class="hidden absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg border border-gray-200 z-50">
+                            <div class="py-1">
+                                <a href="{% url 'pricing:org_dashboard' org_code=org.code %}" 
+                                   class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                    ← Back to {{ org.name }}
+                                </a>
+                                <hr class="my-1">
+                                <a href="{% url 'pricing:org_selector' %}" 
+                                   class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                    All Organizations
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% elif org %}
+                    <!-- Org context only -->
+                    <div class="hidden sm:flex items-center space-x-2 text-sm">
+                        <a href="{% url 'pricing:org_selector' %}" class="text-gray-400 hover:text-gray-600" title="All Organizations">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                            </svg>
+                        </a>
+                        <span class="text-gray-300">/</span>
+                        <span class="text-gray-900 font-medium">{{ org.name }}</span>
+                    </div>
+                    {% else %}
+                    <span class="text-sm text-gray-500">Revenue Management System</span>
+                    {% endif %}
                 </div>
+            </div>
+        </div>
+        
+        <!-- Mobile menu button -->
+        <div class="md:hidden border-t border-gray-200">
+            <div class="px-2 pt-2 pb-3 space-y-1">
+                {% if org and prop %}
+                <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}" 
+                   class="block text-gray-700 hover:bg-gray-100 px-3 py-2 rounded-md text-base font-medium">
+                    Dashboard
+                </a>
+                <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}" 
+                   class="block text-gray-700 hover:bg-gray-100 px-3 py-2 rounded-md text-base font-medium">
+                    Pricing Matrix
+                </a>
+                <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" 
+                   class="block text-gray-700 hover:bg-gray-100 px-3 py-2 rounded-md text-base font-medium">
+                    Booking Analysis
+                </a>
+                <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}" 
+                   class="block text-gray-700 hover:bg-gray-100 px-3 py-2 rounded-md text-base font-medium">
+                    Pickup
+                </a>
+                {% endif %}
+                <a href="{% url 'admin:index' %}" 
+                   class="block text-gray-700 hover:bg-gray-100 px-3 py-2 rounded-md text-base font-medium">
+                    Admin
+                </a>
             </div>
         </div>
     </nav>
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main>
         {% block content %}{% endblock %}
     </main>
 
     <!-- Footer -->
     <footer class="bg-white border-t border-gray-200 mt-12">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <p class="text-center text-sm text-gray-500">
-                Hotel Pricing Engine - Minimal MVP
-            </p>
+            <div class="flex flex-col sm:flex-row justify-between items-center">
+                <p class="text-sm text-gray-500">
+                    Hotel Revenue Management System
+                </p>
+                <p class="text-xs text-gray-400 mt-2 sm:mt-0">
+                    {% if org and prop %}
+                    {{ org.name }} • {{ prop.name }}
+                    {% elif org %}
+                    {{ org.name }}
+                    {% endif %}
+                </p>
+            </div>
         </div>
     </footer>
+
+    <!-- Property dropdown toggle script -->
+    <script>
+        function togglePropertyDropdown() {
+            var dropdown = document.getElementById('propertyDropdown');
+            dropdown.classList.toggle('hidden');
+        }
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(event) {
+            var dropdown = document.getElementById('propertyDropdown');
+            var button = event.target.closest('button');
+            
+            if (dropdown && !dropdown.contains(event.target) && !button) {
+                dropdown.classList.add('hidden');
+            }
+        });
+    </script>
 
     {% block extra_js %}{% endblock %}
 </body>

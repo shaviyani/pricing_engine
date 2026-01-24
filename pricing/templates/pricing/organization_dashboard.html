@@ -1,0 +1,327 @@
+{% extends "pricing/base.html" %}
+{% load humanize %}
+
+{% block title %}{{ org.name }} - Dashboard{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    
+    <!-- Header -->
+    <div class="mb-8">
+        <div class="flex items-center justify-between">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">{{ org.name }}</h1>
+                <p class="mt-1 text-sm text-gray-500">
+                    Portfolio Overview • {{ consolidated.property_count }} Propert{{ consolidated.property_count|pluralize:"y,ies" }} • {{ consolidated.year }}
+                </p>
+            </div>
+            <div class="flex items-center space-x-3">
+                <a href="{% url 'pricing:org_selector' %}" 
+                   class="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                    </svg>
+                    Switch Organization
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Consolidated KPI Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+        <!-- Total Revenue -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Revenue</p>
+                    <p class="mt-1 text-2xl font-bold text-gray-900">${{ consolidated.total_revenue|floatformat:0|intcomma }}</p>
+                </div>
+                <div class="p-3 bg-green-100 rounded-lg">
+                    <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+            </div>
+            <p class="mt-2 text-xs text-gray-500">YTD {{ consolidated.year }}</p>
+        </div>
+
+        <!-- Room Nights -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Room Nights</p>
+                    <p class="mt-1 text-2xl font-bold text-gray-900">{{ consolidated.total_room_nights|intcomma }}</p>
+                </div>
+                <div class="p-3 bg-blue-100 rounded-lg">
+                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                    </svg>
+                </div>
+            </div>
+            <p class="mt-2 text-xs text-gray-500">Total sold nights</p>
+        </div>
+
+        <!-- Portfolio ADR -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Portfolio ADR</p>
+                    <p class="mt-1 text-2xl font-bold text-gray-900">${{ consolidated.portfolio_adr|floatformat:2 }}</p>
+                </div>
+                <div class="p-3 bg-purple-100 rounded-lg">
+                    <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                    </svg>
+                </div>
+            </div>
+            <p class="mt-2 text-xs text-gray-500">Average Daily Rate</p>
+        </div>
+
+        <!-- Portfolio Occupancy -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Occupancy</p>
+                    <p class="mt-1 text-2xl font-bold text-gray-900">{{ consolidated.portfolio_occupancy }}%</p>
+                </div>
+                <div class="p-3 bg-amber-100 rounded-lg">
+                    <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                    </svg>
+                </div>
+            </div>
+            <div class="mt-2">
+                <div class="w-full bg-gray-200 rounded-full h-1.5">
+                    <div class="bg-amber-500 h-1.5 rounded-full" style="width: {{ consolidated.portfolio_occupancy }}%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Total Rooms -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Inventory</p>
+                    <p class="mt-1 text-2xl font-bold text-gray-900">{{ consolidated.total_rooms }}</p>
+                </div>
+                <div class="p-3 bg-indigo-100 rounded-lg">
+                    <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+                    </svg>
+                </div>
+            </div>
+            <p class="mt-2 text-xs text-gray-500">Rooms across {{ consolidated.property_count }} properties</p>
+        </div>
+    </div>
+
+    <!-- Properties Section -->
+    <div class="mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Properties</h2>
+    </div>
+
+    {% if properties %}
+    <!-- Property Cards Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for card in property_cards %}
+        <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=card.property.code %}" 
+           class="block bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md hover:border-blue-300 transition-all duration-200">
+            
+            <!-- Property Header -->
+            <div class="p-5 border-b border-gray-100">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900">{{ card.property.name }}</h3>
+                        <p class="text-sm text-gray-500">{{ card.property.total_rooms }} rooms</p>
+                    </div>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
+                        {% if card.property.is_active %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                        {% if card.property.is_active %}Active{% else %}Inactive{% endif %}
+                    </span>
+                </div>
+            </div>
+            
+            <!-- Property Stats -->
+            <div class="p-5">
+                <div class="grid grid-cols-2 gap-4">
+                    <!-- Revenue -->
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 uppercase">Revenue</p>
+                        <p class="mt-1 text-lg font-bold text-gray-900">${{ card.revenue|floatformat:0|intcomma }}</p>
+                    </div>
+                    
+                    <!-- Room Nights -->
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 uppercase">Room Nights</p>
+                        <p class="mt-1 text-lg font-bold text-gray-900">{{ card.room_nights|intcomma }}</p>
+                    </div>
+                    
+                    <!-- ADR -->
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 uppercase">ADR</p>
+                        <p class="mt-1 text-lg font-bold text-blue-600">${{ card.adr|floatformat:2 }}</p>
+                    </div>
+                    
+                    <!-- Bookings -->
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 uppercase">Bookings</p>
+                        <p class="mt-1 text-lg font-bold text-gray-900">{{ card.bookings|intcomma }}</p>
+                    </div>
+                </div>
+                
+                <!-- Revenue Contribution Bar -->
+                {% if consolidated.total_revenue > 0 %}
+                <div class="mt-4">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>Revenue Contribution</span>
+                        {% widthratio card.revenue consolidated.total_revenue 100 as contribution %}
+                        <span>{{ contribution }}%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-blue-500 h-2 rounded-full transition-all duration-300" 
+                             style="width: {{ contribution }}%"></div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- Property Footer -->
+            <div class="px-5 py-3 bg-gray-50 rounded-b-xl border-t border-gray-100">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs text-gray-500">Click to view dashboard</span>
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                </div>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    
+    {% else %}
+    <!-- No Properties -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+        </svg>
+        <h3 class="mt-4 text-lg font-medium text-gray-900">No Properties</h3>
+        <p class="mt-2 text-sm text-gray-500">
+            This organization doesn't have any properties yet.
+        </p>
+        <div class="mt-6">
+            <a href="/admin/pricing/property/add/" 
+               class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                Add Property
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Quick Stats Summary Table -->
+    {% if property_cards %}
+    <div class="mt-8">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Performance Summary</h2>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Property
+                        </th>
+                        <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Revenue
+                        </th>
+                        <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Room Nights
+                        </th>
+                        <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            ADR
+                        </th>
+                        <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Bookings
+                        </th>
+                        <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Contribution
+                        </th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for card in property_cards %}
+                    <tr class="hover:bg-gray-50 transition">
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=card.property.code %}" 
+                               class="font-medium text-blue-600 hover:text-blue-800">
+                                {{ card.property.name }}
+                            </a>
+                            <p class="text-xs text-gray-500">{{ card.property.total_rooms }} rooms</p>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-gray-900">
+                            ${{ card.revenue|floatformat:0|intcomma }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                            {{ card.room_nights|intcomma }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-blue-600">
+                            ${{ card.adr|floatformat:2 }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                            {{ card.bookings|intcomma }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right">
+                            {% if consolidated.total_revenue > 0 %}
+                            {% widthratio card.revenue consolidated.total_revenue 100 as contribution %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                {{ contribution }}%
+                            </span>
+                            {% else %}
+                            <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="bg-gray-50">
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                            Total
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                            ${{ consolidated.total_revenue|floatformat:0|intcomma }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                            {{ consolidated.total_room_nights|intcomma }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-blue-600">
+                            ${{ consolidated.portfolio_adr|floatformat:2 }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                            {{ consolidated.total_reservations|intcomma }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                            100%
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Add any interactive features here
+document.addEventListener('DOMContentLoaded', function() {
+    // Animate numbers on load (optional enhancement)
+    const counters = document.querySelectorAll('[data-counter]');
+    counters.forEach(counter => {
+        const target = parseInt(counter.getAttribute('data-counter'));
+        // Add animation logic if desired
+    });
+});
+</script>
+{% endblock %}

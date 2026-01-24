@@ -3,6 +3,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, timedelta
 from collections import defaultdict
+from dateutil.relativedelta import relativedelta
 import calendar
 
 
@@ -288,11 +289,38 @@ Calculates projected revenue based on:
 class RevenueForecastService:
     """
     Service for calculating revenue forecasts with channel distribution.
+    
+    Now supports multi-property filtering via 'hotel' parameter.
     """
     
-    def __init__(self):
-        """Initialize forecast service."""
-        pass
+    def __init__(self, hotel=None):
+        """
+        Initialize forecast service.
+        
+        Args:
+            hotel: Property instance to filter by (None for all properties)
+        """
+        self.hotel = hotel
+    
+    def _get_seasons(self):
+        """Get seasons queryset, filtered by hotel if set."""
+        from pricing.models import Season
+        qs = Season.objects.all()
+        if self.hotel:
+            qs = qs.filter(hotel=self.hotel)
+        return qs.order_by('start_date')
+    
+    def _get_room_types(self):
+        """Get room types queryset, filtered by hotel if set."""
+        from pricing.models import RoomType
+        qs = RoomType.objects.all()
+        if self.hotel:
+            qs = qs.filter(hotel=self.hotel)
+        return qs
+    
+    def _get_total_rooms(self):
+        """Get total room count, filtered by hotel if set."""
+        return sum(room.number_of_rooms for room in self._get_room_types())
     
     def calculate_seasonal_forecast(self):
         """
@@ -301,10 +329,8 @@ class RevenueForecastService:
         Returns:
             list of dicts with season data
         """
-        from pricing.models import Season, RoomType
-        
-        seasons = Season.objects.all().order_by('start_date')
-        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
+        seasons = self._get_seasons()
+        total_rooms = self._get_total_rooms()
         
         if total_rooms == 0:
             return []
@@ -321,26 +347,20 @@ class RevenueForecastService:
         """
         Calculate revenue forecast by month.
         
-        🐛 FIX: Now properly handles seasons that span across years
-        (e.g., Peak Season: Dec 2025 → Jan 2026)
-        
         Args:
             year: Optional year (defaults to current calendar year if most seasons are in it)
         
         Returns:
             list of dicts with monthly data
         """
-        from pricing.models import Season, RoomType
-        
-        seasons = Season.objects.all().order_by('start_date')
-        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
+        seasons = self._get_seasons()
+        total_rooms = self._get_total_rooms()
         
         if not seasons.exists() or total_rooms == 0:
             return []
         
-        # 🔧 FIX: Determine the main year based on where most season days fall
+        # Determine the main year based on where most season days fall
         if year is None:
-            # Count days per year across all seasons
             year_days = defaultdict(int)
             for season in seasons:
                 current_date = season.start_date
@@ -348,12 +368,10 @@ class RevenueForecastService:
                     year_days[current_date.year] += 1
                     current_date += timedelta(days=1)
             
-            # Use the year with the most days
             year = max(year_days.items(), key=lambda x: x[1])[0] if year_days else seasons.first().start_date.year
         
         monthly_data = []
         
-        # Iterate through all 12 months of the target year
         for month_num in range(1, 13):
             month_start = date(year, month_num, 1)
             last_day = calendar.monthrange(year, month_num)[1]
@@ -368,25 +386,15 @@ class RevenueForecastService:
         return monthly_data
     
     def _calculate_season_revenue(self, season, total_rooms):
-        """
-        Calculate revenue for a specific season.
-        
-        Args:
-            season: Season object
-            total_rooms: Total number of rooms across all room types
-        
-        Returns:
-            dict with season revenue breakdown
-        """
+        """Calculate revenue for a specific season."""
         from pricing.models import Channel
         
-        # Calculate basic metrics
         days = (season.end_date - season.start_date).days + 1
         available_room_nights = total_rooms * days
         occupancy_rate = season.expected_occupancy / Decimal('100.00')
         occupied_room_nights = int(available_room_nights * occupancy_rate)
         
-        # Get channel distribution
+        # Channels are shared (no hotel filter)
         channels = Channel.objects.all()
         channel_breakdown = []
         
@@ -399,17 +407,14 @@ class RevenueForecastService:
             if channel.distribution_share_percent == 0:
                 continue
             
-            # Calculate channel's share of room nights
             channel_share = channel.distribution_share_percent / Decimal('100.00')
             channel_room_nights = int(occupied_room_nights * channel_share)
             
             if channel_room_nights == 0:
                 continue
             
-            # Calculate channel ADR (average across all room types, rate plans, modifiers)
             channel_adr = self._calculate_channel_adr(channel, season)
             
-            # Calculate revenues
             channel_gross = channel_adr * channel_room_nights
             channel_commission = channel_gross * (channel.commission_percent / Decimal('100.00'))
             channel_net = channel_gross - channel_commission
@@ -429,7 +434,6 @@ class RevenueForecastService:
             total_commission += channel_commission
             total_weighted_room_nights += channel_room_nights
         
-        # Calculate weighted ADR
         weighted_adr = (total_gross_revenue / total_weighted_room_nights 
                        if total_weighted_room_nights > 0 else Decimal('0.00'))
         
@@ -446,37 +450,148 @@ class RevenueForecastService:
             'channel_breakdown': channel_breakdown,
         }
     
+    def _calculate_channel_adr(self, channel, season):
+        """Calculate weighted average ADR for a channel in a season."""
+        from pricing.models import RatePlan, RateModifier
+        from pricing.services import calculate_final_rate_with_modifier
+        
+        room_types = self._get_room_types()
+        rate_plans = RatePlan.objects.all()  # Shared
+        
+        if not room_types.exists() or not rate_plans.exists():
+            return Decimal('0.00')
+        
+        total_rate = Decimal('0.00')
+        count = 0
+        
+        # Get modifiers for this channel (shared)
+        modifiers = RateModifier.objects.filter(channel=channel, active=True)
+        
+        for room in room_types:
+            for rate_plan in rate_plans:
+                if modifiers.exists():
+                    for modifier in modifiers:
+                        season_discount = modifier.get_discount_for_season(season)
+                        
+                        final_rate, _ = calculate_final_rate_with_modifier(
+                            room_base_rate=room.get_effective_base_rate(),
+                            season_index=season.season_index,
+                            meal_supplement=rate_plan.meal_supplement,
+                            channel_base_discount=channel.base_discount_percent,
+                            modifier_discount=season_discount,
+                            commission_percent=Decimal('0.00'),
+                            occupancy=2
+                        )
+                        total_rate += final_rate
+                        count += 1
+                else:
+                    final_rate, _ = calculate_final_rate_with_modifier(
+                        room_base_rate=room.get_effective_base_rate(),
+                        season_index=season.season_index,
+                        meal_supplement=rate_plan.meal_supplement,
+                        channel_base_discount=channel.base_discount_percent,
+                        modifier_discount=Decimal('0.00'),
+                        commission_percent=Decimal('0.00'),
+                        occupancy=2
+                    )
+                    total_rate += final_rate
+                    count += 1
+        
+        if count > 0:
+            return (total_rate / count).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+    
+    def _calculate_month_revenue(self, month_start, month_end, seasons, total_rooms):
+        """Calculate revenue for a specific month."""
+        from pricing.models import Channel
+        
+        days_in_month = (month_end - month_start).days + 1
+        
+        month_gross = Decimal('0.00')
+        month_commission = Decimal('0.00')
+        month_revenue = Decimal('0.00')
+        month_room_nights = 0
+        channel_contributions = defaultdict(lambda: {
+            'room_nights': 0,
+            'gross_revenue': Decimal('0.00'),
+            'commission': Decimal('0.00'),
+            'net_revenue': Decimal('0.00'),
+        })
+        
+        for season in seasons:
+            overlap_start = max(month_start, season.start_date)
+            overlap_end = min(month_end, season.end_date)
+            
+            if overlap_start <= overlap_end:
+                overlap_days = (overlap_end - overlap_start).days + 1
+                season_data = self._calculate_season_revenue(season, total_rooms)
+                proportion = Decimal(str(overlap_days)) / Decimal(str(season_data['days']))
+                
+                month_gross += season_data['gross_revenue'] * proportion
+                month_commission += season_data['commission_amount'] * proportion
+                month_revenue += season_data['net_revenue'] * proportion
+                month_room_nights += int(season_data['occupied_room_nights'] * proportion)
+                
+                for channel_data in season_data['channel_breakdown']:
+                    channel_id = channel_data['channel'].id
+                    channel_contributions[channel_id]['room_nights'] += int(
+                        channel_data['room_nights'] * proportion
+                    )
+                    channel_contributions[channel_id]['gross_revenue'] += (
+                        channel_data['gross_revenue'] * proportion
+                    )
+                    channel_contributions[channel_id]['commission'] += (
+                        channel_data['commission_amount'] * proportion
+                    )
+                    channel_contributions[channel_id]['net_revenue'] += (
+                        channel_data['net_revenue'] * proportion
+                    )
+        
+        channels = Channel.objects.all()
+        channel_breakdown = []
+        for channel in channels:
+            if channel.id in channel_contributions:
+                contrib = channel_contributions[channel.id]
+                channel_breakdown.append({
+                    'channel': channel,
+                    'room_nights': contrib['room_nights'],
+                    'gross_revenue': contrib['gross_revenue'],
+                    'commission_amount': contrib['commission'],
+                    'net_revenue': contrib['net_revenue'],
+                })
+        
+        available_room_nights = total_rooms * days_in_month
+        occupancy_percent = (
+            Decimal(str(month_room_nights)) / Decimal(str(available_room_nights)) * Decimal('100.00')
+            if available_room_nights > 0 else Decimal('0.00')
+        )
+        
+        return {
+            'month': month_start.month,
+            'month_name': month_start.strftime('%B'),
+            'days': days_in_month,
+            'available_room_nights': available_room_nights,
+            'occupied_room_nights': month_room_nights,
+            'occupancy_percent': occupancy_percent.quantize(Decimal('0.1')),
+            'gross_revenue': month_gross.quantize(Decimal('0.01')),
+            'commission_amount': month_commission.quantize(Decimal('0.01')),
+            'net_revenue': month_revenue.quantize(Decimal('0.01')),
+            'channel_breakdown': channel_breakdown,
+        }
+    
     def calculate_occupancy_forecast(self, year=None):
-        """
-        Calculate monthly occupancy forecast.
-        
-        Uses the same logic as calculate_monthly_forecast but focuses on
-        occupancy metrics rather than revenue.
-        
-        Args:
-            year: Optional year (defaults to main season year)
-        
-        Returns:
-            dict with:
-            - monthly_data: List of monthly occupancy info
-            - annual_metrics: Annual occupancy KPIs
-            - seasonal_data: Occupancy breakdown by season
-        """
-        from pricing.models import Season, RoomType
-        
-        seasons = Season.objects.all().order_by('start_date')
-        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
+        """Calculate monthly occupancy forecast."""
+        seasons = self._get_seasons()
+        total_rooms = self._get_total_rooms()
         
         if not seasons.exists() or total_rooms == 0:
             return None
         
-        # Get monthly forecast data (already has occupancy info)
         monthly_forecast = self.calculate_monthly_forecast(year)
         
         if not monthly_forecast:
             return None
         
-        # Extract monthly occupancy data
         monthly_data = []
         total_available_nights = 0
         total_occupied_nights = 0
@@ -485,7 +600,7 @@ class RevenueForecastService:
         for month in monthly_forecast:
             monthly_data.append({
                 'month': month['month'],
-                'month_name': month['month_name'][:3],  # Short name (Jan, Feb, etc.)
+                'month_name': month['month_name'][:3],
                 'occupancy_percent': float(month['occupancy_percent']),
                 'available_room_nights': month['available_room_nights'],
                 'occupied_room_nights': month['occupied_room_nights'],
@@ -495,21 +610,17 @@ class RevenueForecastService:
             total_available_nights += month['available_room_nights']
             total_occupied_nights += month['occupied_room_nights']
             
-            # Count days with 80%+ occupancy
             if month['occupancy_percent'] >= Decimal('80.00'):
                 occupancy_days_80_plus += month['days']
         
-        # Calculate annual metrics
         annual_occupancy = (
             Decimal(str(total_occupied_nights)) / Decimal(str(total_available_nights)) * Decimal('100.00')
             if total_available_nights > 0 else Decimal('0.00')
         )
         
-        # Find peak and low months
         peak_month = max(monthly_data, key=lambda x: x['occupancy_percent'])
         low_month = min(monthly_data, key=lambda x: x['occupancy_percent'])
         
-        # Calculate seasonal occupancy breakdown
         seasonal_data = []
         for season in seasons:
             days = (season.end_date - season.start_date).days + 1
@@ -541,1048 +652,632 @@ class RevenueForecastService:
             },
             'seasonal_data': seasonal_data,
         }
-        
-    def _calculate_month_revenue(self, month_start, month_end, seasons, total_rooms):
-        """
-        Calculate revenue for a specific month.
-        
-        A month may overlap with multiple seasons, so we proportion the revenue
-        based on how many days of each season fall within the month.
-        
-        Args:
-            month_start: date object (first day of month)
-            month_end: date object (last day of month)
-            seasons: QuerySet of Season objects
-            total_rooms: Total number of rooms
-        
-        Returns:
-            dict with monthly revenue breakdown
-        """
-        days_in_month = (month_end - month_start).days + 1
-        
-        # Find overlapping seasons and calculate their contribution
-        month_revenue = Decimal('0.00')
-        month_gross = Decimal('0.00')
-        month_commission = Decimal('0.00')
-        month_room_nights = 0
-        channel_contributions = defaultdict(lambda: {
-            'room_nights': 0,
-            'gross_revenue': Decimal('0.00'),
-            'commission': Decimal('0.00'),
-            'net_revenue': Decimal('0.00'),
-        })
-        
-        for season in seasons:
-            # Check if season overlaps with this month
-            overlap_start = max(month_start, season.start_date)
-            overlap_end = min(month_end, season.end_date)
-            
-            if overlap_start <= overlap_end:
-                # Calculate days of overlap
-                overlap_days = (overlap_end - overlap_start).days + 1
-                
-                # Get season revenue data
-                season_data = self._calculate_season_revenue(season, total_rooms)
-                
-                # Proportion revenue by overlap days
-                proportion = Decimal(str(overlap_days)) / Decimal(str(season_data['days']))
-                
-                # Add proportional contribution
-                month_gross += season_data['gross_revenue'] * proportion
-                month_commission += season_data['commission_amount'] * proportion
-                month_revenue += season_data['net_revenue'] * proportion
-                month_room_nights += int(season_data['occupied_room_nights'] * proportion)
-                
-                # Proportional channel breakdown
-                for channel_data in season_data['channel_breakdown']:
-                    channel_id = channel_data['channel'].id
-                    channel_contributions[channel_id]['room_nights'] += int(
-                        channel_data['room_nights'] * proportion
-                    )
-                    channel_contributions[channel_id]['gross_revenue'] += (
-                        channel_data['gross_revenue'] * proportion
-                    )
-                    channel_contributions[channel_id]['commission'] += (
-                        channel_data['commission_amount'] * proportion
-                    )
-                    channel_contributions[channel_id]['net_revenue'] += (
-                        channel_data['net_revenue'] * proportion
-                    )
-        
-        # Build channel breakdown
-        from pricing.models import Channel
-        channel_breakdown = []
-        for channel in Channel.objects.all():
-            if channel.id in channel_contributions:
-                contrib = channel_contributions[channel.id]
-                channel_breakdown.append({
-                    'channel': channel,
-                    'share_percent': channel.distribution_share_percent,
-                    'room_nights': contrib['room_nights'],
-                    'gross_revenue': contrib['gross_revenue'],
-                    'commission_amount': contrib['commission'],
-                    'net_revenue': contrib['net_revenue'],
-                })
-        
-        # Calculate metrics
-        available_room_nights = total_rooms * days_in_month
-        occupancy_percent = (
-            Decimal(str(month_room_nights)) / Decimal(str(available_room_nights)) * Decimal('100.00')
-            if available_room_nights > 0 else Decimal('0.00')
-        )
-        weighted_adr = (
-            month_gross / Decimal(str(month_room_nights))
-            if month_room_nights > 0 else Decimal('0.00')
-        )
-        
-        return {
-            'month': month_start.month,
-            'month_name': month_start.strftime('%B %Y'),
-            'year': month_start.year,
-            'days': days_in_month,
-            'available_room_nights': available_room_nights,
-            'occupied_room_nights': month_room_nights,
-            'occupancy_percent': occupancy_percent,
-            'weighted_adr': weighted_adr,
-            'gross_revenue': month_gross,
-            'commission_amount': month_commission,
-            'net_revenue': month_revenue,
-            'channel_breakdown': channel_breakdown,
-        }
-    
-    def _calculate_channel_adr(self, channel, season):
-        """
-        Calculate average daily rate (ADR) for a channel in a season.
-        
-        This is the average rate across:
-        - All room types (weighted by number_of_rooms)
-        - All rate plans (equal weight)
-        - All active rate modifiers for this channel (equal weight)
-        
-        Args:
-            channel: Channel object
-            season: Season object
-        
-        Returns:
-            Decimal: Weighted ADR for the channel
-        """
-        from pricing.models import RoomType, RatePlan, RateModifier
-        from pricing.services import calculate_final_rate_with_modifier
-        
-        rooms = RoomType.objects.all()
-        rate_plans = RatePlan.objects.all()
-        modifiers = RateModifier.objects.filter(channel=channel, active=True)
-        
-        if not all([rooms.exists(), rate_plans.exists(), modifiers.exists()]):
-            return Decimal('0.00')
-        
-        total_rate = Decimal('0.00')
-        total_weight = 0
-        
-        for room in rooms:
-            room_weight = room.number_of_rooms  # Weight by inventory
-            
-            for rate_plan in rate_plans:
-                for modifier in modifiers:
-                    # Get season-specific discount
-                    season_discount = modifier.get_discount_for_season(season)
-                    
-                    # Calculate final rate
-                    final_rate, _ = calculate_final_rate_with_modifier(
-                        room_base_rate=room.get_effective_base_rate(),
-                        season_index=season.season_index,
-                        meal_supplement=rate_plan.meal_supplement,
-                        channel_base_discount=channel.base_discount_percent,
-                        modifier_discount=season_discount,
-                        commission_percent=channel.commission_percent,
-                        occupancy=2
-                    )
-                    
-                    total_rate += final_rate * room_weight
-                    total_weight += room_weight
-        
-        return (total_rate / total_weight).quantize(Decimal('0.01')) if total_weight > 0 else Decimal('0.00')
     
     def validate_channel_distribution(self):
-        """
-        Validate that channel distribution percentages total 100%.
-        
-        Returns:
-            tuple: (is_valid: bool, total_percent: Decimal, message: str)
-        """
+        """Validate that channel distribution shares equal 100%."""
         from pricing.models import Channel
         
-        channels = Channel.objects.all()
+        total = Channel.objects.aggregate(
+            total=Sum('distribution_share_percent')
+        )['total'] or Decimal('0.00')
         
-        if not channels.exists():
-            return False, Decimal('0.00'), "No channels configured"
-        
-        total_percent = sum(c.distribution_share_percent for c in channels)
-        
-        is_valid = total_percent == Decimal('100.00')
+        is_valid = abs(total - Decimal('100.00')) < Decimal('0.01')
         
         if is_valid:
-            message = f"Channel distribution is valid ({total_percent}%)"
+            message = f"✓ Total distribution: {total}%"
+        elif total == Decimal('0.00'):
+            message = "⚠ No distribution shares set"
+        elif total < Decimal('100.00'):
+            message = f"⚠ Total distribution: {total}% (missing {Decimal('100.00') - total}%)"
         else:
-            message = f"Channel distribution totals {total_percent}% (must be 100.00%)"
+            message = f"⚠ Total distribution: {total}% (exceeds by {total - Decimal('100.00')}%)"
         
-        return is_valid, total_percent, message
+        return is_valid, total, message
     
     
     
-#Pickup Analysis
+"""
+Pickup Analysis Service - Works directly with Reservation data.
+
+This version calculates OTB (On The Books) metrics directly from Reservation
+data, eliminating the need for separate MonthlyPickupSnapshot records.
+
+Usage:
+    from pricing.services import PickupAnalysisService
+    
+    service = PickupAnalysisService(property=prop)
+    forecast = service.get_forecast_summary(months_ahead=6)
+"""
+
+from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from collections import defaultdict
+import calendar
+
 
 class PickupAnalysisService:
     """
     Service for pickup analysis, curve building, and forecasting.
     
+    Supports multi-property filtering via the property parameter.
+    Calculates OTB directly from Reservation data.
+    
     Forecast Methodology:
     - 50% weight: Historical pickup curve for season type
     - 30% weight: STLY (Same Time Last Year) comparison
     - 20% weight: Recent booking velocity trend
-    
-    This provides a data-driven forecast independent of manual estimates.
     """
     
-    def __init__(self):
-        """Initialize service with model references."""
-        pass
-    
-    # =========================================================================
-    # SNAPSHOT CAPTURE
-    # =========================================================================
-    
-    def capture_daily_snapshot(self, arrival_date, otb_data):
+    def __init__(self, property=None):
         """
-        Record today's OTB position for a specific arrival date.
+        Initialize service with optional property filter.
         
         Args:
-            arrival_date: The future arrival date
-            otb_data: Dict with keys:
-                - room_nights: int
-                - revenue: Decimal
-                - reservations: int
-                - by_channel: dict (optional)
-                - by_room_type: dict (optional)
-                - by_rate_plan: dict (optional)
-        
-        Returns:
-            DailyPickupSnapshot instance
+            property: Optional Property instance to filter all queries.
+                     If None, analyzes all properties (legacy behavior).
         """
-        from pricing.models import DailyPickupSnapshot
-        
-        today = date.today()
-        
-        snapshot, created = DailyPickupSnapshot.objects.update_or_create(
-            snapshot_date=today,
-            arrival_date=arrival_date,
-            defaults={
-                'otb_room_nights': otb_data.get('room_nights', 0),
-                'otb_revenue': otb_data.get('revenue', Decimal('0.00')),
-                'otb_reservations': otb_data.get('reservations', 0),
-                'otb_by_channel': otb_data.get('by_channel', {}),
-                'otb_by_room_type': otb_data.get('by_room_type', {}),
-                'otb_by_rate_plan': otb_data.get('by_rate_plan', {}),
-            }
-        )
-        
-        return snapshot
-    
-    def capture_monthly_snapshot(self, target_month, snapshot_date=None):
-        """
-        Capture aggregated OTB snapshot for an entire month.
-        
-        Args:
-            target_month: date object (any day in target month)
-            snapshot_date: date to record as (defaults to today)
-        
-        Returns:
-            MonthlyPickupSnapshot instance
-        """
-        from pricing.models import (
-            MonthlyPickupSnapshot, DailyPickupSnapshot, RoomType
-        )
-        
-        if snapshot_date is None:
-            snapshot_date = date.today()
-        
-        # Normalize target_month to first day
-        target_month_start = target_month.replace(day=1)
-        
-        # Calculate last day of month
-        _, last_day = calendar.monthrange(target_month.year, target_month.month)
-        target_month_end = target_month.replace(day=last_day)
-        
-        # Get all daily snapshots for this month from the snapshot_date
-        daily_snapshots = DailyPickupSnapshot.objects.filter(
-            snapshot_date=snapshot_date,
-            arrival_date__gte=target_month_start,
-            arrival_date__lte=target_month_end
-        )
-        
-        # Aggregate metrics
-        total_room_nights = 0
-        total_revenue = Decimal('0.00')
-        total_reservations = 0
-        channel_breakdown = defaultdict(int)
-        room_type_breakdown = defaultdict(int)
-        
-        for snapshot in daily_snapshots:
-            total_room_nights += snapshot.otb_room_nights
-            total_revenue += snapshot.otb_revenue
-            total_reservations += snapshot.otb_reservations
-            
-            # Aggregate channel breakdown
-            for channel, nights in snapshot.otb_by_channel.items():
-                channel_breakdown[channel] += nights
-            
-            # Aggregate room type breakdown
-            for room_type, nights in snapshot.otb_by_room_type.items():
-                room_type_breakdown[room_type] += nights
-        
-        # Calculate available room nights for this month
-        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
-        days_in_month = last_day
-        available_room_nights = total_rooms * days_in_month
-        
-        # Create or update monthly snapshot
-        monthly_snapshot, created = MonthlyPickupSnapshot.objects.update_or_create(
-            snapshot_date=snapshot_date,
-            target_month=target_month_start,
-            defaults={
-                'otb_room_nights': total_room_nights,
-                'otb_revenue': total_revenue,
-                'otb_reservations': total_reservations,
-                'available_room_nights': available_room_nights,
-                'otb_by_channel': dict(channel_breakdown),
-                'otb_by_room_type': dict(room_type_breakdown),
-            }
-        )
-        
-        return monthly_snapshot
+        self.property = property
     
     # =========================================================================
-    # PICKUP CURVE BUILDING
+    # HELPER METHODS FOR PROPERTY FILTERING
     # =========================================================================
     
-    def build_pickup_curve(self, season_type, historical_months, days_out_points=None):
-        """
-        Build a pickup curve from historical data.
-        
-        Args:
-            season_type: 'peak', 'high', 'shoulder', or 'low'
-            historical_months: List of date objects (first day of each month to include)
-            days_out_points: List of days_out values to calculate (default: standard set)
-        
-        Returns:
-            List of PickupCurve objects created/updated
-        """
-        from pricing.models import PickupCurve, MonthlyPickupSnapshot
-        
-        if days_out_points is None:
-            days_out_points = [90, 75, 60, 45, 30, 21, 14, 7, 3, 0]
-        
-        curves_created = []
-        
-        for days_out in days_out_points:
-            # Collect cumulative percentages at this days_out across all historical months
-            percentages = []
-            
-            for month in historical_months:
-                # Get snapshot at this days_out
-                snapshot = MonthlyPickupSnapshot.objects.filter(
-                    target_month=month,
-                    days_out__gte=days_out - 2,
-                    days_out__lte=days_out + 2
-                ).order_by('days_out').first()
-                
-                # Get final occupancy for this month (snapshot at or after month started)
-                final_snapshot = MonthlyPickupSnapshot.objects.filter(
-                    target_month=month,
-                    days_out__lte=0
-                ).order_by('days_out').first()
-                
-                if snapshot and final_snapshot and final_snapshot.otb_room_nights > 0:
-                    cumulative_pct = (
-                        Decimal(str(snapshot.otb_room_nights)) /
-                        Decimal(str(final_snapshot.otb_room_nights)) *
-                        Decimal('100.00')
-                    )
-                    percentages.append(cumulative_pct)
-            
-            if percentages:
-                # Calculate average and std deviation
-                avg_pct = sum(percentages) / len(percentages)
-                
-                if len(percentages) > 1:
-                    variance = sum((p - avg_pct) ** 2 for p in percentages) / len(percentages)
-                    std_dev = variance ** Decimal('0.5')
-                else:
-                    std_dev = Decimal('0.00')
-                
-                # Get current version
-                current_version = PickupCurve.objects.filter(
-                    season_type=season_type,
-                    season__isnull=True
-                ).order_by('-curve_version').values_list('curve_version', flat=True).first() or 0
-                
-                # Create curve point
-                curve, created = PickupCurve.objects.update_or_create(
-                    season_type=season_type,
-                    season=None,
-                    days_out=days_out,
-                    curve_version=current_version + 1,
-                    defaults={
-                        'cumulative_percent': avg_pct.quantize(Decimal('0.01')),
-                        'sample_size': len(percentages),
-                        'std_deviation': std_dev.quantize(Decimal('0.01')),
-                        'built_from_start': min(historical_months),
-                        'built_from_end': max(historical_months),
-                    }
-                )
-                curves_created.append(curve)
-        
-        return curves_created
+    def _get_reservations_queryset(self):
+        """Get Reservation queryset, filtered by property if set."""
+        from pricing.models import Reservation
+        qs = Reservation.objects.all()
+        if self.property:
+            qs = qs.filter(hotel=self.property)
+        return qs
     
-    def get_default_pickup_curves(self):
-        """
-        Return default pickup curves if no historical data is available.
-        
-        These are industry-standard patterns for different season types.
-        """
-        default_curves = {
-            'peak': [
-                (90, 25), (75, 35), (60, 50), (45, 65), (30, 80), 
-                (21, 88), (14, 94), (7, 98), (3, 99), (0, 100)
-            ],
-            'high': [
-                (90, 20), (75, 30), (60, 42), (45, 55), (30, 70),
-                (21, 80), (14, 90), (7, 96), (3, 98), (0, 100)
-            ],
-            'shoulder': [
-                (90, 15), (75, 22), (60, 32), (45, 45), (30, 60),
-                (21, 72), (14, 85), (7, 94), (3, 97), (0, 100)
-            ],
-            'low': [
-                (90, 10), (75, 15), (60, 25), (45, 38), (30, 52),
-                (21, 65), (14, 80), (7, 92), (3, 96), (0, 100)
-            ],
-        }
-        return default_curves
+    def _get_room_types(self):
+        """Get RoomType queryset, filtered by property if set."""
+        from pricing.models import RoomType
+        qs = RoomType.objects.all()
+        if self.property:
+            qs = qs.filter(hotel=self.property)
+        return qs
     
-    # =========================================================================
-    # BOOKING VELOCITY
-    # =========================================================================
+    def _get_total_rooms(self):
+        """Get total room count, filtered by property if set."""
+        return sum(room.number_of_rooms for room in self._get_room_types()) or 20
     
-    def calculate_booking_velocity(self, target_month, days=7):
-        """
-        Calculate recent booking velocity for a target month.
-        
-        Args:
-            target_month: date object (first day of month)
-            days: Number of days to look back (default 7)
-        
-        Returns:
-            dict with velocity metrics
-        """
-        from pricing.models import MonthlyPickupSnapshot
-        
-        today = date.today()
-        week_ago = today - timedelta(days=days)
-        
-        # Get snapshots for this period
-        recent_snapshot = MonthlyPickupSnapshot.objects.filter(
-            target_month=target_month,
-            snapshot_date=today
+    def _get_seasons_queryset(self):
+        """Get Season queryset, filtered by property if set."""
+        from pricing.models import Season
+        qs = Season.objects.all()
+        if self.property:
+            qs = qs.filter(hotel=self.property)
+        return qs
+    
+    def _get_season_for_date(self, target_date):
+        """Get the season that contains the target date."""
+        return self._get_seasons_queryset().filter(
+            start_date__lte=target_date,
+            end_date__gte=target_date
         ).first()
+    
+    def _get_season_type(self, target_date):
+        """Determine season type for a date (peak, high, shoulder, low)."""
+        season = self._get_season_for_date(target_date)
+        if season:
+            idx = float(season.season_index)
+            if idx >= 1.3:
+                return 'peak'
+            elif idx >= 1.1:
+                return 'high'
+            elif idx >= 0.9:
+                return 'shoulder'
+            else:
+                return 'low'
         
-        past_snapshot = MonthlyPickupSnapshot.objects.filter(
-            target_month=target_month,
-            snapshot_date__lte=week_ago
-        ).order_by('-snapshot_date').first()
+        # Default based on month for Maldives seasonality
+        month = target_date.month
+        if month in [12, 1, 2, 3, 4]:
+            if month in [12, 1, 2]:
+                return 'peak'
+            return 'high'
+        elif month in [5, 6, 7, 8, 9]:
+            return 'low'
+        else:
+            return 'shoulder'
+    
+    # =========================================================================
+    # OTB CALCULATION (Direct from Reservations)
+    # =========================================================================
+    
+    def get_otb_for_month(self, target_month):
+        """
+        Calculate OTB (On The Books) for a specific month from Reservation data.
         
-        if not recent_snapshot or not past_snapshot:
-            return {
-                'daily_room_nights': Decimal('0.00'),
-                'daily_revenue': Decimal('0.00'),
-                'daily_bookings': Decimal('0.00'),
-                'total_pickup': 0,
-                'days_measured': 0,
-                'velocity_trend': 'unknown',
-            }
+        Args:
+            target_month: First day of target month (date)
         
-        # Calculate pickup over period
-        days_between = (recent_snapshot.snapshot_date - past_snapshot.snapshot_date).days
+        Returns:
+            Dict with OTB metrics
+        """
+        from django.db.models import Sum, Count
         
-        if days_between <= 0:
-            return {
-                'daily_room_nights': Decimal('0.00'),
-                'daily_revenue': Decimal('0.00'),
-                'daily_bookings': Decimal('0.00'),
-                'total_pickup': 0,
-                'days_measured': 0,
-                'velocity_trend': 'unknown',
-            }
+        # Calculate month boundaries
+        year = target_month.year
+        month = target_month.month
+        _, last_day = calendar.monthrange(year, month)
+        month_start = date(year, month, 1)
+        month_end = date(year, month, last_day)
         
-        nights_pickup = recent_snapshot.otb_room_nights - past_snapshot.otb_room_nights
-        revenue_pickup = recent_snapshot.otb_revenue - past_snapshot.otb_revenue
-        reservations_pickup = recent_snapshot.otb_reservations - past_snapshot.otb_reservations
+        # Get confirmed reservations for this month
+        reservations = self._get_reservations_queryset().filter(
+            arrival_date__gte=month_start,
+            arrival_date__lte=month_end,
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        )
         
-        daily_nights = Decimal(str(nights_pickup)) / Decimal(str(days_between))
-        daily_revenue = revenue_pickup / Decimal(str(days_between))
-        daily_bookings = Decimal(str(reservations_pickup)) / Decimal(str(days_between))
+        stats = reservations.aggregate(
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            count=Count('id'),
+        )
         
-        # Determine trend (compare to previous period)
-        # This is a simplified version - could be enhanced
-        velocity_trend = 'stable'
-        if daily_nights > Decimal('2.0'):
-            velocity_trend = 'accelerating'
-        elif daily_nights < Decimal('0.5'):
-            velocity_trend = 'slowing'
+        otb_room_nights = stats['room_nights'] or 0
+        otb_revenue = stats['revenue'] or Decimal('0.00')
+        otb_reservations = stats['count'] or 0
+        
+        # Calculate occupancy
+        total_rooms = self._get_total_rooms()
+        total_available = total_rooms * last_day
+        
+        otb_occupancy = Decimal('0.00')
+        if total_available > 0:
+            otb_occupancy = (
+                Decimal(str(otb_room_nights)) / Decimal(str(total_available)) * 100
+            ).quantize(Decimal('0.1'))
+        
+        # Calculate days out
+        today = date.today()
+        days_out = (month_start - today).days
+        if days_out < 0:
+            days_out = 0
         
         return {
-            'daily_room_nights': daily_nights.quantize(Decimal('0.01')),
-            'daily_revenue': daily_revenue.quantize(Decimal('0.01')),
-            'daily_bookings': daily_bookings.quantize(Decimal('0.01')),
-            'total_pickup': nights_pickup,
-            'days_measured': days_between,
-            'velocity_trend': velocity_trend,
+            'target_month': target_month,
+            'month_name': target_month.strftime('%B %Y'),
+            'days_out': days_out,
+            'otb_room_nights': otb_room_nights,
+            'otb_revenue': otb_revenue,
+            'otb_reservations': otb_reservations,
+            'otb_occupancy': float(otb_occupancy),
+            'total_available': total_available,
+            'total_rooms': total_rooms,
+        }
+    
+    # =========================================================================
+    # VELOCITY & PACE ANALYSIS
+    # =========================================================================
+    
+    def calculate_booking_velocity(self, target_month, lookback_days=14):
+        """
+        Calculate booking velocity (bookings per day) for a target month.
+        
+        Args:
+            target_month: First day of target month
+            lookback_days: Number of days to look back for trend
+        
+        Returns:
+            Dict with velocity metrics
+        """
+        from django.db.models import Sum, Count
+        
+        today = date.today()
+        lookback_start = today - timedelta(days=lookback_days)
+        
+        # Calculate month boundaries
+        year = target_month.year
+        month = target_month.month
+        _, last_day = calendar.monthrange(year, month)
+        month_start = date(year, month, 1)
+        month_end = date(year, month, last_day)
+        
+        # Get bookings created in lookback period for target month
+        recent_bookings = self._get_reservations_queryset().filter(
+            booking_date__gte=lookback_start,
+            booking_date__lte=today,
+            arrival_date__gte=month_start,
+            arrival_date__lte=month_end,
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        )
+        
+        stats = recent_bookings.aggregate(
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            count=Count('id'),
+        )
+        
+        room_nights = stats['room_nights'] or 0
+        revenue = stats['revenue'] or Decimal('0.00')
+        bookings = stats['count'] or 0
+        
+        # Calculate daily averages
+        days = lookback_days or 1
+        
+        return {
+            'target_month': target_month,
+            'lookback_days': lookback_days,
+            'total_bookings': bookings,
+            'total_room_nights': room_nights,
+            'total_revenue': float(revenue),
+            'bookings_per_day': round(bookings / days, 2),
+            'room_nights_per_day': round(room_nights / days, 2),
+            'revenue_per_day': float((revenue / days).quantize(Decimal('0.01'))),
+        }
+    
+    def get_stly_otb(self, target_month):
+        """
+        Get STLY (Same Time Last Year) OTB for comparison.
+        
+        Args:
+            target_month: First day of target month
+        
+        Returns:
+            Dict with STLY OTB data
+        """
+        from dateutil.relativedelta import relativedelta
+        
+        # STLY month
+        stly_month = target_month - relativedelta(years=1)
+        
+        # Get STLY OTB
+        return self.get_otb_for_month(stly_month)
+    
+    # =========================================================================
+    # LEAD TIME ANALYSIS
+    # =========================================================================
+    
+    def analyze_lead_time_distribution(self, start_date=None, end_date=None):
+        """
+        Analyze booking lead time distribution.
+        
+        Args:
+            start_date: Start of analysis period (default: 90 days ago)
+            end_date: End of analysis period (default: today)
+        
+        Returns:
+            Dict with lead time buckets and statistics
+        """
+        from django.db.models import Avg, Min, Max, Count
+        
+        if end_date is None:
+            end_date = date.today()
+        if start_date is None:
+            start_date = end_date - timedelta(days=90)
+        
+        # Get bookings in period with lead time
+        bookings = self._get_reservations_queryset().filter(
+            booking_date__gte=start_date,
+            booking_date__lte=end_date,
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        ).exclude(
+            lead_time_days__isnull=True
+        )
+        
+        # Overall stats
+        stats = bookings.aggregate(
+            avg_lead_time=Avg('lead_time_days'),
+            min_lead_time=Min('lead_time_days'),
+            max_lead_time=Max('lead_time_days'),
+            total_bookings=Count('id'),
+        )
+        
+        # Bucket distribution
+        buckets = [
+            {'label': '0-7 days', 'min': 0, 'max': 7},
+            {'label': '8-14 days', 'min': 8, 'max': 14},
+            {'label': '15-30 days', 'min': 15, 'max': 30},
+            {'label': '31-60 days', 'min': 31, 'max': 60},
+            {'label': '61-90 days', 'min': 61, 'max': 90},
+            {'label': '90+ days', 'min': 91, 'max': 9999},
+        ]
+        
+        total_bookings = stats['total_bookings'] or 1
+        bucket_data = []
+        
+        for bucket in buckets:
+            count = bookings.filter(
+                lead_time_days__gte=bucket['min'],
+                lead_time_days__lte=bucket['max']
+            ).count()
+            
+            percent = round(count / total_bookings * 100, 1)
+            
+            bucket_data.append({
+                'label': bucket['label'],
+                'count': count,
+                'percent': percent,
+            })
+        
+        return {
+            'period_start': start_date,
+            'period_end': end_date,
+            'avg_lead_time': round(stats['avg_lead_time'] or 0, 1),
+            'min_lead_time': stats['min_lead_time'] or 0,
+            'max_lead_time': stats['max_lead_time'] or 0,
+            'total_bookings': stats['total_bookings'] or 0,
+            'buckets': bucket_data,
         }
     
     # =========================================================================
     # FORECAST GENERATION
     # =========================================================================
     
-    def generate_forecast(self, target_month, force_refresh=False):
+    def get_forecast_summary(self, months_ahead=6):
         """
-        Generate occupancy and revenue forecast for a future month.
-        
-        Uses weighted blend:
-        - 50% Historical pickup curve
-        - 30% STLY comparison
-        - 20% Recent velocity
+        Get forecast summary for next N months.
         
         Args:
-            target_month: date object (any day in target month)
-            force_refresh: If True, regenerate even if recent forecast exists
+            months_ahead: Number of months to forecast
         
         Returns:
-            OccupancyForecast instance
+            List of dicts with forecast data for each month
         """
-        from pricing.models import (
-            OccupancyForecast, MonthlyPickupSnapshot, PickupCurve,
-            Season, RoomType, Channel
-        )
         from dateutil.relativedelta import relativedelta
         
         today = date.today()
-        target_month_start = target_month.replace(day=1)
+        forecasts = []
         
-        # Check for existing recent forecast
-        if not force_refresh:
-            existing = OccupancyForecast.objects.filter(
-                target_month=target_month_start,
-                forecast_date=today
-            ).first()
-            if existing:
-                return existing
-        
-        # Get current OTB position
-        current_otb = MonthlyPickupSnapshot.objects.filter(
-            target_month=target_month_start,
-            snapshot_date=today
-        ).first()
-        
-        # If no current snapshot, try to capture one
-        if not current_otb:
-            current_otb = self.capture_monthly_snapshot(target_month_start, today)
-        
-        # Calculate days out
-        days_out = (target_month_start - today).days
-        
-        # Get season for this month
-        season = Season.objects.filter(
-            start_date__lte=target_month_start,
-            end_date__gte=target_month_start
-        ).first()
-        
-        # Determine season type
-        season_type = self._get_season_type(season)
-        
-        # Calculate available room nights
-        total_rooms = sum(room.number_of_rooms for room in RoomType.objects.all())
-        _, last_day = calendar.monthrange(target_month.year, target_month.month)
-        available_room_nights = total_rooms * last_day
-        
-        # =====================================================================
-        # COMPONENT 1: Pickup Curve Forecast (50% weight)
-        # =====================================================================
-        curve_forecast = self._forecast_from_curve(
-            current_otb, days_out, season_type, available_room_nights
-        )
-        
-        # =====================================================================
-        # COMPONENT 2: STLY Forecast (30% weight)
-        # =====================================================================
-        stly_forecast, stly_data = self._forecast_from_stly(
-            current_otb, target_month_start, days_out
-        )
-        
-        # =====================================================================
-        # COMPONENT 3: Velocity Forecast (20% weight)
-        # =====================================================================
-        velocity_forecast = self._forecast_from_velocity(
-            current_otb, target_month_start, days_out, available_room_nights
-        )
-        
-        # =====================================================================
-        # WEIGHTED BLEND
-        # =====================================================================
-        # Weights
-        curve_weight = Decimal('0.50')
-        stly_weight = Decimal('0.30') if stly_forecast else Decimal('0.00')
-        velocity_weight = Decimal('0.20')
-        
-        # If no STLY, redistribute weight
-        if not stly_forecast:
-            curve_weight = Decimal('0.65')
-            velocity_weight = Decimal('0.35')
-        
-        total_weight = curve_weight + stly_weight + velocity_weight
-        
-        blended_forecast = (
-            (Decimal(str(curve_forecast or 0)) * curve_weight) +
-            (Decimal(str(stly_forecast or 0)) * stly_weight) +
-            (Decimal(str(velocity_forecast or 0)) * velocity_weight)
-        ) / total_weight
-        
-        # Cap at available room nights (can't exceed 100% occupancy)
-        forecast_nights = min(int(blended_forecast), available_room_nights)
-        
-        # =====================================================================
-        # REVENUE CALCULATIONS
-        # =====================================================================
-        otb_room_nights = current_otb.otb_room_nights if current_otb else 0
-        otb_revenue = current_otb.otb_revenue if current_otb else Decimal('0.00')
-        
-        # Calculate ADR from OTB
-        if otb_room_nights > 0:
-            otb_adr = otb_revenue / otb_room_nights
-        else:
-            # Use weighted average ADR from pricing system
-            otb_adr = self._calculate_weighted_adr(season)
-        
-        # Forecast revenue
-        forecast_revenue = otb_adr * Decimal(str(forecast_nights))
-        
-        # Calculate commission based on channel mix
-        channel_mix = self._get_channel_mix()
-        forecast_commission = self._calculate_commission(forecast_revenue, channel_mix)
-        
-        # =====================================================================
-        # SCENARIO DATA (from Season.expected_occupancy)
-        # =====================================================================
-        scenario_occupancy = season.expected_occupancy if season else Decimal('70.00')
-        scenario_room_nights = int(
-            available_room_nights * (scenario_occupancy / Decimal('100.00'))
-        )
-        scenario_revenue = otb_adr * Decimal(str(scenario_room_nights))
-        
-        # =====================================================================
-        # CREATE/UPDATE FORECAST
-        # =====================================================================
-        forecast, created = OccupancyForecast.objects.update_or_create(
-            target_month=target_month_start,
-            forecast_date=today,
-            defaults={
-                'season': season,
-                'available_room_nights': available_room_nights,
-                
-                # Current OTB
-                'otb_room_nights': otb_room_nights,
-                'otb_revenue': otb_revenue,
-                
-                # Pickup forecast
-                'pickup_forecast_nights': forecast_nights,
-                'pickup_forecast_revenue': forecast_revenue,
-                'pickup_expected_additional': max(0, forecast_nights - otb_room_nights),
-                
-                # Methodology breakdown
-                'forecast_from_curve': curve_forecast or 0,
-                'forecast_from_stly': stly_forecast or 0,
-                'forecast_from_velocity': velocity_forecast or 0,
-                
-                # Scenario
-                'scenario_occupancy': scenario_occupancy,
-                'scenario_room_nights': scenario_room_nights,
-                'scenario_revenue': scenario_revenue,
-                
-                # STLY
-                'stly_occupancy': stly_data.get('final_occupancy') if stly_data else None,
-                'stly_otb_at_same_point': stly_data.get('otb_at_point') if stly_data else None,
-                'vs_stly_pace_percent': stly_data.get('pace_percent') if stly_data else None,
-                
-                # Revenue
-                'forecast_adr': otb_adr,
-                'forecast_commission': forecast_commission,
-            }
-        )
-        
-        # Generate insight note
-        forecast.notes = forecast.generate_insight()
-        forecast.save()
-        
-        return forecast
-    
-    def _get_season_type(self, season):
-        """Map Season to season_type for pickup curve lookup."""
-        if not season:
-            return 'shoulder'
-        
-        index = season.season_index
-        
-        if index >= Decimal('1.30'):
-            return 'peak'
-        elif index >= Decimal('1.20'):
-            return 'high'
-        elif index >= Decimal('1.05'):
-            return 'shoulder'
-        else:
-            return 'low'
-    
-    def _forecast_from_curve(self, current_otb, days_out, season_type, available_room_nights):
-        """
-        Calculate forecast using pickup curve.
-        
-        Logic: If curve shows 35% is typically booked at 60 days out,
-        and we have 200 room nights OTB, then forecast = 200 / 0.35 = 571
-        """
-        from pricing.models import PickupCurve
-        
-        if not current_otb or current_otb.otb_room_nights == 0:
-            return None
-        
-        # Get expected percentage at this days_out from curve
-        expected_pct = PickupCurve.get_expected_percent_at_days_out(
-            season_type, days_out
-        )
-        
-        if not expected_pct:
-            # Use default curves
-            defaults = self.get_default_pickup_curves()
-            curve_points = defaults.get(season_type, defaults['shoulder'])
+        for i in range(months_ahead):
+            target = (today + relativedelta(months=i)).replace(day=1)
+            forecast_data = self.generate_forecast(target)
             
-            # Find closest point
-            for d, pct in sorted(curve_points, key=lambda x: abs(x[0] - days_out)):
-                expected_pct = Decimal(str(pct))
-                break
+            if forecast_data:
+                forecasts.append(forecast_data)
         
-        if expected_pct and expected_pct > 0:
-            # Calculate forecast: OTB / (expected_pct / 100)
-            forecast = (
-                Decimal(str(current_otb.otb_room_nights)) / 
-                (expected_pct / Decimal('100.00'))
-            )
-            
-            # Cap at available
-            return min(int(forecast), available_room_nights)
-        
-        return None
+        return forecasts
     
-    def _forecast_from_stly(self, current_otb, target_month, days_out):
+    def generate_forecast(self, target_month):
         """
-        Calculate forecast using STLY comparison.
+        Generate forecast for a specific month.
         
-        Logic: If STLY had 150 nights at 60 days out and ended at 500,
-        ratio = 500/150 = 3.33. Current OTB of 180 → forecast = 180 * 3.33 = 600
+        Returns dict with field names matching template expectations:
+        - otb_nights, forecast_nights, vs_stly, confidence, confidence_label, etc.
         """
-        from pricing.models import MonthlyPickupSnapshot
         from dateutil.relativedelta import relativedelta
         
-        if not current_otb or current_otb.otb_room_nights == 0:
-            return None, None
+        today = date.today()
         
-        # Get STLY month
-        stly_month = target_month - relativedelta(years=1)
+        # Get current OTB
+        otb_data = self.get_otb_for_month(target_month)
         
-        # Get STLY snapshot at similar days_out
-        stly_snapshot = MonthlyPickupSnapshot.get_stly(target_month, days_out)
+        otb_room_nights = otb_data['otb_room_nights']
+        otb_occupancy = otb_data['otb_occupancy']
+        days_out = otb_data['days_out']
+        total_available = otb_data['total_available']
         
-        # Get STLY final position
-        stly_final = MonthlyPickupSnapshot.objects.filter(
-            target_month=stly_month,
-            days_out__lte=0
-        ).order_by('days_out').first()
+        # Get season info
+        season = self._get_season_for_date(target_month)
+        season_type = self._get_season_type(target_month)
         
-        if not stly_snapshot or not stly_final or stly_snapshot.otb_room_nights == 0:
-            return None, None
+        # Season name for display
+        if season:
+            season_name = season.name
+        else:
+            season_name = season_type.capitalize()
         
-        # Calculate STLY ratio
-        stly_ratio = (
-            Decimal(str(stly_final.otb_room_nights)) / 
-            Decimal(str(stly_snapshot.otb_room_nights))
-        )
+        # Get pickup curve for this season
+        pickup_curves = self.get_default_pickup_curves()
+        curve_data = pickup_curves.get(season_type, pickup_curves['shoulder'])
         
-        # Apply ratio to current OTB
-        forecast = current_otb.otb_room_nights * stly_ratio
+        # Find expected pickup percent at current days_out
+        expected_percent = 100.0
+        for days, percent in curve_data:
+            if days_out >= days:
+                expected_percent = percent
+                break
         
-        # Calculate pace comparison
-        pace_percent = (
-            (Decimal(str(current_otb.otb_room_nights)) - 
-             Decimal(str(stly_snapshot.otb_room_nights))) /
-            Decimal(str(stly_snapshot.otb_room_nights)) *
-            Decimal('100.00')
-        )
+        # Calculate curve-based forecast
+        if expected_percent < 100 and expected_percent > 0:
+            curve_forecast = int(otb_room_nights / (expected_percent / 100))
+        else:
+            curve_forecast = otb_room_nights
         
-        stly_data = {
-            'otb_at_point': stly_snapshot.otb_room_nights,
-            'final_occupancy': stly_final.otb_occupancy_percent,
-            'final_room_nights': stly_final.otb_room_nights,
-            'ratio': stly_ratio,
-            'pace_percent': pace_percent.quantize(Decimal('0.01')),
-        }
+        # Get STLY data
+        stly_data = self.get_stly_otb(target_month)
+        stly_room_nights = stly_data['otb_room_nights'] or curve_forecast
         
-        return int(forecast), stly_data
-    
-    def _forecast_from_velocity(self, current_otb, target_month, days_out, available_room_nights):
-        """
-        Calculate forecast using recent booking velocity.
-        
-        Logic: If picking up 3 room nights/day and have 45 days left,
-        expect 3 * 45 = 135 additional room nights
-        """
-        if not current_otb or days_out <= 0:
-            return None
-        
+        # Get velocity trend
         velocity = self.calculate_booking_velocity(target_month)
+        velocity_forecast = otb_room_nights
+        if days_out > 0 and velocity['room_nights_per_day'] > 0:
+            velocity_forecast = otb_room_nights + int(velocity['room_nights_per_day'] * days_out)
         
-        daily_nights = velocity.get('daily_room_nights', Decimal('0.00'))
+        # Weighted forecast: 50% curve, 30% STLY, 20% velocity
+        forecast_room_nights = int(
+            curve_forecast * 0.5 +
+            stly_room_nights * 0.3 +
+            velocity_forecast * 0.2
+        )
         
-        if daily_nights <= 0:
-            return None
+        # Cap at available
+        forecast_room_nights = min(forecast_room_nights, total_available)
         
-        # Apply decay factor (velocity typically decreases as arrival approaches)
-        # Simple decay: reduce velocity by 20% for each 30-day period closer to arrival
-        decay_factor = Decimal('1.00')
-        if days_out <= 30:
-            decay_factor = Decimal('0.60')
+        # Calculate forecast occupancy
+        forecast_occupancy = 0.0
+        if total_available > 0:
+            forecast_occupancy = round(forecast_room_nights / total_available * 100, 1)
+        
+        # Calculate pace vs STLY
+        pace_variance = otb_room_nights - stly_room_nights
+        vs_stly = None
+        if stly_room_nights > 0:
+            vs_stly = round(pace_variance / stly_room_nights * 100, 1)
+        
+        # Get scenario occupancy from Season expected_occupancy or OccupancyForecast
+        scenario_occupancy = forecast_occupancy  # Default to forecast
+        if season and hasattr(season, 'expected_occupancy') and season.expected_occupancy:
+            scenario_occupancy = float(season.expected_occupancy)
+        else:
+            # Try OccupancyForecast
+            try:
+                from pricing.models import OccupancyForecast
+                occ_qs = OccupancyForecast.objects.filter(target_month=target_month)
+                if self.property:
+                    occ_qs = occ_qs.filter(hotel=self.property)
+                occ_forecast = occ_qs.first()
+                if occ_forecast and occ_forecast.scenario_occupancy:
+                    scenario_occupancy = float(occ_forecast.scenario_occupancy)
+            except:
+                pass
+        
+        # Determine confidence level (as percentage and label)
+        if days_out <= 14:
+            confidence = 85
+            confidence_label = 'High'
+        elif days_out <= 30:
+            confidence = 70
+            confidence_label = 'Good'
         elif days_out <= 60:
-            decay_factor = Decimal('0.80')
+            confidence = 50
+            confidence_label = 'Medium'
         elif days_out <= 90:
-            decay_factor = Decimal('0.90')
+            confidence = 35
+            confidence_label = 'Low'
+        else:
+            confidence = 25
+            confidence_label = 'Very Low'
         
-        # Project remaining pickup
-        expected_pickup = daily_nights * Decimal(str(days_out)) * decay_factor
-        
-        forecast = current_otb.otb_room_nights + int(expected_pickup)
-        
-        return min(forecast, available_room_nights)
-    
-    def _calculate_weighted_adr(self, season):
-        """Calculate weighted ADR from pricing setup."""
-        from pricing.services import calculate_final_rate_with_modifier
-        from pricing.models import RoomType, RatePlan, Channel, RateModifier
-        
-        if not season:
-            return Decimal('150.00')  # Default fallback
-        
-        total_rate = Decimal('0.00')
-        total_weight = 0
-        
-        rooms = RoomType.objects.all()
-        rate_plans = RatePlan.objects.all()
-        channels = Channel.objects.all()
-        
-        for room in rooms:
-            room_weight = room.number_of_rooms
+        return {
+            # Month info - 'month' for onclick handler
+            'month': target_month,
+            'target_month': target_month,
+            'month_name': target_month.strftime('%B %Y'),
+            'month_short': target_month.strftime('%b'),
+            'days_out': days_out,
             
-            for rate_plan in rate_plans:
-                for channel in channels:
-                    # Get standard modifier (or first active one)
-                    modifier = RateModifier.objects.filter(
-                        channel=channel, active=True
-                    ).first()
-                    
-                    modifier_discount = Decimal('0.00')
-                    if modifier:
-                        modifier_discount = modifier.get_discount_for_season(season)
-                    
-                    rate, _ = calculate_final_rate_with_modifier(
-                        room_base_rate=room.get_effective_base_rate(),
-                        season_index=season.season_index,
-                        meal_supplement=rate_plan.meal_supplement,
-                        channel_base_discount=channel.base_discount_percent,
-                        modifier_discount=modifier_discount,
-                        commission_percent=Decimal('0.00'),  # Gross ADR
-                        occupancy=2
-                    )
-                    
-                    total_rate += rate * room_weight
-                    total_weight += room_weight
-        
-        if total_weight > 0:
-            return (total_rate / total_weight).quantize(Decimal('0.01'))
-        
-        return Decimal('150.00')
-    
-    def _get_channel_mix(self):
-        """Get channel distribution mix from Channel model."""
-        from pricing.models import Channel
-        
-        channels = Channel.objects.all()
-        mix = {}
-        
-        for channel in channels:
-            if channel.distribution_share_percent > 0:
-                mix[channel.id] = {
-                    'share': channel.distribution_share_percent / Decimal('100.00'),
-                    'commission': channel.commission_percent,
-                }
-        
-        return mix
-    
-    def _calculate_commission(self, gross_revenue, channel_mix):
-        """Calculate expected commission based on channel mix."""
-        if not channel_mix:
-            return Decimal('0.00')
-        
-        total_commission = Decimal('0.00')
-        
-        for channel_id, data in channel_mix.items():
-            channel_revenue = gross_revenue * data['share']
-            channel_commission = channel_revenue * (data['commission'] / Decimal('100.00'))
-            total_commission += channel_commission
-        
-        return total_commission.quantize(Decimal('0.01'))
-    
-    # =========================================================================
-    # LEAD TIME ANALYSIS
-    # =========================================================================
-    
-    def analyze_lead_time_distribution(self, start_date, end_date):
-        """
-        Analyze lead time distribution from historical snapshots.
-        
-        Returns breakdown of bookings by lead time bucket.
-        """
-        from pricing.models import DailyPickupSnapshot
-        
-        buckets = {
-            '0-7': {'min': 0, 'max': 7, 'count': 0, 'revenue': Decimal('0.00')},
-            '8-14': {'min': 8, 'max': 14, 'count': 0, 'revenue': Decimal('0.00')},
-            '15-30': {'min': 15, 'max': 30, 'count': 0, 'revenue': Decimal('0.00')},
-            '31-60': {'min': 31, 'max': 60, 'count': 0, 'revenue': Decimal('0.00')},
-            '61-90': {'min': 61, 'max': 90, 'count': 0, 'revenue': Decimal('0.00')},
-            '90+': {'min': 91, 'max': 999, 'count': 0, 'revenue': Decimal('0.00')},
+            # Season
+            'season_type': season_type,
+            'season_name': season_name,
+            
+            # OTB - FIXED: 'otb_nights' for template
+            'otb_nights': otb_room_nights,
+            'otb_room_nights': otb_room_nights,
+            'otb_occupancy': otb_occupancy,
+            'otb_revenue': float(otb_data['otb_revenue']),
+            'otb_reservations': otb_data['otb_reservations'],
+            'total_available': total_available,
+            
+            # Forecast - FIXED: 'forecast_nights' for template
+            'forecast_nights': forecast_room_nights,
+            'forecast_room_nights': forecast_room_nights,
+            'forecast_occupancy': forecast_occupancy,
+            
+            # Scenario - FIXED: added scenario_occupancy
+            'scenario_occupancy': scenario_occupancy,
+            
+            # STLY - FIXED: 'vs_stly' for template (can be None)
+            'stly_room_nights': stly_room_nights,
+            'vs_stly': vs_stly,
+            'vs_stly_pace': vs_stly,
+            'pace_variance': pace_variance,
+            
+            # Confidence - FIXED: number + label
+            'confidence': confidence,
+            'confidence_label': confidence_label,
+            
+            # Curve info
+            'curve_percent': expected_percent,
+            'curve_forecast': curve_forecast,
+            
+            # Velocity
+            'velocity': velocity,
         }
+    
+    def get_default_pickup_curves(self):
+        """
+        Get default pickup curves by season type.
         
-        # Get snapshots and calculate pickup between consecutive days
-        snapshots = DailyPickupSnapshot.objects.filter(
-            arrival_date__gte=start_date,
-            arrival_date__lte=end_date
-        ).order_by('arrival_date', 'snapshot_date')
+        Returns:
+            Dict with curves for each season type.
+            Each curve is a list of (days_out, cumulative_percent) tuples.
+        """
+        return {
+            'peak': [
+                (180, 15), (150, 25), (120, 40), (90, 55),
+                (60, 70), (45, 80), (30, 88), (14, 95), (7, 98), (0, 100)
+            ],
+            'high': [
+                (180, 10), (150, 18), (120, 30), (90, 45),
+                (60, 60), (45, 72), (30, 82), (14, 92), (7, 97), (0, 100)
+            ],
+            'shoulder': [
+                (180, 5), (150, 12), (120, 22), (90, 35),
+                (60, 50), (45, 62), (30, 75), (14, 88), (7, 95), (0, 100)
+            ],
+            'low': [
+                (180, 3), (150, 8), (120, 15), (90, 25),
+                (60, 40), (45, 52), (30, 65), (14, 82), (7, 92), (0, 100)
+            ],
+        }
+    
+    # =========================================================================
+    # CHANNEL ANALYSIS
+    # =========================================================================
+    
+    def get_channel_breakdown(self, target_month):
+        """
+        Get OTB breakdown by channel for a specific month.
         
-        # Group by arrival date
-        by_arrival = defaultdict(list)
-        for snapshot in snapshots:
-            by_arrival[snapshot.arrival_date].append(snapshot)
+        Args:
+            target_month: First day of target month
         
-        # Calculate daily pickup and assign to buckets
-        for arrival_date, arrival_snapshots in by_arrival.items():
-            arrival_snapshots.sort(key=lambda x: x.snapshot_date)
-            
-            for i in range(1, len(arrival_snapshots)):
-                prev = arrival_snapshots[i-1]
-                curr = arrival_snapshots[i]
-                
-                # Pickup that occurred
-                nights_pickup = curr.otb_room_nights - prev.otb_room_nights
-                revenue_pickup = curr.otb_revenue - prev.otb_revenue
-                
-                if nights_pickup > 0:
-                    # Assign to bucket based on days_out when pickup occurred
-                    days_out = curr.days_out
-                    
-                    for bucket_name, bucket_data in buckets.items():
-                        if bucket_data['min'] <= days_out <= bucket_data['max']:
-                            bucket_data['count'] += nights_pickup
-                            bucket_data['revenue'] += revenue_pickup
-                            break
+        Returns:
+            List of dicts with channel metrics
+        """
+        from django.db.models import Sum, Count
         
-        # Calculate percentages
-        total_nights = sum(b['count'] for b in buckets.values())
-        total_revenue = sum(b['revenue'] for b in buckets.values())
+        # Calculate month boundaries
+        year = target_month.year
+        month = target_month.month
+        _, last_day = calendar.monthrange(year, month)
+        month_start = date(year, month, 1)
+        month_end = date(year, month, last_day)
+        
+        # Get reservations grouped by channel
+        reservations = self._get_reservations_queryset().filter(
+            arrival_date__gte=month_start,
+            arrival_date__lte=month_end,
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        )
+        
+        channel_stats = reservations.values('channel__name').annotate(
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            count=Count('id'),
+        ).order_by('-room_nights')
+        
+        total_nights = sum(s['room_nights'] or 0 for s in channel_stats)
         
         result = []
-        for bucket_name, bucket_data in buckets.items():
+        for stat in channel_stats:
+            name = stat['channel__name'] or 'Unknown'
+            room_nights = stat['room_nights'] or 0
+            percent = round(room_nights / total_nights * 100, 1) if total_nights > 0 else 0
+            
             result.append({
-                'bucket': bucket_name,
-                'room_nights': bucket_data['count'],
-                'revenue': bucket_data['revenue'],
-                'nights_percent': (
-                    Decimal(str(bucket_data['count'])) / Decimal(str(total_nights)) * 100
-                    if total_nights > 0 else Decimal('0.00')
-                ).quantize(Decimal('0.1')),
-                'revenue_percent': (
-                    bucket_data['revenue'] / total_revenue * 100
-                    if total_revenue > 0 else Decimal('0.00')
-                ).quantize(Decimal('0.1')),
+                'name': name,
+                'room_nights': room_nights,
+                'revenue': float(stat['revenue'] or 0),
+                'bookings': stat['count'] or 0,
+                'percent': percent,
             })
         
         return result
     
-    # =========================================================================
-    # FORECAST SUMMARY
-    # =========================================================================
-    
-    def get_forecast_summary(self, months_ahead=6):
-        """
-        Get forecast summary for the next N months.
-        
-        Returns list of forecasts for dashboard display.
-        """
-        from pricing.models import OccupancyForecast
-        from dateutil.relativedelta import relativedelta
-        
-        today = date.today()
-        summaries = []
-        
-        for i in range(months_ahead):
-            target_month = (today + relativedelta(months=i)).replace(day=1)
-            
-            # Generate or get existing forecast
-            forecast = self.generate_forecast(target_month)
-            
-            if forecast:
-                summaries.append({
-                    'month': target_month,
-                    'month_name': target_month.strftime('%b %Y'),
-                    'days_out': forecast.days_out,
-                    'otb_occupancy': forecast.otb_occupancy_percent,
-                    'otb_room_nights': forecast.otb_room_nights,
-                    'pickup_forecast_occupancy': forecast.pickup_forecast_occupancy,
-                    'pickup_forecast_nights': forecast.pickup_forecast_nights,
-                    'scenario_occupancy': forecast.scenario_occupancy,
-                    'scenario_room_nights': forecast.scenario_room_nights,
-                    'variance_nights': forecast.variance_nights,
-                    'variance_percent': forecast.variance_percent,
-                    'vs_stly_pace': forecast.vs_stly_pace_percent,
-                    'confidence': forecast.confidence_level,
-                    'forecast_revenue': forecast.pickup_forecast_revenue,
-                    'forecast_net_revenue': forecast.forecast_net_revenue,
-                    'insight': forecast.notes,
-                })
-        
-        return summaries
-    
-    
 """
-Reservation Import Service - Updated for multiple PMS formats.
+Reservation Import Service - Updated for multiple PMS formats and Multi-Property Support.
 
 Supports:
 - ABS PMS (Reservation Activity Report, Arrival List)
 - Thundi/Biosphere PMS (BookingList export)
 - Generic CSV/Excel formats
+- Multi-property imports (hotel parameter)
 """
 
 import re
@@ -1606,126 +1301,295 @@ class ReservationImportService:
     - Thundi/Biosphere: "Res #", "Arrival", "Dept", "Total"
     
     Column Mapping handles various naming conventions automatically.
+    
+    Multi-Property Support:
+    - Pass hotel parameter to import_file() to assign reservations to a property
+    - If not provided, uses hotel from file_import record
     """
     
     DEFAULT_COLUMN_MAPPING = {
-        # Confirmation number - all formats
-        'confirmation_no': [
-            'Res #', 'Res#', 'Res. No', 'Res No', 'Res.No',  # Various PMS formats
-            'Conf. No', 'Conf No', 'Confirmation', 'Confirmation No', 'ConfNo',
-            'Reservation', 'Reservation No', 'Booking No', 'BookingNo',
-        ],
-        
-        # Booking date
-        'booking_date': [
-            'Booking Date', 'Res. Date', 'Res Date', 'Booked On', 
-            'Created', 'Book Date', 'Created Date',
-        ],
-        
-        # Booking time (new - for Thundi format)
-        'booking_time': [
-            'Booking Time', 'Time', 'Created Time',
-        ],
-        
-        # Arrival date - all formats
-        'arrival_date': [
-            'Arrival', 'Arr',  # Common formats
-            'Check In', 'CheckIn', 'Arrival Date', 'Check-In',
-        ],
-        
-        # Departure date - all formats  
-        'departure_date': [
-            'Dept', 'Departure',  # Common formats
-            'Check Out', 'CheckOut', 'Departure Date', 'Check-Out',
-        ],
-        
-        # Nights
-        'nights': [
-            'No Of Nights', 'Nights', 'Night', 'LOS', 'Length of Stay',
-            'NoOfNights', 'Number of Nights',
-        ],
-        
-        # Pax - will need special parsing for "2 \ 0" or "2 / 0" format
-        'pax': ['Pax', 'Guests', 'Occupancy'],
-        'adults': ['Adults', 'Adult', 'No of Adults'],
-        'children': ['Children', 'Child', 'Kids', 'No of Children'],
-        
-        # Room
-        'room_no': [
-            'Room', 'Room No', 'Room Number', 'RoomNo', 
-            'Room Type', 'RoomType', 'Room Name',
-        ],
-        
-        # Source/Channel - all formats
-        'source': [
-            'Source', 'Business Source',  # ABS formats
-            'Channel', 'Booking Source', 'channel',  # Thundi format (lowercase 'channel' column)
-        ],
-        
-        # User/Agent
-        'user': ['User', 'Created By', 'Agent', 'Booked By'],
-        
-        # Rate plan
-        'rate_plan': [
-            'Rate Type', 'Rate Plan', 'RatePlan', 'Meal Plan', 'Board',
-            'Board Type', 'Package',
-        ],
-        
-        # Total amount - all formats
-        'total_amount': [
-            'Total', 'Grand Total', 'Total Amount',  # Thundi format
-            'Revenue($)', 'Balance Due($)', 'Revenue',  # ABS formats
-            'Amount', 'Net Amount',
-        ],
-        
-        # ADR (new)
-        'adr': ['ADR', 'Average Daily Rate', 'Daily Rate', 'Rate'],
-        
-        # Deposit (new)
-        'deposit': ['Deposit', 'Deposit Amount', 'Advance'],
-        
-        # Total charges (new)
-        'total_charges': ['Total Charges', 'Charges', 'Extra Charges'],
-        
-        # Guest name
-        'guest_name': [
-            'Guest Name', 'Name', 'Guest', 'Customer', 'Customer Name',
-        ],
-        
-        # Location fields
-        'country': ['Country', 'Nationality', 'Guest Country'],
-        'city': ['City', 'Guest City'],
-        'state': ['State', 'Province', 'Guest State'],
-        'zip_code': ['Zip Code', 'Postal Code', 'Zip', 'Postcode'],
-        
-        # Status
-        'status': [
-            'Status', 'Booking Status', 'State', 'Res.Type',
-            'Reservation Status',
-        ],
-        
-        # Reservation type (new)
-        'reservation_type': [
-            'Reservationn Type', 'Reservation Type', 'Res Type',  # Note: typo in source 'Reservationn'
-            'Booking Type',
-        ],
-        
-        # Market code (new)
-        'market_code': ['Market Code', 'Market', 'Segment'],
-        
-        # Payment type (new)
-        'payment_type': ['Payment Type', 'Payment Method', 'Payment'],
-        
-        # Cancellation date (new)
-        'cancellation_date': [
-            'Cancellation Date', 'Cancelled Date', 'Cancel Date',
-        ],
-        
-        # Other
-        'email': ['Email', 'Guest Email', 'E-mail'],
-        'hotel_name': ['Hotel Name', 'Property', 'Hotel'],
-    }
+    # =========================================================================
+    # CONFIRMATION NUMBER
+    # =========================================================================
+    'confirmation_no': [
+        # ABS / Thundi formats
+        'Res #', 'Res#', 'Res. No', 'Res No', 'Res.No',
+        'Conf. No', 'Conf No', 'Confirmation', 'Confirmation No', 'ConfNo',
+        'Reservation', 'Reservation No', 'Booking No', 'BookingNo',
+        # SynXis format
+        'confirmation_no',
+    ],
     
+    # =========================================================================
+    # BOOKING DATE
+    # =========================================================================
+    'booking_date': [
+        # ABS / Thundi formats
+        'Booking Date', 'Res. Date', 'Res Date', 'Booked On', 
+        'Created', 'Book Date', 'Created Date',
+        # SynXis format - Status Date is when booking was made/modified
+        'Status Date',
+    ],
+    
+    # Booking time (for Thundi format)
+    'booking_time': [
+        'Booking Time', 'Time', 'Created Time',
+    ],
+    
+    # =========================================================================
+    # ARRIVAL / DEPARTURE
+    # =========================================================================
+    'arrival_date': [
+        # Common formats
+        'Arrival', 'Arr',
+        'Check In', 'CheckIn', 'Arrival Date', 'Check-In',
+        # SynXis format
+        'arrival_date',
+    ],
+    
+    'departure_date': [
+        # Common formats
+        'Dept', 'Departure',
+        'Check Out', 'CheckOut', 'Departure Date', 'Check-Out',
+        # SynXis format
+        'departure_date',
+    ],
+    
+    # =========================================================================
+    # NIGHTS
+    # =========================================================================
+    'nights': [
+        'No Of Nights', 'Nights', 'Night', 'LOS', 'Length of Stay',
+        'NoOfNights', 'Number of Nights',
+    ],
+    
+    # =========================================================================
+    # PAX / OCCUPANCY
+    # =========================================================================
+    'pax': ['Pax', 'Guests', 'Occupancy'],
+    
+    'adults': [
+        'Adults', 'Adult', 'No of Adults',
+        # SynXis format
+        'Total Adult Occupancy',
+    ],
+    
+    'children': [
+        'Children', 'Child', 'Kids', 'No of Children',
+        # SynXis - need special handling to sum child age groups
+        'Total Child Occupancy For Age Group1',
+    ],
+    
+    # SynXis child age group columns (for summing)
+    'children_group1': ['Total Child Occupancy For Age Group1'],
+    'children_group2': ['Total Child Occupancy For Age Group2'],
+    'children_group3': ['Total Child Occupancy For Age Group3'],
+    'children_group4': ['Total Child Occupancy For Age Group4'],
+    'children_group5': ['Total Child Occupancy For Age Group5'],
+    'children_unknown': ['Total Child Occupancy For Unknown Age Group'],
+    
+    # =========================================================================
+    # ROOM
+    # =========================================================================
+    'room_no': [
+        # ABS / Thundi formats
+        'Room', 'Room No', 'Room Number', 'RoomNo', 
+        'Room Type', 'RoomType', 'Room Name',
+    ],
+    
+    # =========================================================================
+    # SOURCE / CHANNEL
+    # =========================================================================
+    'source': [
+        # ABS formats
+        'Source', 'Business Source',
+        # Thundi format
+        'Booking Source', 'channel',
+        # SynXis format - Secondary Channel has actual OTA name
+        'Secondary Channel',
+    ],
+    
+    # SynXis primary channel (SYDC, WEB) - for categorization
+    'channel_type': [
+        'Channel',
+    ],
+    
+    # SynXis sub-source details
+    'sub_source': ['Sub Source'],
+    'sub_source_code': ['Sub Source Code'],
+    
+    # OTA confirmation number
+    'ota_confirmation': [
+        'Channel Connect Confirm #',
+        'OTA Confirmation', 'OTA Conf',
+    ],
+    
+    # =========================================================================
+    # USER / AGENT
+    # =========================================================================
+    'user': ['User', 'Created By', 'Agent', 'Booked By'],
+    
+    # =========================================================================
+    # RATE PLAN
+    # =========================================================================
+    'rate_plan': [
+        # ABS / Thundi formats
+        'Rate Type', 'Rate Plan', 'RatePlan', 'Meal Plan', 'Board',
+        'Board Type', 'Package',
+        # SynXis format
+        'Rate Type Code',
+        'Rate Category Name',
+    ],
+    
+    # =========================================================================
+    # AMOUNTS / PRICING
+    # =========================================================================
+    'total_amount': [
+        # Thundi format
+        'Total', 'Grand Total', 'Total Amount',
+        # ABS formats
+        'Revenue($)', 'Balance Due($)', 'Revenue',
+        'Amount', 'Net Amount',
+        # SynXis format
+        'Cash Paid(Total)',
+    ],
+    
+    'adr': [
+        'ADR', 'Average Daily Rate', 'Daily Rate', 'Rate',
+        # SynXis format
+        'Avg Rate',
+    ],
+    
+    'deposit': [
+        'Deposit', 'Deposit Amount', 'Advance',
+        # SynXis format
+        'Pay at Property',
+    ],
+    
+    'total_charges': ['Total Charges', 'Charges', 'Extra Charges'],
+    
+    # SynXis pricing details
+    'total_adult_price': ['Total Price For Adult'],
+    'points_used': ['Points Used(Total)'],
+    'cash_refund': ['Cash Refund(Total)'],
+    
+    # =========================================================================
+    # GUEST INFO
+    # =========================================================================
+    'guest_name': [
+        'Guest Name', 'Name', 'Guest', 'Customer', 'Customer Name',
+    ],
+    
+    'country': [
+        'Country', 'Nationality', 'Guest Country',
+        # SynXis format - 2-letter country codes
+        'Guest Location',
+    ],
+    
+    'city': ['City', 'Guest City'],
+    'state': ['State', 'Province', 'Guest State'],
+    'zip_code': ['Zip Code', 'Postal Code', 'Zip', 'Postcode'],
+    'email': ['Email', 'Guest Email', 'E-mail'],
+    
+    # =========================================================================
+    # STATUS
+    # =========================================================================
+    'status': [
+        'Status', 'Booking Status', 'State', 'Res.Type',
+        'Reservation Status',
+    ],
+    
+    'reservation_type': [
+        'Reservationn Type', 'Reservation Type', 'Res Type',
+        'Booking Type',
+    ],
+    
+    # =========================================================================
+    # CANCELLATION
+    # =========================================================================
+    'cancellation_date': [
+        'Cancellation Date', 'Cancelled Date', 'Cancel Date',
+    ],
+    
+    # =========================================================================
+    # OTHER
+    # =========================================================================
+    'market_code': ['Market Code', 'Market', 'Segment'],
+    'payment_type': ['Payment Type', 'Payment Method', 'Payment'],
+    'hotel_name': ['Hotel Name', 'Property', 'Hotel'],
+    
+    # SynXis specific
+    'pms_confirmation': ['PMS Confirmation\nCode', 'PMS Confirmation Code'],
+    'rooms_count': ['Rooms'],
+    'promotion': ['Promotion'],
+    'promo_discount': ['Promo\nDiscount', 'Promo Discount'],
+    'loyalty_program': ['Loyalty Program'],
+    'loyalty_level': ['Loyalty Level Name'],
+}
+
+
+    # =============================================================================
+    # SYNXIS ROOM TYPE MAPPING
+    # =============================================================================
+    # Maps SynXis room type codes to standard room type names
+    # Update these based on your actual room configuration
+
+    SYNXIS_ROOM_TYPE_MAPPING = {
+        # Deluxe variants
+        'SHDLX001': 'Deluxe Room',
+        'SHDLX002': 'Deluxe Room',
+        'SHDLX003': 'Deluxe Room',
+        'SHDLX004': 'Deluxe Room',
+        # Standard
+        'SHSTD001': 'Standard Room',
+        # Grand
+        'SHGRD001': 'Grand Room',
+        'SHGRD002': 'Grand Room',
+    }
+
+
+    # =============================================================================
+    # SYNXIS RATE PLAN MAPPING
+    # =============================================================================
+    # Maps SynXis rate type codes to standard rate plan names
+    # Update these based on your actual rate plan configuration
+
+    SYNXIS_RATE_PLAN_MAPPING = {
+        # Standard OTA rates
+        'SHSTROTA001': 'Room Only',
+        'SHSTROTA002': 'Room Only',
+        # Booking.com rates
+        'SHHBBCM': 'Half Board',      # HB Booking.com
+        'SHFBBCM': 'Full Board',      # FB Booking.com
+        'SHBBWBCM': 'Bed & Breakfast', # BB Booking.com
+        # Agoda rates
+        'SHHBAGD': 'Half Board',      # HB Agoda
+        'SHFBAGD': 'Full Board',      # FB Agoda
+        # Expedia rates
+        'SHFBEXP': 'Full Board',      # FB Expedia
+        # Booking Engine rates
+        'SHSTRSBE001': 'Room Only',   # Standard BE
+        'SHFBSBE003': 'Full Board',   # FB BE
+    }
+
+
+    # =============================================================================
+    # SYNXIS CHANNEL MAPPING
+    # =============================================================================
+    # Maps SynXis secondary channel values to your channel names
+
+    SYNXIS_CHANNEL_MAPPING = {
+        # OTAs
+        'Booking.com': 'OTA',
+        'Agoda.com': 'OTA',
+        'Expedia': 'OTA',
+        'Expedia Affiliate Network': 'OTA',
+        # Direct
+        'Booking Engine': 'Direct',
+        'Mobile': 'Direct',
+        'Web': 'Direct',
+    }
+        
     # Status mapping from import values to model choices
     STATUS_MAPPING = {
         'confirmed': [
@@ -1762,14 +1626,17 @@ class ReservationImportService:
             'rows_updated': 0,
             'rows_skipped': 0,
         }
+        self.hotel = None  # Will be set during import
     
-    def import_file(self, file_path: str, file_import=None) -> Dict:
+    def import_file(self, file_path: str, file_import=None, hotel=None) -> Dict:
         """
         Import reservations from a file.
         
         Args:
             file_path: Path to Excel or CSV file
             file_import: Optional FileImport record for tracking
+            hotel: Optional Property instance to assign to reservations
+                   If not provided, uses hotel from file_import
         
         Returns:
             Dict with import results
@@ -1781,6 +1648,7 @@ class ReservationImportService:
         # Create or get FileImport record
         if file_import is None:
             file_import = FileImport.objects.create(
+                hotel=hotel,
                 filename=file_path.name,
                 status='processing',
                 started_at=timezone.now(),
@@ -1789,6 +1657,9 @@ class ReservationImportService:
             file_import.status = 'processing'
             file_import.started_at = timezone.now()
             file_import.save()
+        
+        # Determine which hotel to use (parameter takes precedence)
+        self.hotel = hotel or file_import.hotel
         
         try:
             # Calculate file hash for duplicate detection
@@ -1886,6 +1757,32 @@ class ReservationImportService:
             })
             return None
     
+    def _is_synxis_format(self, df: pd.DataFrame) -> bool:
+        """
+        Detect if the file is in SynXis format.
+        
+        SynXis files have distinctive columns like:
+        - 'Secondary Channel'
+        - 'Channel Connect Confirm #'
+        - 'Total Adult Occupancy'
+        - 'Rate Type Code'
+        
+        Returns:
+            True if SynXis format detected
+        """
+        synxis_indicators = [
+            'Secondary Channel',
+            'Channel Connect Confirm #',
+            'Total Adult Occupancy',
+            'Rate Type Code',
+            'Rate Category Name',
+            'Sub Source Code',
+        ]
+    
+        # Check if at least 3 SynXis-specific columns exist
+        matches = sum(1 for col in synxis_indicators if col in df.columns)
+        return matches >= 3
+        
     def _clean_excel_escapes(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Clean Excel-escaped values like ="314" to just 314.
@@ -1945,8 +1842,21 @@ class ReservationImportService:
         """Process each row of the DataFrame."""
         from pricing.models import Reservation, RoomType, RatePlan, BookingSource, Guest
         
+                # Detect format
+        is_synxis = self._is_synxis_format(df)
+
+        if is_synxis:
+            self.errors.append({
+                'row': 0,
+                'message': 'Detected SynXis format - using SynXis-specific processing'
+            })
         # Pre-fetch reference data for performance
-        room_types = {rt.name.lower(): rt for rt in RoomType.objects.all()}
+        # Filter by hotel if set
+        if self.hotel:
+            room_types = {rt.name.lower(): rt for rt in RoomType.objects.filter(hotel=self.hotel)}
+        else:
+            room_types = {rt.name.lower(): rt for rt in RoomType.objects.all()}
+        
         rate_plans = {rp.name.lower(): rp for rp in RatePlan.objects.all()}
         
         for i, (idx, row) in enumerate(df.iterrows()):
@@ -1963,7 +1873,7 @@ class ReservationImportService:
                 self.stats['rows_skipped'] += 1
     
     def _process_row(self, row: pd.Series, row_num: int, file_import,
-                     room_types: Dict, rate_plans: Dict) -> None:
+                 room_types: Dict, rate_plans: Dict) -> None:
         """Process a single row and create/update reservation."""
         from pricing.models import Reservation, RoomType, RatePlan, BookingSource, Guest
         
@@ -1997,17 +1907,55 @@ class ReservationImportService:
         # Parse pax (handles "2 \ 0" and "2 / 0" formats)
         adults, children = self._parse_pax(row)
         
-        # Extract room type from room field
-        room_type, room_type_name = self._extract_room_type(
-            row.get('room_no', ''), room_types
-        )
+        # FIX: Calculate SynXis children (removed erroneous return statement)
+        if children == 0:
+            synxis_children = self._calculate_synxis_children(row)
+            if synxis_children > 0:
+                children = synxis_children
         
-        # Map rate plan
-        rate_plan, rate_plan_name = self._map_rate_plan(
-            row.get('rate_plan', ''), rate_plans
-        )
+        # =======================================================================
+        # ROOM TYPE HANDLING - with SynXis support
+        # =======================================================================
+        room_type_raw = str(row.get('room_no', '')).strip()
         
-        # Map booking source - check both 'source' and direct channel column
+        # Check if this is a SynXis room code
+        if room_type_raw.startswith('SH') and len(room_type_raw) >= 7:
+            # SynXis format - map the code to standard name
+            room_type_name = self._map_synxis_room_type(room_type_raw)
+        else:
+            # Standard format - extract room type from room field
+            room_type_name = room_type_raw
+        
+        # FIX: Look up the RoomType object by mapped name
+        room_type = room_types.get(room_type_name.lower()) if room_type_name else None
+        
+        # If not found by exact match, try the extract method for non-SynXis
+        if room_type is None and not room_type_raw.startswith('SH'):
+            room_type, room_type_name = self._extract_room_type(room_type_raw, room_types)
+        
+        # =======================================================================
+        # RATE PLAN HANDLING - with SynXis support
+        # =======================================================================
+        rate_plan_raw = str(row.get('rate_plan', '')).strip()
+        
+        # Check if this is a SynXis rate code
+        if rate_plan_raw.startswith('SH') and len(rate_plan_raw) >= 6:
+            # SynXis format - map the code to standard name
+            rate_plan_name = self._map_synxis_rate_plan(rate_plan_raw)
+        else:
+            # Standard format
+            rate_plan_name = rate_plan_raw
+        
+        # FIX: Look up the RatePlan object by mapped name
+        rate_plan = rate_plans.get(rate_plan_name.lower()) if rate_plan_name else None
+        
+        # If not found by exact match, try the map method for non-SynXis
+        if rate_plan is None and not rate_plan_raw.startswith('SH'):
+            rate_plan, rate_plan_name = self._map_rate_plan(rate_plan_raw, rate_plans)
+        
+        # =======================================================================
+        # BOOKING SOURCE HANDLING
+        # =======================================================================
         source_str = str(row.get('source', '')).strip()
         
         # If source is empty or "PMS", it's likely a direct booking
@@ -2022,7 +1970,9 @@ class ReservationImportService:
         if not booking_source:
             booking_source = BookingSource.get_or_create_unknown()
         
-        # Find or create guest
+        # =======================================================================
+        # GUEST HANDLING
+        # =======================================================================
         guest_name = str(row.get('guest_name', '')).strip()
         country = str(row.get('country', '')).strip()
         city = str(row.get('city', '')).strip()
@@ -2037,12 +1987,16 @@ class ReservationImportService:
         else:
             guest = None
         
-        # Parse amounts
+        # =======================================================================
+        # AMOUNTS
+        # =======================================================================
         total_amount = self._parse_decimal(row.get('total_amount'))
         adr = self._parse_decimal(row.get('adr'))
         deposit = self._parse_decimal(row.get('deposit'))
         
-        # Map status
+        # =======================================================================
+        # STATUS
+        # =======================================================================
         raw_status = str(row.get('status', 'confirmed')).strip()
         status = self._map_status(raw_status)
         
@@ -2056,33 +2010,51 @@ class ReservationImportService:
         # Build raw data for storage
         raw_data = {k: str(v) for k, v in row.items() if pd.notna(v)}
         
-        # Create or update reservation
+        # =======================================================================
+        # CREATE OR UPDATE RESERVATION
+        # =======================================================================
         with transaction.atomic():
+            # Build lookup criteria
+            lookup = {
+                'confirmation_no': base_conf,
+                'room_sequence': sequence,
+            }
+            
+            # If hotel is set, include it in lookup for proper multi-property support
+            if self.hotel:
+                lookup['hotel'] = self.hotel
+            
+            # Build defaults
+            defaults = {
+                'original_confirmation_no': raw_conf,
+                'booking_date': booking_date or arrival_date,
+                'arrival_date': arrival_date,
+                'departure_date': departure_date,
+                'nights': nights,
+                'adults': adults,
+                'children': children,
+                'room_type': room_type,
+                'room_type_name': room_type_name,
+                'rate_plan': rate_plan,
+                'rate_plan_name': rate_plan_name,
+                'booking_source': booking_source,
+                'channel': booking_source.channel if booking_source else None,
+                'guest': guest,
+                'total_amount': total_amount,
+                'status': status,
+                'cancellation_date': cancellation_date,
+                'is_multi_room': is_multi_room,
+                'file_import': file_import,
+                'raw_data': raw_data,
+            }
+            
+            # Always set hotel in defaults if we have one
+            if self.hotel:
+                defaults['hotel'] = self.hotel
+            
             reservation, created = Reservation.objects.update_or_create(
-                confirmation_no=base_conf,
-                room_sequence=sequence,
-                defaults={
-                    'original_confirmation_no': raw_conf,
-                    'booking_date': booking_date or arrival_date,
-                    'arrival_date': arrival_date,
-                    'departure_date': departure_date,
-                    'nights': nights,
-                    'adults': adults,
-                    'children': children,
-                    'room_type': room_type,
-                    'room_type_name': room_type_name,
-                    'rate_plan': rate_plan,
-                    'rate_plan_name': rate_plan_name,
-                    'booking_source': booking_source,
-                    'channel': booking_source.channel if booking_source else None,
-                    'guest': guest,
-                    'total_amount': total_amount,
-                    'status': status,
-                    'cancellation_date': cancellation_date,  # Save cancellation date
-                    'is_multi_room': is_multi_room,
-                    'file_import': file_import,
-                    'raw_data': raw_data,
-                }
+                **lookup,
+                defaults=defaults
             )
             
             if created:
@@ -2372,17 +2344,25 @@ class ReservationImportService:
         from pricing.models import Reservation
         
         # Find all reservations with sequence > 1 from this import
-        multi_room_reservations = Reservation.objects.filter(
+        multi_room_qs = Reservation.objects.filter(
             file_import=file_import,
             room_sequence__gt=1
         )
         
-        for res in multi_room_reservations:
+        # If hotel is set, also filter by hotel
+        if self.hotel:
+            multi_room_qs = multi_room_qs.filter(hotel=self.hotel)
+        
+        for res in multi_room_qs:
             # Find the parent (sequence 1)
-            parent = Reservation.objects.filter(
-                confirmation_no=res.confirmation_no,
-                room_sequence=1
-            ).first()
+            parent_lookup = {
+                'confirmation_no': res.confirmation_no,
+                'room_sequence': 1
+            }
+            if self.hotel:
+                parent_lookup['hotel'] = self.hotel
+            
+            parent = Reservation.objects.filter(**parent_lookup).first()
             
             if parent:
                 res.parent_reservation = parent
@@ -2393,6 +2373,77 @@ class ReservationImportService:
                 if not parent.is_multi_room:
                     parent.is_multi_room = True
                     parent.save(update_fields=['is_multi_room'])
+                    
+    def _map_synxis_room_type(self, room_code: str) -> str:
+        """
+        Map SynXis room type code to standard room name.
+        
+        Args:
+            room_code: SynXis room code (e.g., 'SHDLX001')
+        
+        Returns:
+            Standard room name or original code if not mapped
+        """
+        if not room_code:
+            return ''
+        
+        room_code = str(room_code).strip().upper()
+        return self.SYNXIS_ROOM_TYPE_MAPPING.get(room_code, room_code)
+    
+    def _map_synxis_rate_plan(self, rate_code: str) -> str:
+        """
+        Map SynXis rate type code to standard rate plan name.
+        
+        Args:
+            rate_code: SynXis rate code (e.g., 'SHHBBCM')
+        
+        Returns:
+            Standard rate plan name or original code if not mapped
+        """
+        if not rate_code:
+            return ''
+        
+        rate_code = str(rate_code).strip().upper()
+        return self.SYNXIS_RATE_PLAN_MAPPING.get(rate_code, rate_code)
+    
+    def _calculate_synxis_children(self, row: pd.Series) -> int:
+        """
+        Calculate total children from SynXis age group columns.
+        
+        SynXis splits children into age groups:
+        - Total Child Occupancy For Age Group1
+        - Total Child Occupancy For Age Group2
+        - Total Child Occupancy For Age Group3
+        - Total Child Occupancy For Age Group4
+        - Total Child Occupancy For Age Group5
+        - Total Child Occupancy For Unknown Age Group
+        
+        Returns:
+            Total children count
+        """
+        child_columns = [
+            'Total Child Occupancy For Age Group1',
+            'Total Child Occupancy For Age Group2', 
+            'Total Child Occupancy For Age Group3',
+            'Total Child Occupancy For Age Group4',
+            'Total Child Occupancy For Age Group5',
+            'Total Child Occupancy For Unknown Age Group',
+            # Also check mapped names
+            'children_group1', 'children_group2', 'children_group3',
+            'children_group4', 'children_group5', 'children_unknown',
+        ]
+        
+        total_children = 0
+        for col in child_columns:
+            if col in row.index:
+                val = row.get(col)
+                if pd.notna(val):
+                    try:
+                        total_children += int(float(val))
+                    except (ValueError, TypeError):
+                        pass
+        
+        return total_children
     
     def _build_result(self, file_import) -> Dict:
         """Build result dictionary from file import."""
@@ -2527,6 +2578,11 @@ Calculates dashboard metrics from Reservation data:
 Usage:
     from pricing.services.booking_analysis import BookingAnalysisService
     
+    # For specific property
+    service = BookingAnalysisService(property=prop)
+    data = service.get_dashboard_data(year=2026)
+    
+    # For all properties (legacy)
     service = BookingAnalysisService()
     data = service.get_dashboard_data(year=2026)
 """
@@ -2545,11 +2601,42 @@ class BookingAnalysisService:
     
     Generates metrics for the Booking Analysis Dashboard including
     cancellation analysis.
+    
+    Supports multi-property filtering via the property parameter.
     """
     
-    def __init__(self):
-        """Initialize the service."""
-        pass
+    def __init__(self, property=None):
+        """
+        Initialize the service.
+        
+        Args:
+            property: Optional Property instance to filter reservations.
+                     If None, analyzes all reservations (legacy behavior).
+        """
+        self.property = property
+    
+    def _get_base_queryset(self):
+        """Get base Reservation queryset with optional property filtering."""
+        from pricing.models import Reservation
+        
+        queryset = Reservation.objects.all()
+        
+        if self.property:
+            queryset = queryset.filter(hotel=self.property)
+        
+        return queryset
+    
+    def _get_room_types(self):
+        """Get RoomType queryset with optional property filtering."""
+        from pricing.models import RoomType
+        
+        queryset = RoomType.objects.all()
+        
+        if self.property:
+            # FIX: RoomType uses 'hotel' field, not 'property'
+            queryset = queryset.filter(hotel=self.property)
+        
+        return queryset
     
     def get_dashboard_data(self, year=None, start_date=None, end_date=None, include_cancelled=False):
         """
@@ -2564,24 +2651,25 @@ class BookingAnalysisService:
         Returns:
             Dict with all dashboard data
         """
-        from pricing.models import Reservation, RoomType
-        
         # Default to current year
         if year is None and start_date is None:
             year = date.today().year
         
-        # Build base queryset for ACTIVE bookings (exclude cancelled)
-        active_queryset = Reservation.objects.filter(
+        # Build base querysets with property filtering
+        base_queryset = self._get_base_queryset()
+        
+        # ACTIVE bookings (exclude cancelled)
+        active_queryset = base_queryset.filter(
             status__in=['confirmed', 'checked_in', 'checked_out']
         )
         
-        # Build queryset for CANCELLED bookings
-        cancelled_queryset = Reservation.objects.filter(
+        # CANCELLED bookings
+        cancelled_queryset = base_queryset.filter(
             status='cancelled'
         )
         
-        # Build queryset for ALL bookings
-        all_queryset = Reservation.objects.all()
+        # ALL bookings
+        all_queryset = base_queryset
         
         # Apply date filters
         if start_date and end_date:
@@ -2602,8 +2690,9 @@ class BookingAnalysisService:
             cancelled_queryset = cancelled_queryset.filter(arrival_date__year=year)
             all_queryset = all_queryset.filter(arrival_date__year=year)
         
-        # Get total rooms for occupancy calculation
-        total_rooms = sum(rt.number_of_rooms for rt in RoomType.objects.all()) or 20
+        # Get total rooms for occupancy calculation (with property filtering)
+        room_types = self._get_room_types()
+        total_rooms = sum(rt.number_of_rooms for rt in room_types) or 20
         
         # Calculate all metrics
         kpis = self._calculate_kpis(active_queryset, total_rooms, year)
@@ -2641,6 +2730,8 @@ class BookingAnalysisService:
         Returns:
             Dict with total_revenue, room_nights, avg_adr, avg_occupancy, reservations
         """
+        from django.db.models import Sum, Count
+        
         # Aggregate basic stats
         stats = queryset.aggregate(
             total_revenue=Sum('total_amount'),
@@ -2685,6 +2776,8 @@ class BookingAnalysisService:
         Returns:
             Dict with cancellation count, rate, lost revenue, avg lead time
         """
+        from django.db.models import Sum, Count, F
+        
         # Count cancelled bookings
         cancelled_stats = cancelled_queryset.aggregate(
             count=Count('id'),
@@ -2763,6 +2856,8 @@ class BookingAnalysisService:
         Returns:
             List of dicts with month, revenue, room_nights, available, occupancy, adr
         """
+        from django.db.models import Sum, Count
+        
         monthly_data = []
         
         # Initialize all 12 months
@@ -2825,6 +2920,8 @@ class BookingAnalysisService:
         Returns:
             List of dicts with month, cancelled_count, lost_revenue, lost_room_nights
         """
+        from django.db.models import Sum, Count
+        
         monthly_data = []
         
         # Initialize all 12 months
@@ -2860,6 +2957,8 @@ class BookingAnalysisService:
         Returns:
             List of dicts with channel, bookings, revenue, percent
         """
+        from django.db.models import Sum, Count
+        
         channel_data = []
         
         # Try to group by channel first
@@ -2912,6 +3011,8 @@ class BookingAnalysisService:
         Returns:
             List of dicts with channel, cancelled_count, total_count, rate, lost_revenue
         """
+        from django.db.models import Sum, Count
+        
         channel_data = []
         
         # Get cancelled by channel
@@ -2969,6 +3070,8 @@ class BookingAnalysisService:
         Returns:
             List of dicts with meal_plan, bookings, revenue, percent
         """
+        from django.db.models import Sum, Count
+        
         meal_plan_data = []
         
         # Group by rate_plan
@@ -3023,6 +3126,8 @@ class BookingAnalysisService:
         Returns:
             List of dicts with room_type, bookings, revenue, percent
         """
+        from django.db.models import Sum, Count
+        
         room_type_data = []
         
         # First, try to get stats for reservations WITH room_type FK
@@ -3180,18 +3285,21 @@ class BookingAnalysisService:
         Returns:
             Dict with gross_bookings, cancellations, net_bookings, net_revenue
         """
-        from pricing.models import Reservation
-        
         if end_date is None:
             end_date = date.today()
         if start_date is None:
             start_date = end_date - timedelta(days=days)
         
+        # Use property-filtered base queryset
+        base_queryset = self._get_base_queryset()
+        
         # New bookings created in this period
-        new_bookings = Reservation.objects.filter(
+        new_bookings = base_queryset.filter(
             booking_date__gte=start_date,
             booking_date__lte=end_date
         ).exclude(status='cancelled')
+        
+        from django.db.models import Sum, Count
         
         new_stats = new_bookings.aggregate(
             count=Count('id'),
@@ -3200,7 +3308,7 @@ class BookingAnalysisService:
         )
         
         # Cancellations in this period
-        cancellations = Reservation.objects.filter(
+        cancellations = base_queryset.filter(
             cancellation_date__gte=start_date,
             cancellation_date__lte=end_date,
             status='cancelled'

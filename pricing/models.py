@@ -1,10 +1,24 @@
 """
-Pricing models - simplified version.
+Pricing models - Hybrid Multi-Property Architecture.
+
+Property-specific: Season, RoomType, Reservation, Pickup models
+Shared: Channel, RatePlan, BookingSource, Guest
+
+Note: ForeignKey to Property model is named 'hotel' to avoid conflict
+with Python's built-in @property decorator.
 """
 
 from django.db import models
+from django.db.models import Sum, Count, Avg, Q
 from decimal import Decimal, ROUND_HALF_UP
 from django.core.validators import MinValueValidator, MaxValueValidator
+from datetime import date, timedelta
+import re
+
+
+# =============================================================================
+# ORGANIZATION & PROPERTY
+# =============================================================================
 
 class Organization(models.Model):
     """
@@ -60,21 +74,20 @@ class Organization(models.Model):
     @property
     def total_rooms(self):
         """Return total rooms across all properties."""
-        from django.db.models import Sum
         return self.properties.filter(
             is_active=True
         ).aggregate(
             total=Sum('room_types__number_of_rooms')
         )['total'] or 0
 
+
 class Property(models.Model):
     """
-    Property/hotel configuration - singleton model.
+    Property/hotel configuration.
     
     This holds property-wide settings including the reference base rate
     used for room index calculations.
     """
-    
     organization = models.ForeignKey(
         Organization,
         on_delete=models.PROTECT,
@@ -105,6 +118,12 @@ class Property(models.Model):
         help_text="Currency symbol to display"
     )
     
+    location = models.CharField(
+        max_length=255, 
+        blank=True, 
+        help_text="e.g., Maldives, Kaafu Atoll"
+    )
+    
     # Capacity
     total_rooms = models.PositiveIntegerField(
         default=0,
@@ -116,6 +135,10 @@ class Property(models.Model):
         default=True,
         help_text="Whether this property is active"
     )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['organization', 'name']
@@ -133,7 +156,6 @@ class Property(models.Model):
     
     def _update_total_rooms(self):
         """Update total_rooms from sum of room types."""
-        from django.db.models import Sum
         total = self.room_types.aggregate(
             total=Sum('number_of_rooms')
         )['total'] or 0
@@ -159,17 +181,13 @@ class Property(models.Model):
         })
 
 
-# =============================================================================
-# Helper function to get current property from request
-# =============================================================================
-
 def get_current_property(request):
     """
     Get current property from request (URL kwargs or session).
     
     Usage in views:
-        property = get_current_property(request)
-        rooms = RoomType.objects.filter(property=property)
+        hotel = get_current_property(request)
+        rooms = RoomType.objects.filter(hotel=hotel)
     """
     # Try URL kwargs first
     org_code = request.resolver_match.kwargs.get('org_code')
@@ -199,14 +217,25 @@ def get_current_property(request):
     return None
 
 
+# =============================================================================
+# PROPERTY-SPECIFIC MODELS
+# =============================================================================
+
 class Season(models.Model):
     """
     Pricing season with date range and index multiplier.
+    PROPERTY-SPECIFIC: Each property has its own seasons.
     
     Example:
         Low Season: Jan 11 - Mar 30, Index 1.0
         High Season: Jun 1 - Oct 30, Index 1.3
     """
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='seasons',
+        help_text="Property this season belongs to"
+    )
     name = models.CharField(max_length=100, help_text="e.g., Low Season, High Season")
     start_date = models.DateField()
     end_date = models.DateField()
@@ -225,7 +254,7 @@ class Season(models.Model):
     )
     
     class Meta:
-        ordering = ['start_date']
+        ordering = ['hotel', 'start_date']
         verbose_name = "Season"
         verbose_name_plural = "Seasons"
     
@@ -235,6 +264,10 @@ class Season(models.Model):
     def date_range_display(self):
         """Display formatted date range."""
         return f"{self.start_date.strftime('%b %d, %Y')} - {self.end_date.strftime('%b %d, %Y')}"
+    
+    def get_occupancy_display(self):
+        """Display formatted occupancy percentage."""
+        return f"{self.expected_occupancy}%"
     
     def calculate_adr(self, room_mix=None, rate_plan_mix=None, channel_mix=None):
         """
@@ -248,22 +281,25 @@ class Season(models.Model):
         Returns:
             Decimal: Weighted ADR for the season
         """
-        from decimal import Decimal
         from .services import calculate_final_rate_with_modifier
         
         total_revenue = Decimal('0.00')
         total_weight = Decimal('0.00')
         
-        rooms = RoomType.objects.all()
-        rate_plans = RatePlan.objects.all()
-        channels = Channel.objects.all()
+        # Get property-specific room types
+        rooms = self.hotel.room_types.all()
+        rate_plans = RatePlan.objects.all()  # Shared
+        channels = Channel.objects.all()  # Shared
+        
+        if not rooms.exists():
+            return Decimal('0.00')
         
         # Default to equal mix if not provided
         if not room_mix:
             room_mix = {room.id: Decimal('1.00') / rooms.count() for room in rooms}
-        if not rate_plan_mix:
+        if not rate_plan_mix and rate_plans.exists():
             rate_plan_mix = {plan.id: Decimal('1.00') / rate_plans.count() for plan in rate_plans}
-        if not channel_mix:
+        if not channel_mix and channels.exists():
             channel_mix = {channel.id: Decimal('1.00') / channels.count() for channel in channels}
         
         for room in rooms:
@@ -282,7 +318,7 @@ class Season(models.Model):
                         continue
                     
                     # Get active modifiers for this channel
-                    modifiers = RateModifier.objects.filter(channel=channel, active=True)
+                    modifiers = channel.rate_modifiers.filter(active=True)
                     
                     # If no modifiers, calculate with base channel discount
                     if not modifiers.exists():
@@ -304,7 +340,6 @@ class Season(models.Model):
                         modifier_weight = Decimal('1.00') / modifiers.count()
                         
                         for modifier in modifiers:
-                            # Get season-specific discount (or fall back to base)
                             season_discount = modifier.get_discount_for_season(self)
                             
                             final_rate, _ = calculate_final_rate_with_modifier(
@@ -328,63 +363,51 @@ class Season(models.Model):
     def calculate_revpar(self, room_mix=None, rate_plan_mix=None, channel_mix=None):
         """
         Calculate RevPAR (Revenue Per Available Room) for this season.
-        
         RevPAR = ADR × Occupancy Rate
-        
-        This shows actual revenue potential considering the season's occupancy.
-        
-        Returns:
-            Decimal: RevPAR for the season
         """
         adr = self.calculate_adr(room_mix, rate_plan_mix, channel_mix)
         occupancy_decimal = self.expected_occupancy / Decimal('100.00')
         return (adr * occupancy_decimal).quantize(Decimal('0.01'))
-    
-    def get_occupancy_display(self):
-        """Display formatted occupancy percentage."""
-        return f"{self.expected_occupancy}%"
 
 
 class RoomType(models.Model):
     """
-    Room category with flexible pricing: base rate, multiplier, or fixed adjustment.
+    Room category with flexible pricing.
+    PROPERTY-SPECIFIC: Each property has its own room types.
     
     Pricing Methods:
     1. Direct base_rate: Simple, each room has its own rate
-    2. Index multiplier: base_rate × room_index (e.g., 1.0, 1.3, 2.0)
-    3. Fixed adjustment: base_rate + room_adjustment (e.g., +$0, +$30, +$100)
-    
-    Examples:
-        Standard Room: base_rate=$100, room_index=1.0 → $100
-        Deluxe Room: base_rate=$100, room_index=1.3 → $130
-        Suite: base_rate=$100, room_adjustment=$100 → $200
+    2. Index multiplier: Property.reference_base_rate × room_index
+    3. Fixed adjustment: Property.reference_base_rate + room_adjustment
     """
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='room_types',
+        help_text="Property this room type belongs to"
+    )
     name = models.CharField(max_length=100, help_text="e.g., Standard Room, Deluxe Room, Suite")
     
-    # Base rate (can be used directly or as reference for index/adjustment)
     base_rate = models.DecimalField(
         max_digits=10, 
         decimal_places=2,
-        help_text="Base rate in USD (used directly or as reference for index/adjustment)"
+        help_text="Base rate in USD (used directly or as reference)"
     )
     
-    # Room index/multiplier approach
     room_index = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         default=Decimal('1.00'),
-        help_text="Multiplier for base rate (e.g., 1.0=same, 1.3=30% more, 2.0=double)"
+        help_text="Multiplier for property reference rate"
     )
     
-    # Fixed adjustment approach (alternative to index)
     room_adjustment = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text="Fixed amount to add to base rate (alternative to room_index)"
+        help_text="Fixed amount to add to property reference rate"
     )
     
-    # Pricing method selector
     PRICING_METHODS = [
         ('direct', 'Direct Base Rate'),
         ('index', 'Index Multiplier'),
@@ -397,18 +420,15 @@ class RoomType(models.Model):
         help_text="How to calculate room rate"
     )
     
-    sort_order = models.PositiveIntegerField(
-        default=0,
-        help_text="Display order"
-    )
+    sort_order = models.PositiveIntegerField(default=0, help_text="Display order")
     
     number_of_rooms = models.PositiveIntegerField(
         default=10,
-        help_text="Number of rooms of this type in the property"
+        help_text="Number of rooms of this type"
     )
     
     class Meta:
-        ordering = ['sort_order', 'name']
+        ordering = ['hotel', 'sort_order', 'name']
         verbose_name = "Room Type"
         verbose_name_plural = "Room Types"
     
@@ -423,45 +443,32 @@ class RoomType(models.Model):
         return f"{self.name}{count_str}"
     
     def get_effective_base_rate(self, reference_rate=None):
-        """
-        Calculate the effective base rate for this room type.
-        
-        Args:
-            reference_rate: Optional reference rate for index/adjustment calculations
-                          If None, uses Property.reference_base_rate
-        
-        Returns:
-            Decimal: The effective base rate for this room
-        """
+        """Calculate the effective base rate for this room type."""
         if self.pricing_method == 'direct':
-            # Use base_rate directly
             return self.base_rate
         
         # Get reference rate from Property if not provided
         if reference_rate is None:
-            try:
-                property_instance = Property.get_instance()
-                ref_rate = property_instance.reference_base_rate
-            except:
-                ref_rate = self.base_rate
+            ref_rate = self.hotel.reference_base_rate if self.hotel else self.base_rate
         else:
             ref_rate = reference_rate
         
         if self.pricing_method == 'index':
-            # Multiply reference rate by room_index
             return ref_rate * self.room_index
-        
         elif self.pricing_method == 'adjustment':
-            # Add fixed adjustment to reference rate
             return ref_rate + self.room_adjustment
         
-        # Fallback to base_rate
         return self.base_rate
 
+
+# =============================================================================
+# SHARED MODELS (Organization-level or Global)
+# =============================================================================
 
 class RatePlan(models.Model):
     """
     Board type with meal supplement per person.
+    SHARED: Same rate plans available across all properties.
     
     Example:
         Bed & Breakfast: $6 per person
@@ -490,28 +497,25 @@ class RatePlan(models.Model):
 class Channel(models.Model):
     """
     Booking channel with discount and commission.
+    SHARED: Same channels available across all properties.
     
     Pricing Flow:
-    1. BAR (Base Available Rate) = already calculated from room + season + meals
+    1. BAR (Base Available Rate) = room + season + meals
     2. Channel Base Rate = BAR - base_discount_percent
-    3. Then Rate Modifiers apply additional discounts (see RateModifier model)
-    
-    Example:
-        OTA: base_discount=0%, commission=18%
-        DIRECT: base_discount=15%, commission=0%
+    3. Final Rate = Channel Base Rate - modifier.discount_percent
     """
     name = models.CharField(max_length=100, help_text="e.g., OTA, DIRECT, Agent")
     base_discount_percent = models.DecimalField(
         max_digits=5, 
         decimal_places=2, 
         default=Decimal('0.00'),
-        help_text="Base channel discount from BAR (e.g., 15.00 for 15% off)"
+        help_text="Base channel discount from BAR"
     )
     commission_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text="Commission the channel takes (for revenue analysis)"
+        help_text="Commission the channel takes"
     )
     
     distribution_share_percent = models.DecimalField(
@@ -519,7 +523,7 @@ class Channel(models.Model):
         decimal_places=2,
         default=Decimal('0.00'),
         validators=[MinValueValidator(0), MaxValueValidator(100)],
-        help_text="Expected % of bookings from this channel (for revenue forecasting)"
+        help_text="Expected % of bookings from this channel"
     )
     
     sort_order = models.PositiveIntegerField(default=0, help_text="Display order")
@@ -538,31 +542,23 @@ class Channel(models.Model):
         return " ".join(parts)
     
     def discount_display(self):
-        """Display formatted discount."""
         if self.base_discount_percent > 0:
             return f"{self.base_discount_percent}% discount"
         return "No discount"
     
     def commission_display(self):
-        """Display formatted commission."""
         if self.commission_percent > 0:
             return f"{self.commission_percent}% commission"
         return "No commission"
     
     def distribution_display(self):
-        """Display formatted distribution share."""
         if self.distribution_share_percent > 0:
             return f"{self.distribution_share_percent}% of bookings"
         return "No distribution set"
 
     @classmethod
     def validate_total_distribution(cls):
-        """
-        Validate that total distribution shares equal 100%.
-        
-        Returns:
-            tuple: (is_valid: bool, total: Decimal, message: str)
-        """
+        """Validate that total distribution shares equal 100%."""
         total = cls.objects.aggregate(
             total=models.Sum('distribution_share_percent')
         )['total'] or Decimal('0.00')
@@ -576,51 +572,31 @@ class Channel(models.Model):
         elif total < Decimal('100.00'):
             message = f"⚠ Total distribution: {total}% (missing {Decimal('100.00') - total}%)"
         else:
-            message = f"⚠ Total distribution: {total}% (exceeds 100% by {total - Decimal('100.00')}%)"
+            message = f"⚠ Total distribution: {total}% (exceeds by {total - Decimal('100.00')}%)"
         
         return is_valid, total, message
     
     @classmethod
     def get_distribution_mix(cls):
-        """
-        Get channel distribution as a dictionary for calculations.
-        
-        Returns:
-            dict: {channel_id: share_as_decimal}
-            Example: {1: Decimal('0.70'), 2: Decimal('0.30')}
-        """
-        channels = cls.objects.all()
+        """Get channel distribution as a dictionary."""
         return {
             channel.id: channel.distribution_share_percent / Decimal('100.00')
-            for channel in channels
-            if channel.distribution_share_percent > 0
+            for channel in cls.objects.filter(distribution_share_percent__gt=0)
         }
     
     @classmethod
     def normalize_distribution(cls):
-        """
-        Auto-normalize distribution shares to sum to 100%.
-        
-        Proportionally adjusts all shares so they sum to exactly 100%.
-        Only affects channels with share > 0.
-        """
-        channels_with_share = cls.objects.filter(distribution_share_percent__gt=0)
-        
-        if not channels_with_share.exists():
+        """Auto-normalize distribution shares to sum to 100%."""
+        channels = cls.objects.filter(distribution_share_percent__gt=0)
+        if not channels.exists():
             return
         
-        total = channels_with_share.aggregate(
-            total=models.Sum('distribution_share_percent')
-        )['total'] or Decimal('0.00')
-        
+        total = channels.aggregate(total=Sum('distribution_share_percent'))['total'] or Decimal('0.00')
         if total == Decimal('0.00'):
             return
         
-        # Calculate normalization factor
         factor = Decimal('100.00') / total
-        
-        # Apply to each channel
-        for channel in channels_with_share:
+        for channel in channels:
             channel.distribution_share_percent = (
                 channel.distribution_share_percent * factor
             ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -628,40 +604,23 @@ class Channel(models.Model):
     
     @classmethod
     def distribute_equally(cls):
-        """
-        Set equal distribution across all channels.
-        
-        Each channel gets 100% / number_of_channels.
-        """
+        """Set equal distribution across all channels."""
         channels = cls.objects.all()
         if not channels.exists():
             return
         
-        share_per_channel = (Decimal('100.00') / channels.count()).quantize(
-            Decimal('0.01'), rounding=ROUND_HALF_UP
-        )
-        
+        share = (Decimal('100.00') / channels.count()).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         for channel in channels:
-            channel.distribution_share_percent = share_per_channel
+            channel.distribution_share_percent = share
             channel.save()
-            
+
+
 class RateModifier(models.Model):
     """
-    Additional discount modifiers for channels (Genius, Mobile App, Newsletter, etc.).
+    Additional discount modifiers for channels.
+    SHARED: Linked to shared Channel model.
     
-    These stack on top of the channel's base_discount_percent.
-    
-    Calculation Flow:
-    1. BAR = Base Rate × Season + Meals
-    2. Channel Base Rate = BAR - channel.base_discount_percent
-    3. Final Rate = Channel Base Rate - modifier.discount_percent
-    
-    Example for OTA:
-        BAR: $96.50
-        Channel Base (OTA -0%): $96.50
-        ├─ Standard: $96.50 (0% modifier)
-        ├─ Genius Member: $86.85 (-10% modifier)
-        └─ Mobile App: $86.85 (-10% modifier)
+    Example: Genius, Mobile App, Newsletter discounts
     """
     channel = models.ForeignKey(
         Channel, 
@@ -671,7 +630,7 @@ class RateModifier(models.Model):
     )
     name = models.CharField(
         max_length=100, 
-        help_text="e.g., 'Genius Member', 'Mobile App', 'Newsletter Subscriber'"
+        help_text="e.g., 'Genius Member', 'Mobile App'"
     )
     discount_percent = models.DecimalField(
         max_digits=5, 
@@ -679,16 +638,9 @@ class RateModifier(models.Model):
         default=Decimal('0.00'),
         help_text="Additional discount % from channel base rate"
     )
-    active = models.BooleanField(
-        default=True,
-        help_text="Whether this rate modifier is currently available"
-    )
-    sort_order = models.PositiveIntegerField(
-        default=0,
-        help_text="Display order within channel"
-    )
+    active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
     
-    # Optional: categorization for reporting
     MODIFIER_TYPES = [
         ('standard', 'Standard Rate'),
         ('member', 'Member/Loyalty Program'),
@@ -701,14 +653,10 @@ class RateModifier(models.Model):
     modifier_type = models.CharField(
         max_length=20, 
         choices=MODIFIER_TYPES, 
-        default='standard',
-        help_text="Type of rate modifier"
+        default='standard'
     )
     
-    description = models.TextField(
-        blank=True,
-        help_text="Optional description (e.g., 'For Booking.com Genius Level 2 members')"
-    )
+    description = models.TextField(blank=True)
     
     class Meta:
         ordering = ['channel', 'sort_order', 'name']
@@ -722,25 +670,12 @@ class RateModifier(models.Model):
         return f"{self.channel.name} - {self.name}"
     
     def get_discount_for_season(self, season):
-        """
-        Get the discount percentage for a specific season.
-        
-        Always returns a value from SeasonModifierOverride.
-        If entry doesn't exist (shouldn't happen with auto-population), creates it.
-        
-        Args:
-            season: Season object
-            
-        Returns:
-            Decimal: Discount percentage for this season
-        """
-        # Get or create season discount entry
+        """Get the discount percentage for a specific season."""
         season_discount, created = SeasonModifierOverride.objects.get_or_create(
             modifier=self,
             season=season,
             defaults={'discount_percent': self.discount_percent}
         )
-        
         return season_discount.discount_percent
     
     def total_discount_from_bar(self):
@@ -751,923 +686,88 @@ class RateModifier(models.Model):
 class SeasonModifierOverride(models.Model):
     """
     Season-specific discount configuration for rate modifiers.
-    
-    AUTO-POPULATED PANEL SYSTEM:
-    - Every season automatically gets entries for ALL modifiers
-    - Every modifier automatically gets entries for ALL seasons
-    - Defaults to modifier's base discount (is_customized=False)
-    - When customized, is_customized=True (won't auto-update)
-    - When modifier base changes, auto-updates non-customized entries
-    
-    Example Season Panel (Low Season):
-      ├─ Genius L1: 15% (customized)
-      ├─ Genius L2: 20% (customized)  
-      ├─ Mobile App: 10% (default)
-      ├─ Newsletter: 5% (default)
-      └─ Standard: 0% (default)
+    Links shared RateModifier to property-specific Season.
     """
     modifier = models.ForeignKey(
         RateModifier,
         on_delete=models.CASCADE,
-        related_name='season_discounts',
-        help_text="Which modifier this applies to"
+        related_name='season_discounts'
     )
     season = models.ForeignKey(
         Season,
         on_delete=models.CASCADE,
-        related_name='modifier_discounts',
-        help_text="Which season this applies to"
+        related_name='modifier_discounts'
     )
     discount_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Discount % for this modifier in this season"
+        default=Decimal('0.00')
     )
-    is_customized = models.BooleanField(
-        default=False,
-        help_text="True if manually edited, False if using base default"
-    )
-    notes = models.TextField(
-        blank=True,
-        help_text="Optional notes explaining customization"
-    )
+    is_customized = models.BooleanField(default=False)
+    notes = models.TextField(blank=True)
     
     class Meta:
         ordering = ['season', 'modifier__channel', 'modifier__sort_order']
-        verbose_name = "Season Modifier Discount"
-        verbose_name_plural = "Season Modifier Discounts"
+        verbose_name = "Season Modifier Override"
+        verbose_name_plural = "Season Modifier Overrides"
         unique_together = ['modifier', 'season']
     
     def __str__(self):
-        status = " (custom)" if self.is_customized else " (default)"
-        return f"{self.season.name} - {self.modifier.name}: {self.discount_percent}%{status}"
+        return f"{self.modifier.name} → {self.season.name}: -{self.discount_percent}%"
     
     def save(self, *args, **kwargs):
-        """Auto-mark as customized if discount differs from base."""
-        if self.pk:  # Existing record
-            # Check if discount changed from base
+        if self.pk:
             if self.discount_percent != self.modifier.discount_percent:
                 self.is_customized = True
-        else:  # New record
-            # Default to base discount if not set
+        else:
             if self.discount_percent == Decimal('0.00'):
                 self.discount_percent = self.modifier.discount_percent
         super().save(*args, **kwargs)
     
     def sync_from_base(self):
-        """Update to match modifier's base discount if not customized."""
         if not self.is_customized:
             self.discount_percent = self.modifier.discount_percent
-            super().save()  # Skip save() to avoid re-marking
+            super().save()
     
     def reset_to_base(self):
-        """Reset to base discount and mark as not customized."""
         self.discount_percent = self.modifier.discount_percent
         self.is_customized = False
         super().save()
-    def __str__(self):
-        return f"{self.modifier.name} → {self.season.name}: -{self.discount_percent}%"
-
-
-#pickup analysis models  
-class DailyPickupSnapshot(models.Model):
-    """
-    Daily snapshot of on-the-books (OTB) position for a future arrival date.
-    
-    Captured once per day (via scheduled job or manual import).
-    Tracks how bookings accumulate over time for each arrival date.
-    
-    Example:
-        snapshot_date=Jan 15, arrival_date=Mar 1, days_out=45
-        otb_room_nights=23, otb_revenue=4140, otb_adr=180
-        
-        Next day:
-        snapshot_date=Jan 16, arrival_date=Mar 1, days_out=44
-        otb_room_nights=25, otb_revenue=4500, otb_adr=180
-        (picked up 2 room nights overnight)
-    """
-    # When this snapshot was taken
-    snapshot_date = models.DateField(
-        db_index=True,
-        help_text="Date when this OTB position was recorded"
-    )
-    
-    # What future date we're tracking
-    arrival_date = models.DateField(
-        db_index=True,
-        help_text="The future arrival date being tracked"
-    )
-    
-    # Calculated field for easy querying
-    days_out = models.PositiveIntegerField(
-        help_text="Days between snapshot_date and arrival_date"
-    )
-    
-    # On-the-books metrics
-    otb_room_nights = models.PositiveIntegerField(
-        default=0,
-        help_text="Total room nights booked for this arrival date"
-    )
-    otb_revenue = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Total revenue booked for this arrival date"
-    )
-    otb_reservations = models.PositiveIntegerField(
-        default=0,
-        help_text="Number of reservations for this arrival date"
-    )
-    
-    # Breakdown by segment (stored as JSON for flexibility)
-    otb_by_channel = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Room nights breakdown by channel: {'OTA': 15, 'DIRECT': 8}"
-    )
-    otb_by_room_type = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Room nights breakdown by room type"
-    )
-    otb_by_rate_plan = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Room nights breakdown by rate plan"
-    )
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        ordering = ['-snapshot_date', 'arrival_date']
-        unique_together = ['snapshot_date', 'arrival_date']
-        verbose_name = "Daily Pickup Snapshot"
-        verbose_name_plural = "Daily Pickup Snapshots"
-        indexes = [
-            models.Index(fields=['arrival_date', 'days_out']),
-            models.Index(fields=['snapshot_date']),
-            models.Index(fields=['arrival_date', 'snapshot_date']),
-        ]
-    
-    def __str__(self):
-        return f"{self.snapshot_date} → {self.arrival_date} ({self.days_out}d out): {self.otb_room_nights} RN"
-    
-    @property
-    def otb_adr(self):
-        """Calculate ADR from booked revenue and room nights."""
-        if self.otb_room_nights > 0:
-            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
-        return Decimal('0.00')
-    
-    def save(self, *args, **kwargs):
-        """Auto-calculate days_out before saving."""
-        if self.arrival_date and self.snapshot_date:
-            self.days_out = (self.arrival_date - self.snapshot_date).days
-        super().save(*args, **kwargs)
-    
-    @classmethod
-    def get_pickup_for_date(cls, arrival_date, from_days_out=90):
-        """
-        Get pickup progression for a specific arrival date.
-        
-        Returns list of snapshots showing how OTB grew over time.
-        """
-        return cls.objects.filter(
-            arrival_date=arrival_date,
-            days_out__lte=from_days_out
-        ).order_by('-days_out')
-    
-    @classmethod
-    def get_latest_otb(cls, arrival_date):
-        """Get the most recent OTB snapshot for an arrival date."""
-        return cls.objects.filter(
-            arrival_date=arrival_date
-        ).order_by('-snapshot_date').first()
-
-
-class MonthlyPickupSnapshot(models.Model):
-    """
-    Aggregated monthly OTB snapshot.
-    
-    Summarizes all daily snapshots for a target month as of a specific date.
-    Used for month-level tracking and STLY comparisons.
-    
-    Example:
-        snapshot_date=Jan 15, target_month=Mar 2026, days_out=45
-        otb_room_nights=156, otb_revenue=28080, otb_occupancy=25.2%
-    """
-    # When this snapshot was taken
-    snapshot_date = models.DateField(
-        db_index=True,
-        help_text="Date when this snapshot was recorded"
-    )
-    
-    # Target month (stored as first day of month)
-    target_month = models.DateField(
-        db_index=True,
-        help_text="First day of the target month (e.g., 2026-03-01 for March 2026)"
-    )
-    
-    # Days until target month starts
-    days_out = models.PositiveIntegerField(
-        help_text="Days between snapshot_date and start of target_month"
-    )
-    
-    # Aggregated OTB metrics
-    otb_room_nights = models.PositiveIntegerField(
-        default=0,
-        help_text="Total room nights booked for this month"
-    )
-    otb_revenue = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Total revenue booked for this month"
-    )
-    otb_reservations = models.PositiveIntegerField(
-        default=0,
-        help_text="Number of reservations for this month"
-    )
-    
-    # Calculated occupancy (requires knowing total available rooms)
-    otb_occupancy_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="OTB occupancy percentage"
-    )
-    
-    # Available room nights for this month (for occupancy calculation)
-    available_room_nights = models.PositiveIntegerField(
-        default=0,
-        help_text="Total available room nights for this month"
-    )
-    
-    # Breakdown by segment
-    otb_by_channel = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Room nights by channel"
-    )
-    otb_by_room_type = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Room nights by room type"
-    )
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        ordering = ['-snapshot_date', 'target_month']
-        unique_together = ['snapshot_date', 'target_month']
-        verbose_name = "Monthly Pickup Snapshot"
-        verbose_name_plural = "Monthly Pickup Snapshots"
-        indexes = [
-            models.Index(fields=['target_month', 'days_out']),
-            models.Index(fields=['target_month', 'snapshot_date']),
-        ]
-    
-    def __str__(self):
-        month_str = self.target_month.strftime('%b %Y')
-        return f"{self.snapshot_date} → {month_str} ({self.days_out}d out): {self.otb_room_nights} RN ({self.otb_occupancy_percent}%)"
-    
-    @property
-    def otb_adr(self):
-        """Calculate ADR from booked revenue and room nights."""
-        if self.otb_room_nights > 0:
-            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
-        return Decimal('0.00')
-    
-    def save(self, *args, **kwargs):
-        """Auto-calculate days_out and occupancy before saving."""
-        if self.target_month and self.snapshot_date:
-            self.days_out = (self.target_month - self.snapshot_date).days
-        
-        if self.available_room_nights > 0:
-            self.otb_occupancy_percent = (
-                Decimal(str(self.otb_room_nights)) / 
-                Decimal(str(self.available_room_nights)) * 
-                Decimal('100.00')
-            ).quantize(Decimal('0.01'))
-        
-        super().save(*args, **kwargs)
-    
-    @classmethod
-    def get_stly(cls, target_month, days_out):
-        """
-        Get Same Time Last Year snapshot for comparison.
-        
-        Args:
-            target_month: First day of target month
-            days_out: How many days before month we want to compare
-            
-        Returns:
-            MonthlyPickupSnapshot from same month last year at similar days_out
-        """
-        from dateutil.relativedelta import relativedelta
-        
-        stly_month = target_month - relativedelta(years=1)
-        
-        # Find closest days_out (within 3 days tolerance)
-        return cls.objects.filter(
-            target_month=stly_month,
-            days_out__gte=days_out - 3,
-            days_out__lte=days_out + 3
-        ).order_by('days_out').first()
-
-
-class PickupCurve(models.Model):
-    """
-    Historical pickup curve showing booking patterns by season type.
-    
-    Built from historical data, shows what percentage of final occupancy
-    is typically booked at X days out.
-    
-    Example (High Season curve):
-        days_out=90: cumulative_percent=15% (15% booked at 90 days out)
-        days_out=60: cumulative_percent=35%
-        days_out=30: cumulative_percent=65%
-        days_out=14: cumulative_percent=85%
-        days_out=7:  cumulative_percent=95%
-        days_out=0:  cumulative_percent=100%
-    """
-    SEASON_TYPES = [
-        ('peak', 'Peak Season'),
-        ('high', 'High Season'),
-        ('shoulder', 'Shoulder Season'),
-        ('low', 'Low Season'),
-    ]
-    
-    # What season type this curve represents
-    season_type = models.CharField(
-        max_length=20,
-        choices=SEASON_TYPES,
-        db_index=True,
-        help_text="Season type this curve applies to"
-    )
-    
-    # Optional: link to specific Season for more granular curves
-    season = models.ForeignKey(
-        'Season',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='pickup_curves',
-        help_text="Specific season (optional - if null, applies to all seasons of this type)"
-    )
-    
-    # Days before arrival
-    days_out = models.PositiveIntegerField(
-        help_text="Days before arrival date"
-    )
-    
-    # What percentage is typically booked at this point
-    cumulative_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        help_text="Percentage of final occupancy typically booked at this days_out"
-    )
-    
-    # Statistical confidence
-    sample_size = models.PositiveIntegerField(
-        default=0,
-        help_text="Number of historical periods used to build this data point"
-    )
-    std_deviation = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Standard deviation of the cumulative_percent"
-    )
-    
-    # Curve metadata
-    curve_version = models.PositiveIntegerField(
-        default=1,
-        help_text="Version number for tracking curve updates"
-    )
-    built_from_start = models.DateField(
-        null=True,
-        blank=True,
-        help_text="Start date of historical data used to build curve"
-    )
-    built_from_end = models.DateField(
-        null=True,
-        blank=True,
-        help_text="End date of historical data used to build curve"
-    )
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        ordering = ['season_type', '-days_out']
-        unique_together = ['season_type', 'season', 'days_out', 'curve_version']
-        verbose_name = "Pickup Curve"
-        verbose_name_plural = "Pickup Curves"
-        indexes = [
-            models.Index(fields=['season_type', 'days_out']),
-        ]
-    
-    def __str__(self):
-        season_name = self.season.name if self.season else self.get_season_type_display()
-        return f"{season_name} @ {self.days_out}d out: {self.cumulative_percent}%"
-    
-    @classmethod
-    def get_curve_for_season(cls, season_type, season=None):
-        """
-        Get the full pickup curve for a season type.
-        
-        Returns QuerySet ordered by days_out (descending - furthest out first).
-        """
-        filters = {'season_type': season_type}
-        if season:
-            filters['season'] = season
-        else:
-            filters['season__isnull'] = True
-        
-        return cls.objects.filter(**filters).order_by('-days_out')
-    
-    @classmethod
-    def get_expected_percent_at_days_out(cls, season_type, days_out, season=None):
-        """
-        Get expected cumulative percentage at a specific days_out.
-        
-        Interpolates if exact days_out not in curve.
-        """
-        curve = cls.get_curve_for_season(season_type, season)
-        
-        if not curve.exists():
-            return None
-        
-        # Find surrounding points for interpolation
-        point_before = curve.filter(days_out__gte=days_out).order_by('days_out').first()
-        point_after = curve.filter(days_out__lte=days_out).order_by('-days_out').first()
-        
-        if point_before and point_before.days_out == days_out:
-            return point_before.cumulative_percent
-        
-        if point_before and point_after and point_before != point_after:
-            # Linear interpolation
-            days_range = point_before.days_out - point_after.days_out
-            pct_range = point_after.cumulative_percent - point_before.cumulative_percent
-            
-            if days_range > 0:
-                days_from_before = point_before.days_out - days_out
-                interpolated = point_before.cumulative_percent + (
-                    pct_range * Decimal(str(days_from_before)) / Decimal(str(days_range))
-                )
-                return interpolated.quantize(Decimal('0.01'))
-        
-        # Fallback to nearest point
-        if point_before:
-            return point_before.cumulative_percent
-        if point_after:
-            return point_after.cumulative_percent
-        
-        return None
-
-
-class OccupancyForecast(models.Model):
-    """
-    Generated occupancy and revenue forecast for a future month.
-    
-    Contains TWO types of forecasts:
-    1. Pickup Forecast: Data-driven prediction from booking patterns
-    2. Scenario Forecast: Manual estimate from Season.expected_occupancy
-    
-    This allows comparison between actual booking pace and planning targets.
-    """
-    # Target month (stored as first day of month)
-    target_month = models.DateField(
-        db_index=True,
-        help_text="First day of the target month"
-    )
-    
-    # When this forecast was generated
-    forecast_date = models.DateField(
-        db_index=True,
-        help_text="Date when this forecast was generated"
-    )
-    
-    # Days until target month
-    days_out = models.PositiveIntegerField(
-        help_text="Days between forecast_date and start of target_month"
-    )
-    
-    # Link to season for context
-    season = models.ForeignKey(
-        'Season',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='forecasts',
-        help_text="Season this month falls into"
-    )
-    
-    # Available inventory
-    available_room_nights = models.PositiveIntegerField(
-        default=0,
-        help_text="Total available room nights for this month"
-    )
-    
-    # =========================================================================
-    # CURRENT POSITION (OTB)
-    # =========================================================================
-    otb_room_nights = models.PositiveIntegerField(
-        default=0,
-        help_text="Room nights currently on the books"
-    )
-    otb_revenue = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Revenue currently on the books"
-    )
-    otb_occupancy_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Current OTB occupancy percentage"
-    )
-    
-    # =========================================================================
-    # PICKUP FORECAST (Data-Driven)
-    # =========================================================================
-    pickup_forecast_nights = models.PositiveIntegerField(
-        default=0,
-        help_text="Forecasted total room nights (OTB + expected pickup)"
-    )
-    pickup_forecast_occupancy = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Forecasted occupancy percentage"
-    )
-    pickup_forecast_revenue = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Forecasted gross revenue"
-    )
-    pickup_expected_additional = models.PositiveIntegerField(
-        default=0,
-        help_text="Expected additional room nights to be picked up"
-    )
-    
-    # Forecast methodology breakdown
-    forecast_from_curve = models.PositiveIntegerField(
-        default=0,
-        help_text="Room nights forecast from pickup curve (50% weight)"
-    )
-    forecast_from_stly = models.PositiveIntegerField(
-        default=0,
-        help_text="Room nights forecast from STLY comparison (30% weight)"
-    )
-    forecast_from_velocity = models.PositiveIntegerField(
-        default=0,
-        help_text="Room nights forecast from recent velocity (20% weight)"
-    )
-    
-    # Confidence indicator
-    CONFIDENCE_LEVELS = [
-        ('very_low', 'Very Low (< 30 days data)'),
-        ('low', 'Low (30-60 days data)'),
-        ('medium', 'Medium (60-90 days data)'),
-        ('high', 'High (90+ days data)'),
-    ]
-    confidence_level = models.CharField(
-        max_length=20,
-        choices=CONFIDENCE_LEVELS,
-        default='medium',
-        help_text="Confidence level based on data availability"
-    )
-    confidence_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('50.00'),
-        help_text="Confidence percentage (25-95%)"
-    )
-    
-    # =========================================================================
-    # SCENARIO FORECAST (Manual - from Season.expected_occupancy)
-    # =========================================================================
-    scenario_occupancy = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Manual scenario occupancy (from Season.expected_occupancy)"
-    )
-    scenario_room_nights = models.PositiveIntegerField(
-        default=0,
-        help_text="Room nights based on scenario occupancy"
-    )
-    scenario_revenue = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Revenue based on scenario occupancy"
-    )
-    
-    # =========================================================================
-    # VARIANCE ANALYSIS
-    # =========================================================================
-    # Pickup vs Scenario
-    variance_nights = models.IntegerField(
-        default=0,
-        help_text="Pickup forecast - Scenario (can be negative)"
-    )
-    variance_percent = models.DecimalField(
-        max_digits=6,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Percentage difference from scenario"
-    )
-    
-    # vs STLY (Same Time Last Year)
-    stly_occupancy = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="STLY final occupancy (if available)"
-    )
-    stly_otb_at_same_point = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="STLY OTB at same days_out"
-    )
-    vs_stly_pace_percent = models.DecimalField(
-        max_digits=6,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Percentage ahead/behind STLY pace"
-    )
-    
-    # =========================================================================
-    # REVENUE DETAILS
-    # =========================================================================
-    forecast_adr = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Forecasted ADR"
-    )
-    forecast_revpar = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Forecasted RevPAR"
-    )
-    forecast_commission = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Forecasted commission (based on channel mix)"
-    )
-    forecast_net_revenue = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Forecasted net revenue after commission"
-    )
-    
-    # =========================================================================
-    # METADATA
-    # =========================================================================
-    notes = models.TextField(
-        blank=True,
-        help_text="Auto-generated insights or manual notes"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        ordering = ['target_month', '-forecast_date']
-        unique_together = ['target_month', 'forecast_date']
-        verbose_name = "Occupancy Forecast"
-        verbose_name_plural = "Occupancy Forecasts"
-        indexes = [
-            models.Index(fields=['target_month', 'days_out']),
-            models.Index(fields=['forecast_date']),
-        ]
-    
-    def __str__(self):
-        month_str = self.target_month.strftime('%b %Y')
-        return f"{month_str} forecast ({self.forecast_date}): {self.pickup_forecast_occupancy}% pickup / {self.scenario_occupancy}% scenario"
-    
-    def save(self, *args, **kwargs):
-        """Auto-calculate derived fields before saving."""
-        # Calculate days_out
-        if self.target_month and self.forecast_date:
-            self.days_out = (self.target_month - self.forecast_date).days
-        
-        # Calculate OTB occupancy
-        if self.available_room_nights > 0:
-            self.otb_occupancy_percent = (
-                Decimal(str(self.otb_room_nights)) / 
-                Decimal(str(self.available_room_nights)) * 
-                Decimal('100.00')
-            ).quantize(Decimal('0.01'))
-            
-            # Calculate pickup forecast occupancy
-            self.pickup_forecast_occupancy = (
-                Decimal(str(self.pickup_forecast_nights)) / 
-                Decimal(str(self.available_room_nights)) * 
-                Decimal('100.00')
-            ).quantize(Decimal('0.01'))
-        
-        # Calculate variance
-        self.variance_nights = self.pickup_forecast_nights - self.scenario_room_nights
-        if self.scenario_room_nights > 0:
-            self.variance_percent = (
-                Decimal(str(self.variance_nights)) / 
-                Decimal(str(self.scenario_room_nights)) * 
-                Decimal('100.00')
-            ).quantize(Decimal('0.01'))
-        
-        # Calculate RevPAR
-        if self.available_room_nights > 0:
-            self.forecast_revpar = (
-                self.pickup_forecast_revenue / 
-                Decimal(str(self.available_room_nights))
-            ).quantize(Decimal('0.01'))
-        
-        # Calculate net revenue
-        self.forecast_net_revenue = self.pickup_forecast_revenue - self.forecast_commission
-        
-        # Set confidence level based on days_out
-        if self.days_out <= 14:
-            self.confidence_level = 'high'
-            self.confidence_percent = Decimal('90.00')
-        elif self.days_out <= 30:
-            self.confidence_level = 'high'
-            self.confidence_percent = Decimal('85.00')
-        elif self.days_out <= 60:
-            self.confidence_level = 'medium'
-            self.confidence_percent = Decimal('70.00')
-        elif self.days_out <= 90:
-            self.confidence_level = 'low'
-            self.confidence_percent = Decimal('55.00')
-        else:
-            self.confidence_level = 'very_low'
-            self.confidence_percent = Decimal('35.00')
-        
-        super().save(*args, **kwargs)
-    
-    @property
-    def otb_adr(self):
-        """Current OTB ADR."""
-        if self.otb_room_nights > 0:
-            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
-        return Decimal('0.00')
-    
-    @property
-    def is_ahead_of_stly(self):
-        """Check if current pace is ahead of STLY."""
-        if self.vs_stly_pace_percent is not None:
-            return self.vs_stly_pace_percent > 0
-        return None
-    
-    @property
-    def is_ahead_of_scenario(self):
-        """Check if pickup forecast exceeds scenario."""
-        return self.variance_nights > 0
-    
-    @classmethod
-    def get_latest_forecast(cls, target_month):
-        """Get the most recent forecast for a month."""
-        return cls.objects.filter(
-            target_month=target_month
-        ).order_by('-forecast_date').first()
-    
-    @classmethod
-    def get_forecast_history(cls, target_month, limit=30):
-        """Get forecast progression over time for a month."""
-        return cls.objects.filter(
-            target_month=target_month
-        ).order_by('-forecast_date')[:limit]
-    
-    def generate_insight(self):
-        """Generate a human-readable insight about this forecast."""
-        insights = []
-        
-        # Compare to scenario
-        if self.variance_nights > 0:
-            insights.append(
-                f"Pickup forecast is {self.variance_nights} room nights "
-                f"({abs(self.variance_percent):.1f}%) above your scenario target."
-            )
-        elif self.variance_nights < 0:
-            insights.append(
-                f"Pickup forecast is {abs(self.variance_nights)} room nights "
-                f"({abs(self.variance_percent):.1f}%) below your scenario target."
-            )
-        
-        # Compare to STLY
-        if self.vs_stly_pace_percent is not None:
-            if self.vs_stly_pace_percent > 5:
-                insights.append(
-                    f"You're {self.vs_stly_pace_percent:.1f}% ahead of last year's pace. "
-                    "Consider rate increases."
-                )
-            elif self.vs_stly_pace_percent < -5:
-                insights.append(
-                    f"You're {abs(self.vs_stly_pace_percent):.1f}% behind last year's pace. "
-                    "Consider promotional activity."
-                )
-        
-        # Confidence note
-        if self.days_out > 60:
-            insights.append(
-                f"Forecast confidence is {self.confidence_level} ({self.confidence_percent:.0f}%) "
-                f"at {self.days_out} days out."
-            )
-        
-        return " ".join(insights) if insights else "Forecast is on track."
-    
-    
-    
-    """
-Reservation and Import Models for Booking Data Analysis.
-
-These models support:
-- Importing reservation data from Excel/CSV
-- Tracking booking sources and mapping to channels
-- Guest tracking for repeat analysis
-- Multi-room booking linking
-- Lead time calculations
-
-Add these to your existing pricing/models.py file.
-"""
-
-from django.db import models
-from django.db.models import Sum, Count, Avg, Q
-from decimal import Decimal
-from datetime import date, timedelta
-import re
 
 
 class BookingSource(models.Model):
     """
     Maps import source values to channels.
-    
-    Handles the mapping between what appears in your reservation export
-    (e.g., "Booking.com", "Walk-in", empty cell with user "Reekko")
-    and your existing Channel model.
-    
-    Example mappings:
-        - "Booking.com" → OTA channel
-        - "Walk-in", empty+Reekko, empty+Maais → Direct channel
+    SHARED: Same booking source mappings across all properties.
     """
-    name = models.CharField(
-        max_length=100,
-        unique=True,
-        help_text="Display name (e.g., 'Booking.com', 'Direct - Walk-in')"
-    )
+    name = models.CharField(max_length=100, unique=True)
     
-    # Values to match from import file (case-insensitive)
     import_values = models.JSONField(
         default=list,
-        help_text="List of values to match from import (e.g., ['Booking.com', 'booking.com'])"
+        help_text="Values to match from import files"
     )
     
-    # Map to existing Channel
     channel = models.ForeignKey(
-        'Channel',
+        Channel,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='booking_sources',
-        help_text="Map to existing channel for analysis"
+        related_name='booking_sources'
     )
     
-    # Special handling flags
-    is_direct = models.BooleanField(
-        default=False,
-        help_text="Is this a direct booking source?"
-    )
+    is_direct = models.BooleanField(default=False)
     
-    # For empty source with specific user mapping
     user_mappings = models.JSONField(
         default=list,
         blank=True,
-        help_text="User names that indicate this source when Source is empty (e.g., ['Reekko', 'Maais'])"
+        help_text="User names for empty source handling"
     )
     
-    # Commission override (if different from channel)
     commission_override = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         null=True,
-        blank=True,
-        help_text="Override commission % (if different from channel)"
+        blank=True
     )
     
     active = models.BooleanField(default=True)
@@ -1687,7 +787,6 @@ class BookingSource(models.Model):
     
     @property
     def effective_commission(self):
-        """Get commission rate (override or channel default)."""
         if self.commission_override is not None:
             return self.commission_override
         if self.channel:
@@ -1696,27 +795,15 @@ class BookingSource(models.Model):
     
     @classmethod
     def find_source(cls, source_value, user_value=None):
-        """
-        Find matching BookingSource for import values.
-        
-        Args:
-            source_value: Value from 'Source' column (may be empty)
-            user_value: Value from 'User' column (for empty source handling)
-        
-        Returns:
-            BookingSource or None
-        """
         source_value = (source_value or '').strip()
         user_value = (user_value or '').strip()
         
-        # First, try to match by source value
         if source_value:
             for booking_source in cls.objects.filter(active=True):
                 import_vals = [v.lower() for v in booking_source.import_values]
                 if source_value.lower() in import_vals:
                     return booking_source
         
-        # If source is empty, check user mappings
         if not source_value and user_value:
             for booking_source in cls.objects.filter(active=True):
                 user_maps = [u.lower() for u in booking_source.user_mappings]
@@ -1727,14 +814,9 @@ class BookingSource(models.Model):
     
     @classmethod
     def get_or_create_unknown(cls):
-        """Get or create an 'Unknown' source for unmapped values."""
         source, created = cls.objects.get_or_create(
             name='Unknown',
-            defaults={
-                'import_values': [],
-                'is_direct': False,
-                'sort_order': 999,
-            }
+            defaults={'import_values': [], 'is_direct': False, 'sort_order': 999}
         )
         return source
 
@@ -1742,63 +824,24 @@ class BookingSource(models.Model):
 class Guest(models.Model):
     """
     Guest record for tracking repeat visitors.
-    
-    Created from reservation imports, allows analysis of:
-    - Repeat guest rate
-    - Guest lifetime value
-    - Booking patterns per guest
+    SHARED: Guests can book across multiple properties (organization-level).
     """
-    name = models.CharField(
-        max_length=200,
-        db_index=True,
-        help_text="Guest name from reservation"
-    )
+    name = models.CharField(max_length=200, db_index=True)
+    email = models.EmailField(blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True)
+    country = models.CharField(max_length=100, blank=True, db_index=True)
     
-    email = models.EmailField(
-        blank=True,
-        null=True,
-        help_text="Guest email (if available)"
-    )
-    
-    phone = models.CharField(
-        max_length=50,
-        blank=True,
-        help_text="Guest phone (if available)"
-    )
-    
-    country = models.CharField(
-        max_length=100,
-        blank=True,
-        db_index=True,
-        help_text="Guest country from reservation"
-    )
-    
-    # Denormalized stats for quick queries
-    booking_count = models.PositiveIntegerField(
-        default=0,
-        help_text="Total number of bookings"
-    )
-    total_nights = models.PositiveIntegerField(
-        default=0,
-        help_text="Total room nights stayed"
-    )
+    # Denormalized stats
+    booking_count = models.PositiveIntegerField(default=0)
+    total_nights = models.PositiveIntegerField(default=0)
     total_revenue = models.DecimalField(
         max_digits=12,
         decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Lifetime revenue from this guest"
+        default=Decimal('0.00')
     )
     
-    first_booking_date = models.DateField(
-        null=True,
-        blank=True,
-        help_text="Date of first booking"
-    )
-    last_booking_date = models.DateField(
-        null=True,
-        blank=True,
-        help_text="Date of most recent booking"
-    )
+    first_booking_date = models.DateField(null=True, blank=True)
+    last_booking_date = models.DateField(null=True, blank=True)
     
     notes = models.TextField(blank=True)
     
@@ -1820,18 +863,15 @@ class Guest(models.Model):
     
     @property
     def is_repeat_guest(self):
-        """Check if guest has multiple bookings."""
         return self.booking_count > 1
     
     @property
     def average_booking_value(self):
-        """Calculate average revenue per booking."""
         if self.booking_count > 0:
             return (self.total_revenue / self.booking_count).quantize(Decimal('0.01'))
         return Decimal('0.00')
     
     def update_stats(self):
-        """Recalculate denormalized stats from reservations."""
         from django.db.models import Min, Max
         
         stats = self.reservations.filter(
@@ -1853,14 +893,6 @@ class Guest(models.Model):
     
     @classmethod
     def find_or_create(cls, name, country=None, email=None):
-        """
-        Find existing guest or create new one.
-        
-        Matching logic:
-        1. Exact name + country match
-        2. Exact email match (if provided)
-        3. Create new guest
-        """
         name = (name or '').strip()
         country = (country or '').strip()
         email = (email or '').strip() or None
@@ -1868,47 +900,35 @@ class Guest(models.Model):
         if not name:
             return None
         
-        # Try exact match on name + country
         if country:
-            guest = cls.objects.filter(
-                name__iexact=name,
-                country__iexact=country
-            ).first()
+            guest = cls.objects.filter(name__iexact=name, country__iexact=country).first()
             if guest:
                 return guest
         
-        # Try email match
         if email:
             guest = cls.objects.filter(email__iexact=email).first()
             if guest:
-                # Update name/country if needed
                 if not guest.country and country:
                     guest.country = country
                     guest.save()
                 return guest
         
-        # Try just name match (if no country provided)
         if not country:
             guest = cls.objects.filter(name__iexact=name).first()
             if guest:
                 return guest
         
-        # Create new guest
-        return cls.objects.create(
-            name=name,
-            country=country,
-            email=email,
-        )
+        return cls.objects.create(name=name, country=country, email=email)
 
+
+# =============================================================================
+# FILE IMPORT & RESERVATION (Property-Specific)
+# =============================================================================
 
 class FileImport(models.Model):
     """
     Tracks file import history.
-    
-    Keeps record of all imports for:
-    - Audit trail
-    - Error tracking
-    - Duplicate prevention
+    PROPERTY-SPECIFIC: Each import is for a specific property.
     """
     STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -1918,50 +938,34 @@ class FileImport(models.Model):
         ('failed', 'Failed'),
     ]
     
-    filename = models.CharField(
-        max_length=255,
-        help_text="Original filename"
-    )
-    
-    file_hash = models.CharField(
-        max_length=64,
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='file_imports',
+        null=True,
         blank=True,
-        db_index=True,
-        help_text="SHA256 hash for duplicate detection"
+        help_text="Property this import belongs to"
     )
     
-    status = models.CharField(
-        max_length=30,
-        choices=STATUS_CHOICES,
-        default='pending',
-        db_index=True
-    )
+    filename = models.CharField(max_length=255)
+    file_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='pending', db_index=True)
     
-    # Stats
     rows_total = models.PositiveIntegerField(default=0)
     rows_processed = models.PositiveIntegerField(default=0)
     rows_created = models.PositiveIntegerField(default=0)
     rows_updated = models.PositiveIntegerField(default=0)
     rows_skipped = models.PositiveIntegerField(default=0)
     
-    # Error tracking
-    errors = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="List of error messages with row numbers"
-    )
+    errors = models.JSONField(default=list, blank=True)
     
-    # Date range of imported data
     date_range_start = models.DateField(null=True, blank=True)
     date_range_end = models.DateField(null=True, blank=True)
     
-    # Timing
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     
-    # User who initiated import (optional)
     imported_by = models.CharField(max_length=100, blank=True)
-    
     notes = models.TextField(blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1973,11 +977,11 @@ class FileImport(models.Model):
         verbose_name_plural = "File Imports"
     
     def __str__(self):
-        return f"{self.filename} ({self.get_status_display()})"
+        hotel_str = f" ({self.hotel.name})" if self.hotel else ""
+        return f"{self.filename}{hotel_str} - {self.get_status_display()}"
     
     @property
     def success_rate(self):
-        """Calculate import success rate."""
         if self.rows_total > 0:
             successful = self.rows_created + self.rows_updated
             return (Decimal(str(successful)) / Decimal(str(self.rows_total)) * 100).quantize(Decimal('0.1'))
@@ -1985,32 +989,21 @@ class FileImport(models.Model):
     
     @property
     def duration_seconds(self):
-        """Calculate import duration."""
         if self.started_at and self.completed_at:
             return (self.completed_at - self.started_at).total_seconds()
         return None
     
     def add_error(self, row_num, message):
-        """Add an error to the errors list."""
         if self.errors is None:
             self.errors = []
-        self.errors.append({
-            'row': row_num,
-            'message': str(message),
-        })
+        self.errors.append({'row': row_num, 'message': str(message)})
         self.save(update_fields=['errors'])
 
 
 class Reservation(models.Model):
     """
     Core reservation/booking record.
-    
-    Imported from PMS exports, used for:
-    - Pickup analysis (booking pace)
-    - Lead time analysis
-    - Channel performance
-    - Revenue tracking
-    - Multi-room booking analysis
+    PROPERTY-SPECIFIC: Each reservation belongs to a property.
     """
     STATUS_CHOICES = [
         ('confirmed', 'Confirmed'),
@@ -2020,177 +1013,105 @@ class Reservation(models.Model):
         ('no_show', 'No Show'),
     ]
     
-    # Primary identifier
-    confirmation_no = models.CharField(
-        max_length=50,
-        db_index=True,
-        help_text="Confirmation number (base number, without room suffix)"
-    )
-    
-    # For display - the original confirmation with suffix
-    original_confirmation_no = models.CharField(
-        max_length=50,
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='reservations',
+        null=True,
         blank=True,
-        help_text="Original confirmation number from import (e.g., 286-1)"
+        help_text="Property this reservation is for"
     )
     
-    # Dates
-    booking_date = models.DateField(
-        db_index=True,
-        help_text="Date when booking was made"
-    )
-    arrival_date = models.DateField(
-        db_index=True,
-        help_text="Check-in date"
-    )
-    departure_date = models.DateField(
-        help_text="Check-out date"
-    )
+    confirmation_no = models.CharField(max_length=50, db_index=True)
+    original_confirmation_no = models.CharField(max_length=50, blank=True)
     
-    cancellation_date = models.DateField(
-    null=True, 
-    blank=True,
-    help_text="Date when reservation was cancelled"
-)
-    # Stay details
-    nights = models.PositiveIntegerField(
-        default=1,
-        help_text="Number of nights"
-    )
+    booking_date = models.DateField(db_index=True)
+    arrival_date = models.DateField(db_index=True)
+    departure_date = models.DateField()
+    cancellation_date = models.DateField(null=True, blank=True)
+    
+    nights = models.PositiveIntegerField(default=1)
     adults = models.PositiveIntegerField(default=2)
     children = models.PositiveIntegerField(default=0)
     
-    # Calculated field
-    lead_time_days = models.IntegerField(
-        default=0,
-        db_index=True,
-        help_text="Days between booking and arrival (arrival - booking)"
-    )
+    lead_time_days = models.IntegerField(default=0, db_index=True)
     
-    # Links to reference data
     room_type = models.ForeignKey(
-        'RoomType',
+        RoomType,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='reservations',
-        help_text="Room type booked"
+        related_name='reservations'
     )
-    
-    # Store original room type name for unmatched types
-    room_type_name = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Original room type name from import"
-    )
+    room_type_name = models.CharField(max_length=100, blank=True)
     
     rate_plan = models.ForeignKey(
-        'RatePlan',
+        RatePlan,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='reservations',
-        help_text="Rate plan / meal plan"
+        related_name='reservations'
     )
-    
-    # Store original rate plan name
-    rate_plan_name = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Original rate plan name from import"
-    )
+    rate_plan_name = models.CharField(max_length=100, blank=True)
     
     booking_source = models.ForeignKey(
-        'BookingSource',
+        BookingSource,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='reservations',
-        help_text="Booking source"
+        related_name='reservations'
     )
     
-    # Denormalized channel for easier querying
     channel = models.ForeignKey(
-        'Channel',
+        Channel,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='reservations',
-        help_text="Channel (from booking source)"
+        related_name='reservations'
     )
     
     guest = models.ForeignKey(
-        'Guest',
+        Guest,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='reservations',
-        help_text="Guest record"
+        related_name='reservations'
     )
     
-    # Revenue
     total_amount = models.DecimalField(
         max_digits=12,
         decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Total booking amount"
+        default=Decimal('0.00')
     )
-    
-    # Calculated ADR for this booking
     adr = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Average Daily Rate (total / nights)"
+        default=Decimal('0.00')
     )
     
-    # Status
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default='confirmed',
-        db_index=True
-    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='confirmed', db_index=True)
     
-    # Multi-room booking support
     parent_reservation = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='linked_rooms',
-        help_text="Parent reservation for multi-room bookings"
+        related_name='linked_rooms'
     )
+    room_sequence = models.PositiveSmallIntegerField(default=1)
+    is_multi_room = models.BooleanField(default=False)
     
-    room_sequence = models.PositiveSmallIntegerField(
-        default=1,
-        help_text="Room sequence in multi-room booking (1, 2, 3...)"
-    )
-    
-    is_multi_room = models.BooleanField(
-        default=False,
-        help_text="Is this part of a multi-room booking?"
-    )
-    
-    # Import tracking
     file_import = models.ForeignKey(
-        'FileImport',
+        FileImport,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='reservations',
-        help_text="Import batch this came from"
+        related_name='reservations'
     )
     
-    # Raw data storage for reference
-    raw_data = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Original row data from import"
-    )
-    
-    # Metadata
+    raw_data = models.JSONField(default=dict, blank=True)
     notes = models.TextField(blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -2199,41 +1120,38 @@ class Reservation(models.Model):
         verbose_name = "Reservation"
         verbose_name_plural = "Reservations"
         indexes = [
-            models.Index(fields=['arrival_date', 'status']),
-            models.Index(fields=['booking_date', 'arrival_date']),
+            models.Index(fields=['hotel', 'arrival_date', 'status']),
+            models.Index(fields=['hotel', 'booking_date', 'arrival_date']),
             models.Index(fields=['lead_time_days']),
             models.Index(fields=['confirmation_no', 'room_sequence']),
         ]
-        # Allow same confirmation_no for multi-room, but unique per sequence
-        unique_together = ['confirmation_no', 'room_sequence']
+        unique_together = ['hotel', 'confirmation_no', 'room_sequence']
     
     def __str__(self):
         return f"{self.original_confirmation_no or self.confirmation_no} - {self.arrival_date}"
     
     def save(self, *args, **kwargs):
-        """Auto-calculate fields before saving."""
-        # Calculate lead time
         if self.arrival_date and self.booking_date:
             self.lead_time_days = (self.arrival_date - self.booking_date).days
         
-        # Calculate ADR
         if self.nights and self.nights > 0 and self.total_amount:
             self.adr = (self.total_amount / self.nights).quantize(Decimal('0.01'))
         
-        # Set channel from booking source
         if self.booking_source and self.booking_source.channel:
             self.channel = self.booking_source.channel
+        
+        # Auto-set hotel from room_type if not set
+        if not self.hotel and self.room_type and self.room_type.hotel:
+            self.hotel = self.room_type.hotel
         
         super().save(*args, **kwargs)
     
     @property
     def total_guests(self):
-        """Total number of guests."""
         return self.adults + self.children
     
     @property
     def lead_time_bucket(self):
-        """Get lead time bucket for analysis."""
         days = self.lead_time_days
         if days <= 0:
             return 'Same Day'
@@ -2252,31 +1170,16 @@ class Reservation(models.Model):
     
     @property
     def linked_room_count(self):
-        """Count of linked rooms for multi-room bookings."""
         if self.parent_reservation:
             return self.parent_reservation.linked_rooms.count() + 1
         return self.linked_rooms.count() + 1 if self.is_multi_room else 1
     
     @classmethod
     def parse_confirmation_no(cls, raw_confirmation):
-        """
-        Parse confirmation number to extract base and sequence.
-        
-        Examples:
-            "286" → ("286", 1)
-            "286-1" → ("286", 1)
-            "286-2" → ("286", 2)
-            "ABC123-3" → ("ABC123", 3)
-        
-        Returns:
-            tuple: (base_confirmation, sequence_number)
-        """
         raw = str(raw_confirmation or '').strip()
-        
         if not raw:
             return ('', 1)
         
-        # Pattern: base-number at the end
         match = re.match(r'^(.+)-(\d+)$', raw)
         if match:
             return (match.group(1), int(match.group(2)))
@@ -2284,16 +1187,12 @@ class Reservation(models.Model):
         return (raw, 1)
     
     @classmethod
-    def get_lead_time_distribution(cls, start_date=None, end_date=None, channel=None):
-        """
-        Get lead time distribution for analysis.
+    def get_lead_time_distribution(cls, hotel=None, start_date=None, end_date=None, channel=None):
+        """Get lead time distribution for analysis."""
+        queryset = cls.objects.filter(status__in=['confirmed', 'checked_in', 'checked_out'])
         
-        Returns dict with bucket counts and revenue.
-        """
-        queryset = cls.objects.filter(
-            status__in=['confirmed', 'checked_in', 'checked_out']
-        )
-        
+        if hotel:
+            queryset = queryset.filter(hotel=hotel)
         if start_date:
             queryset = queryset.filter(arrival_date__gte=start_date)
         if end_date:
@@ -2319,7 +1218,6 @@ class Reservation(models.Model):
                     bucket_data['revenue'] += res.total_amount
                     break
         
-        # Calculate percentages
         total_count = sum(b['count'] for b in buckets.values())
         total_revenue = sum(b['revenue'] for b in buckets.values())
         
@@ -2345,3 +1243,443 @@ class Reservation(models.Model):
             })
         
         return result
+
+
+# =============================================================================
+# PICKUP ANALYSIS MODELS (Property-Specific)
+# =============================================================================
+
+class DailyPickupSnapshot(models.Model):
+    """
+    Daily snapshot of on-the-books (OTB) position.
+    PROPERTY-SPECIFIC: Each property tracks its own pickup.
+    """
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='daily_snapshots',
+        help_text="Property this snapshot belongs to"
+    )
+    
+    snapshot_date = models.DateField(db_index=True)
+    arrival_date = models.DateField(db_index=True)
+    days_out = models.PositiveIntegerField()
+    
+    otb_room_nights = models.PositiveIntegerField(default=0)
+    otb_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    otb_reservations = models.PositiveIntegerField(default=0)
+    
+    otb_by_channel = models.JSONField(default=dict, blank=True)
+    otb_by_room_type = models.JSONField(default=dict, blank=True)
+    otb_by_rate_plan = models.JSONField(default=dict, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-snapshot_date', 'arrival_date']
+        unique_together = ['hotel', 'snapshot_date', 'arrival_date']
+        verbose_name = "Daily Pickup Snapshot"
+        verbose_name_plural = "Daily Pickup Snapshots"
+        indexes = [
+            models.Index(fields=['hotel', 'arrival_date', 'days_out']),
+            models.Index(fields=['hotel', 'snapshot_date']),
+        ]
+    
+    def __str__(self):
+        return f"{self.hotel.name}: {self.snapshot_date} → {self.arrival_date} ({self.days_out}d): {self.otb_room_nights} RN"
+    
+    @property
+    def otb_adr(self):
+        if self.otb_room_nights > 0:
+            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+    
+    def save(self, *args, **kwargs):
+        if self.arrival_date and self.snapshot_date:
+            self.days_out = (self.arrival_date - self.snapshot_date).days
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def get_pickup_for_date(cls, hotel, arrival_date, from_days_out=90):
+        return cls.objects.filter(
+            hotel=hotel,
+            arrival_date=arrival_date,
+            days_out__lte=from_days_out
+        ).order_by('-days_out')
+    
+    @classmethod
+    def get_latest_otb(cls, hotel, arrival_date):
+        return cls.objects.filter(
+            hotel=hotel,
+            arrival_date=arrival_date
+        ).order_by('-snapshot_date').first()
+
+
+class MonthlyPickupSnapshot(models.Model):
+    """
+    Aggregated monthly OTB snapshot.
+    PROPERTY-SPECIFIC.
+    """
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='monthly_snapshots'
+    )
+    
+    snapshot_date = models.DateField(db_index=True)
+    target_month = models.DateField(db_index=True)
+    days_out = models.PositiveIntegerField()
+    
+    otb_room_nights = models.PositiveIntegerField(default=0)
+    otb_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    otb_reservations = models.PositiveIntegerField(default=0)
+    otb_occupancy_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    available_room_nights = models.PositiveIntegerField(default=0)
+    
+    otb_by_channel = models.JSONField(default=dict, blank=True)
+    otb_by_room_type = models.JSONField(default=dict, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-snapshot_date', 'target_month']
+        unique_together = ['hotel', 'snapshot_date', 'target_month']
+        verbose_name = "Monthly Pickup Snapshot"
+        verbose_name_plural = "Monthly Pickup Snapshots"
+        indexes = [
+            models.Index(fields=['hotel', 'target_month', 'days_out']),
+        ]
+    
+    def __str__(self):
+        month_str = self.target_month.strftime('%b %Y')
+        return f"{self.hotel.name}: {self.snapshot_date} → {month_str} ({self.days_out}d): {self.otb_room_nights} RN"
+    
+    @property
+    def otb_adr(self):
+        if self.otb_room_nights > 0:
+            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+    
+    def save(self, *args, **kwargs):
+        if self.target_month and self.snapshot_date:
+            self.days_out = (self.target_month - self.snapshot_date).days
+        
+        if self.available_room_nights > 0:
+            self.otb_occupancy_percent = (
+                Decimal(str(self.otb_room_nights)) / 
+                Decimal(str(self.available_room_nights)) * 
+                Decimal('100.00')
+            ).quantize(Decimal('0.01'))
+        
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def get_stly(cls, hotel, target_month, days_out):
+        from dateutil.relativedelta import relativedelta
+        
+        stly_month = target_month - relativedelta(years=1)
+        
+        return cls.objects.filter(
+            hotel=hotel,
+            target_month=stly_month,
+            days_out__gte=days_out - 3,
+            days_out__lte=days_out + 3
+        ).order_by('days_out').first()
+
+
+class PickupCurve(models.Model):
+    """
+    Historical pickup curve showing booking patterns.
+    PROPERTY-SPECIFIC.
+    """
+    SEASON_TYPES = [
+        ('peak', 'Peak Season'),
+        ('high', 'High Season'),
+        ('shoulder', 'Shoulder Season'),
+        ('low', 'Low Season'),
+    ]
+    
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='pickup_curves'
+    )
+    
+    season_type = models.CharField(max_length=20, choices=SEASON_TYPES, db_index=True)
+    season = models.ForeignKey(
+        Season,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pickup_curves'
+    )
+    
+    days_out = models.PositiveIntegerField()
+    cumulative_percent = models.DecimalField(max_digits=5, decimal_places=2)
+    
+    sample_size = models.PositiveIntegerField(default=0)
+    std_deviation = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    
+    curve_version = models.PositiveIntegerField(default=1)
+    built_from_start = models.DateField(null=True, blank=True)
+    built_from_end = models.DateField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['hotel', 'season_type', '-days_out']
+        unique_together = ['hotel', 'season_type', 'season', 'days_out', 'curve_version']
+        verbose_name = "Pickup Curve"
+        verbose_name_plural = "Pickup Curves"
+        indexes = [
+            models.Index(fields=['hotel', 'season_type', 'days_out']),
+        ]
+    
+    def __str__(self):
+        season_name = self.season.name if self.season else self.get_season_type_display()
+        return f"{self.hotel.name} - {season_name} @ {self.days_out}d: {self.cumulative_percent}%"
+    
+    @classmethod
+    def get_curve_for_season(cls, hotel, season_type, season=None):
+        filters = {'hotel': hotel, 'season_type': season_type}
+        if season:
+            filters['season'] = season
+        else:
+            filters['season__isnull'] = True
+        
+        return cls.objects.filter(**filters).order_by('-days_out')
+    
+    @classmethod
+    def get_expected_percent_at_days_out(cls, hotel, season_type, days_out, season=None):
+        curve = cls.get_curve_for_season(hotel, season_type, season)
+        
+        if not curve.exists():
+            return None
+        
+        point_before = curve.filter(days_out__gte=days_out).order_by('days_out').first()
+        point_after = curve.filter(days_out__lte=days_out).order_by('-days_out').first()
+        
+        if point_before and point_before.days_out == days_out:
+            return point_before.cumulative_percent
+        
+        if point_before and point_after and point_before != point_after:
+            days_range = point_before.days_out - point_after.days_out
+            pct_range = point_after.cumulative_percent - point_before.cumulative_percent
+            
+            if days_range > 0:
+                days_from_before = point_before.days_out - days_out
+                interpolated = point_before.cumulative_percent + (
+                    pct_range * Decimal(str(days_from_before)) / Decimal(str(days_range))
+                )
+                return interpolated.quantize(Decimal('0.01'))
+        
+        if point_before:
+            return point_before.cumulative_percent
+        if point_after:
+            return point_after.cumulative_percent
+        
+        return None
+
+
+class OccupancyForecast(models.Model):
+    """
+    Generated occupancy and revenue forecast.
+    PROPERTY-SPECIFIC.
+    """
+    CONFIDENCE_LEVELS = [
+        ('very_low', 'Very Low'),
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+    ]
+    
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='forecasts'
+    )
+    
+    target_month = models.DateField(db_index=True)
+    forecast_date = models.DateField(db_index=True)
+    days_out = models.PositiveIntegerField()
+    
+    season = models.ForeignKey(
+        Season,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='forecasts'
+    )
+    
+    available_room_nights = models.PositiveIntegerField(default=0)
+    
+    # Current OTB
+    otb_room_nights = models.PositiveIntegerField(default=0)
+    otb_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    otb_occupancy_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    
+    # Pickup Forecast
+    pickup_forecast_nights = models.PositiveIntegerField(default=0)
+    pickup_forecast_occupancy = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    pickup_forecast_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    pickup_expected_additional = models.PositiveIntegerField(default=0)
+    
+    forecast_from_curve = models.PositiveIntegerField(default=0)
+    forecast_from_stly = models.PositiveIntegerField(default=0)
+    forecast_from_velocity = models.PositiveIntegerField(default=0)
+    
+    confidence_level = models.CharField(max_length=20, choices=CONFIDENCE_LEVELS, default='medium')
+    confidence_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
+    
+    # Scenario Forecast
+    scenario_occupancy = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    scenario_room_nights = models.PositiveIntegerField(default=0)
+    scenario_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    
+    # Variance
+    variance_nights = models.IntegerField(default=0)
+    variance_percent = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'))
+    
+    # STLY
+    stly_occupancy = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    stly_otb_at_same_point = models.PositiveIntegerField(null=True, blank=True)
+    vs_stly_pace_percent = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    
+    # Revenue Details
+    forecast_adr = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    forecast_revpar = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    forecast_commission = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    forecast_net_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['hotel', 'target_month', '-forecast_date']
+        unique_together = ['hotel', 'target_month', 'forecast_date']
+        verbose_name = "Occupancy Forecast"
+        verbose_name_plural = "Occupancy Forecasts"
+        indexes = [
+            models.Index(fields=['hotel', 'target_month', 'days_out']),
+        ]
+    
+    def __str__(self):
+        month_str = self.target_month.strftime('%b %Y')
+        return f"{self.hotel.name} - {month_str}: {self.pickup_forecast_occupancy}% / {self.scenario_occupancy}%"
+    
+    def save(self, *args, **kwargs):
+        if self.target_month and self.forecast_date:
+            self.days_out = (self.target_month - self.forecast_date).days
+        
+        if self.available_room_nights > 0:
+            self.otb_occupancy_percent = (
+                Decimal(str(self.otb_room_nights)) / 
+                Decimal(str(self.available_room_nights)) * 
+                Decimal('100.00')
+            ).quantize(Decimal('0.01'))
+            
+            self.pickup_forecast_occupancy = (
+                Decimal(str(self.pickup_forecast_nights)) / 
+                Decimal(str(self.available_room_nights)) * 
+                Decimal('100.00')
+            ).quantize(Decimal('0.01'))
+        
+        self.variance_nights = self.pickup_forecast_nights - self.scenario_room_nights
+        if self.scenario_room_nights > 0:
+            self.variance_percent = (
+                Decimal(str(self.variance_nights)) / 
+                Decimal(str(self.scenario_room_nights)) * 
+                Decimal('100.00')
+            ).quantize(Decimal('0.01'))
+        
+        if self.available_room_nights > 0:
+            self.forecast_revpar = (
+                self.pickup_forecast_revenue / 
+                Decimal(str(self.available_room_nights))
+            ).quantize(Decimal('0.01'))
+        
+        self.forecast_net_revenue = self.pickup_forecast_revenue - self.forecast_commission
+        
+        # Set confidence level
+        if self.days_out <= 14:
+            self.confidence_level = 'high'
+            self.confidence_percent = Decimal('90.00')
+        elif self.days_out <= 30:
+            self.confidence_level = 'high'
+            self.confidence_percent = Decimal('85.00')
+        elif self.days_out <= 60:
+            self.confidence_level = 'medium'
+            self.confidence_percent = Decimal('70.00')
+        elif self.days_out <= 90:
+            self.confidence_level = 'low'
+            self.confidence_percent = Decimal('55.00')
+        else:
+            self.confidence_level = 'very_low'
+            self.confidence_percent = Decimal('35.00')
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def otb_adr(self):
+        if self.otb_room_nights > 0:
+            return (self.otb_revenue / self.otb_room_nights).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+    
+    @property
+    def is_ahead_of_stly(self):
+        if self.vs_stly_pace_percent is not None:
+            return self.vs_stly_pace_percent > 0
+        return None
+    
+    @property
+    def is_ahead_of_scenario(self):
+        return self.variance_nights > 0
+    
+    @classmethod
+    def get_latest_forecast(cls, hotel, target_month):
+        return cls.objects.filter(
+            hotel=hotel,
+            target_month=target_month
+        ).order_by('-forecast_date').first()
+    
+    @classmethod
+    def get_forecast_history(cls, hotel, target_month, limit=30):
+        return cls.objects.filter(
+            hotel=hotel,
+            target_month=target_month
+        ).order_by('-forecast_date')[:limit]
+    
+    def generate_insight(self):
+        insights = []
+        
+        if self.variance_nights > 0:
+            insights.append(
+                f"Pickup forecast is {self.variance_nights} room nights "
+                f"({abs(self.variance_percent):.1f}%) above scenario target."
+            )
+        elif self.variance_nights < 0:
+            insights.append(
+                f"Pickup forecast is {abs(self.variance_nights)} room nights "
+                f"({abs(self.variance_percent):.1f}%) below scenario target."
+            )
+        
+        if self.vs_stly_pace_percent is not None:
+            if self.vs_stly_pace_percent > 5:
+                insights.append(
+                    f"You're {self.vs_stly_pace_percent:.1f}% ahead of last year's pace."
+                )
+            elif self.vs_stly_pace_percent < -5:
+                insights.append(
+                    f"You're {abs(self.vs_stly_pace_percent):.1f}% behind last year's pace."
+                )
+        
+        if self.days_out > 60:
+            insights.append(
+                f"Confidence: {self.confidence_level} ({self.confidence_percent:.0f}%) at {self.days_out} days out."
+            )
+        
+        return " ".join(insights) if insights else "Forecast is on track."

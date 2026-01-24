@@ -1,65 +1,152 @@
 """
-Pricing admin configuration.
+Pricing admin configuration - Multi-Property Architecture.
+
+Supports:
+- Organization management (hotel chains)
+- Property management with nested inlines
+- Property-scoped data (Season, RoomType, Reservation, etc.)
+- Shared data (Channel, RatePlan, BookingSource, Guest)
 """
 
 from django.contrib import admin
-from .models import Property, Season, RoomType, RatePlan, Channel, RateModifier, SeasonModifierOverride, BookingSource, Guest, Reservation, FileImport
+from django.urls import path, reverse
+from django.shortcuts import render, redirect
+from django.contrib import messages
+from django.http import HttpResponseRedirect
+from django.utils.html import format_html
+from django.utils import timezone
+from django.db.models import Sum, Count, Avg
+from decimal import Decimal
+import tempfile
+import os
+
+from .models import (
+    Organization, Property,
+    Season, RoomType, RatePlan, Channel, RateModifier, SeasonModifierOverride,
+    BookingSource, Guest, Reservation, FileImport,
+    DailyPickupSnapshot, MonthlyPickupSnapshot, PickupCurve, OccupancyForecast
+)
+
+
+# =============================================================================
+# ORGANIZATION & PROPERTY ADMIN
+# =============================================================================
+
+class PropertyInline(admin.TabularInline):
+    """Inline for properties within an organization."""
+    model = Property
+    extra = 0
+    fields = ['name', 'code', 'location', 'total_rooms', 'is_active']
+    readonly_fields = ['total_rooms']
+    show_change_link = True
+
+
+@admin.register(Organization)
+class OrganizationAdmin(admin.ModelAdmin):
+    """Admin for hotel chain/organization management."""
+    list_display = ['name', 'code', 'property_count_display', 'total_rooms_display', 'is_active', 'created_at']
+    list_filter = ['is_active']
+    search_fields = ['name', 'code']
+    prepopulated_fields = {'code': ('name',)}
+    ordering = ['name']
+    
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'code', 'is_active')
+        }),
+        ('Currency Settings', {
+            'fields': ('default_currency', 'currency_symbol'),
+        }),
+    )
+    
+    inlines = [PropertyInline]
+    
+    def property_count_display(self, obj):
+        """Display count of active properties."""
+        count = obj.property_count
+        if count > 0:
+            url = reverse('admin:pricing_property_changelist') + f'?organization__id__exact={obj.id}'
+            return format_html('<a href="{}">{} properties</a>', url, count)
+        return '0'
+    property_count_display.short_description = 'Properties'
+    
+    def total_rooms_display(self, obj):
+        """Display total rooms across all properties."""
+        return obj.total_rooms
+    total_rooms_display.short_description = 'Total Rooms'
+
+
+class RoomTypeInline(admin.TabularInline):
+    """Inline for room types within a property."""
+    model = RoomType
+    extra = 0
+    fields = ['name', 'pricing_method', 'base_rate', 'room_index', 'number_of_rooms', 'sort_order']
+    ordering = ['sort_order', 'name']
+    show_change_link = True
+
+
+class SeasonInline(admin.TabularInline):
+    """Inline for seasons within a property."""
+    model = Season
+    extra = 0
+    fields = ['name', 'start_date', 'end_date', 'season_index', 'expected_occupancy']
+    ordering = ['start_date']
+    show_change_link = True
 
 
 @admin.register(Property)
 class PropertyAdmin(admin.ModelAdmin):
-    """Property settings - singleton."""
-    
-    def has_add_permission(self, request):
-        # Only allow one instance
-        return not Property.objects.exists()
-    
-    def has_delete_permission(self, request, obj=None):
-        # Don't allow deletion
-        return False
+    """Admin for individual property management."""
+    list_display = [
+        'name', 'organization', 'code', 'location', 
+        'room_types_display', 'seasons_display', 'total_rooms',
+        'is_active'
+    ]
+    list_filter = ['organization', 'is_active']
+    search_fields = ['name', 'code', 'location']
+    prepopulated_fields = {'code': ('name',)}
+    ordering = ['organization', 'name']
     
     fieldsets = (
-        ('Property Information', {
-            'fields': ('name',)
+        (None, {
+            'fields': ('organization', 'name', 'code', 'is_active')
+        }),
+        ('Location', {
+            'fields': ('location',),
         }),
         ('Pricing Configuration', {
             'fields': ('reference_base_rate',),
             'description': 'Reference rate used for room index calculations (typically your Standard Room rate)'
         }),
         ('Display Settings', {
-            'fields': ('currency_symbol',)
-        }),
-    )
-
-
-@admin.register(Season)
-class SeasonAdmin(admin.ModelAdmin):
-    list_display = ['name', 'start_date', 'end_date', 'season_index', 'expected_occupancy', 'customized_modifiers_count']
-    list_editable = ['season_index', 'expected_occupancy']
-    ordering = ['start_date']
-    
-    fieldsets = (
-        (None, {
-            'fields': ('name',)
-        }),
-        ('Date Range', {
-            'fields': ('start_date', 'end_date')
-        }),
-        ('Pricing & Forecast', {
-            'fields': ('season_index', 'expected_occupancy'),
-            'description': 'Season index affects pricing. Expected occupancy is used for RevPAR calculations.'
+            'fields': ('currency_symbol',),
         }),
     )
     
-    def customized_modifiers_count(self, obj):
-        """Show count of customized modifier discounts."""
-        total = obj.modifier_discounts.count()
-        customized = obj.modifier_discounts.filter(is_customized=True).count()
-        if customized > 0:
-            return f"✓ {customized}/{total} customized"
-        return f"{total} modifiers (all default)"
-    customized_modifiers_count.short_description = "Modifier Discounts"
+    inlines = [RoomTypeInline, SeasonInline]
+    
+    def room_types_display(self, obj):
+        """Display count of room types."""
+        count = obj.room_types.count()
+        if count > 0:
+            url = reverse('admin:pricing_roomtype_changelist') + f'?hotel__id__exact={obj.id}'
+            return format_html('<a href="{}">{} types</a>', url, count)
+        return '0'
+    room_types_display.short_description = 'Room Types'
+    
+    def seasons_display(self, obj):
+        """Display count of seasons."""
+        count = obj.seasons.count()
+        if count > 0:
+            url = reverse('admin:pricing_season_changelist') + f'?hotel__id__exact={obj.id}'
+            return format_html('<a href="{}">{} seasons</a>', url, count)
+        return '0'
+    seasons_display.short_description = 'Seasons'
 
+
+# =============================================================================
+# SEASON ADMIN (Property-Specific)
+# =============================================================================
 
 class SeasonModifierDiscountInline(admin.TabularInline):
     """Inline for managing all modifier discounts for this season."""
@@ -79,36 +166,75 @@ class SeasonModifierDiscountInline(admin.TabularInline):
     base_discount_display.short_description = "Base Discount"
     
     def has_add_permission(self, request, obj=None):
-        # Don't allow manual adding - auto-populated by signals
         return False
     
     def has_delete_permission(self, request, obj=None):
-        # Don't allow deletion - these should always exist
         return False
 
 
-# Add inline to Season admin
-SeasonAdmin.inlines = [SeasonModifierDiscountInline]
-
-
-@admin.register(RoomType)
-class RoomTypeAdmin(admin.ModelAdmin):
-    list_display = ['name', 'pricing_method', 'number_of_rooms', 'base_rate', 'room_index', 'room_adjustment', 'sort_order', 'effective_rate_display']
-    list_editable = ['pricing_method', 'number_of_rooms', 'base_rate', 'room_index', 'room_adjustment', 'sort_order']
-    list_filter = ['pricing_method']
-    ordering = ['sort_order', 'name']
+@admin.register(Season)
+class SeasonAdmin(admin.ModelAdmin):
+    list_display = [
+        'name', 'hotel', 'start_date', 'end_date', 
+        'season_index', 'expected_occupancy', 'customized_modifiers_count'
+    ]
+    list_editable = ['season_index', 'expected_occupancy']
+    list_filter = ['hotel', 'hotel__organization']
+    search_fields = ['name', 'hotel__name']
+    ordering = ['hotel', 'start_date']
     
     fieldsets = (
         (None, {
-            'fields': ('name', 'number_of_rooms', 'sort_order')
+            'fields': ('hotel', 'name')
+        }),
+        ('Date Range', {
+            'fields': ('start_date', 'end_date')
+        }),
+        ('Pricing & Forecast', {
+            'fields': ('season_index', 'expected_occupancy'),
+            'description': 'Season index affects pricing. Expected occupancy is used for RevPAR calculations.'
+        }),
+    )
+    
+    inlines = [SeasonModifierDiscountInline]
+    
+    def customized_modifiers_count(self, obj):
+        """Show count of customized modifier discounts."""
+        total = obj.modifier_discounts.count()
+        customized = obj.modifier_discounts.filter(is_customized=True).count()
+        if customized > 0:
+            return f"✓ {customized}/{total} customized"
+        return f"{total} modifiers (all default)"
+    customized_modifiers_count.short_description = "Modifier Discounts"
+
+
+# =============================================================================
+# ROOM TYPE ADMIN (Property-Specific)
+# =============================================================================
+
+@admin.register(RoomType)
+class RoomTypeAdmin(admin.ModelAdmin):
+    list_display = [
+        'name', 'hotel', 'pricing_method', 'number_of_rooms',
+        'base_rate', 'room_index', 'room_adjustment', 
+        'sort_order', 'effective_rate_display'
+    ]
+    list_editable = ['pricing_method', 'number_of_rooms', 'base_rate', 'room_index', 'room_adjustment', 'sort_order']
+    list_filter = ['hotel', 'hotel__organization', 'pricing_method']
+    search_fields = ['name', 'hotel__name']
+    ordering = ['hotel', 'sort_order', 'name']
+    
+    fieldsets = (
+        (None, {
+            'fields': ('hotel', 'name', 'number_of_rooms', 'sort_order')
         }),
         ('Pricing Configuration', {
             'fields': ('pricing_method', 'base_rate', 'room_index', 'room_adjustment'),
             'description': '''
                 <strong>Pricing Methods:</strong><br>
                 • <strong>Direct Base Rate:</strong> Use base_rate as-is<br>
-                • <strong>Index Multiplier:</strong> Property.reference_base_rate × room_index (e.g., $65 × 2.0 = $130)<br>
-                • <strong>Fixed Adjustment:</strong> Property.reference_base_rate + room_adjustment (e.g., $65 + $100 = $165)
+                • <strong>Index Multiplier:</strong> Property.reference_base_rate × room_index<br>
+                • <strong>Fixed Adjustment:</strong> Property.reference_base_rate + room_adjustment
             '''
         }),
     )
@@ -117,133 +243,117 @@ class RoomTypeAdmin(admin.ModelAdmin):
         """Show the calculated effective rate."""
         rate = obj.get_effective_base_rate()
         return f"${rate:.2f}"
-    effective_rate_display.short_description = "Effective Rate"
+    effective_rate_display.short_description = 'Effective Rate'
 
+
+# =============================================================================
+# SHARED MODELS: RATE PLAN, CHANNEL, RATE MODIFIER
+# =============================================================================
 
 @admin.register(RatePlan)
 class RatePlanAdmin(admin.ModelAdmin):
-    list_display = ['name', 'meal_supplement', 'sort_order']
+    list_display = ['name', 'meal_supplement', 'sort_order', 'reservation_count']
     list_editable = ['meal_supplement', 'sort_order']
     ordering = ['sort_order', 'name']
     
-    fieldsets = (
-        (None, {
-            'fields': ('name', 'sort_order')
-        }),
-        ('Meal Pricing', {
-            'fields': ('meal_supplement',),
-            'description': 'Meal supplement cost per person in USD'
-        }),
-    )
+    def reservation_count(self, obj):
+        """Show count of reservations using this rate plan."""
+        count = obj.reservations.count()
+        if count > 0:
+            url = reverse('admin:pricing_reservation_changelist') + f'?rate_plan__id__exact={obj.id}'
+            return format_html('<a href="{}">{} reservations</a>', url, count)
+        return '0'
+    reservation_count.short_description = 'Reservations'
+
+
+class RateModifierInline(admin.TabularInline):
+    """Inline for rate modifiers within a channel."""
+    model = RateModifier
+    extra = 0
+    fields = ['name', 'modifier_type', 'discount_percent', 'active', 'sort_order']
+    ordering = ['sort_order', 'name']
 
 
 @admin.register(Channel)
 class ChannelAdmin(admin.ModelAdmin):
-    list_display = ['name', 'base_discount_percent', 'commission_percent', 'sort_order']
-    list_editable = ['base_discount_percent', 'commission_percent', 'sort_order']
+    list_display = [
+        'name', 'base_discount_percent', 'commission_percent',
+        'distribution_share_percent', 'modifiers_count', 'sort_order'
+    ]
+    list_editable = ['base_discount_percent', 'commission_percent', 'distribution_share_percent', 'sort_order']
     ordering = ['sort_order', 'name']
     
     fieldsets = (
         (None, {
             'fields': ('name', 'sort_order')
         }),
-        ('Discount & Commission', {
+        ('Pricing', {
             'fields': ('base_discount_percent', 'commission_percent'),
-            'description': 'Base discount from BAR and commission percentage the channel takes'
+            'description': 'Base discount from BAR and commission taken by the channel'
+        }),
+        ('Distribution', {
+            'fields': ('distribution_share_percent',),
+            'description': 'Expected percentage of bookings from this channel (all channels should sum to 100%)'
         }),
     )
+    
+    inlines = [RateModifierInline]
+    
+    def modifiers_count(self, obj):
+        """Show count of rate modifiers."""
+        count = obj.rate_modifiers.count()
+        active = obj.rate_modifiers.filter(active=True).count()
+        return f"{active}/{count} active"
+    modifiers_count.short_description = 'Modifiers'
 
 
 @admin.register(RateModifier)
 class RateModifierAdmin(admin.ModelAdmin):
-    list_display = ['name', 'channel', 'modifier_type', 'discount_percent', 'active', 'sort_order', 'has_overrides']
+    list_display = [
+        'name', 'channel', 'modifier_type', 'discount_percent',
+        'total_discount_display', 'active', 'sort_order'
+    ]
     list_editable = ['discount_percent', 'active', 'sort_order']
     list_filter = ['channel', 'modifier_type', 'active']
-    search_fields = ['name', 'description']
+    search_fields = ['name', 'channel__name']
     ordering = ['channel', 'sort_order', 'name']
     
-    fieldsets = (
-        (None, {
-            'fields': ('channel', 'name', 'modifier_type', 'sort_order')
-        }),
-        ('Discount', {
-            'fields': ('discount_percent',),
-            'description': 'Base discount percentage. Can be overridden per season using Season Overrides below.'
-        }),
-        ('Settings', {
-            'fields': ('active', 'description'),
-        }),
-    )
-    
-    def has_overrides(self, obj):
-        """Show if this modifier has season-specific customizations."""
-        count = obj.season_discounts.filter(is_customized=True).count()
-        total = obj.season_discounts.count()
-        if count > 0:
-            return f"✓ {count}/{total} customized"
-        return f"{total} seasons (all default)"
-    has_overrides.short_description = "Season Discounts"
-
-
-class SeasonModifierOverrideInline(admin.TabularInline):
-    """Inline for managing season discounts on RateModifier detail page."""
-    model = SeasonModifierOverride
-    extra = 0
-    fields = ['season', 'discount_percent', 'is_customized', 'notes']
-    readonly_fields = ['is_customized']
-    verbose_name = "Season-Specific Discount"
-    verbose_name_plural = "Season Discounts (Auto-populated for all seasons)"
-    
-    def has_delete_permission(self, request, obj=None):
-        # Don't allow deletion - these should always exist
-        return False
-
-
-# Add inline to RateModifier admin
-RateModifierAdmin.inlines = [SeasonModifierOverrideInline]
+    def total_discount_display(self, obj):
+        """Show total discount from BAR including channel base."""
+        total = obj.total_discount_from_bar()
+        return f"{total}%"
+    total_discount_display.short_description = 'Total from BAR'
 
 
 @admin.register(SeasonModifierOverride)
 class SeasonModifierOverrideAdmin(admin.ModelAdmin):
-    list_display = ['season', 'modifier', 'discount_percent', 'is_customized', 'base_discount_display', 'difference_display']
+    list_display = [
+        'modifier', 'season', 'season_hotel', 'discount_percent',
+        'is_customized', 'difference_display'
+    ]
     list_editable = ['discount_percent']
-    list_filter = ['season', 'modifier__channel', 'is_customized']
-    ordering = ['season', 'modifier__channel', 'modifier__sort_order']
+    list_filter = ['is_customized', 'modifier__channel', 'season__hotel']
     search_fields = ['modifier__name', 'season__name']
-    
-    fieldsets = (
-        (None, {
-            'fields': ('modifier', 'season')
-        }),
-        ('Discount', {
-            'fields': ('discount_percent', 'is_customized', 'notes'),
-            'description': '''
-                <strong>Auto-Populated System:</strong><br>
-                • Defaults to modifier's base discount<br>
-                • When you edit, automatically marks as "customized"<br>
-                • Customized entries won't auto-update when modifier base changes<br>
-                • Use "Reset to Base" action to revert to default
-            '''
-        }),
-    )
-    
-    readonly_fields = ['is_customized']
+    ordering = ['season__hotel', 'season', 'modifier__channel', 'modifier__sort_order']
     
     actions = ['reset_to_base', 'mark_as_customized']
     
-    def base_discount_display(self, obj):
-        """Show the modifier's base discount."""
-        return f"{obj.modifier.discount_percent}%"
-    base_discount_display.short_description = "Base Discount"
+    def season_hotel(self, obj):
+        """Show the property for this season."""
+        return obj.season.hotel.name if obj.season and obj.season.hotel else '—'
+    season_hotel.short_description = 'Property'
+    season_hotel.admin_order_field = 'season__hotel__name'
     
     def difference_display(self, obj):
-        """Show difference from base."""
+        """Show difference from base discount."""
+        if not obj.modifier:
+            return '—'
         diff = obj.discount_percent - obj.modifier.discount_percent
         if diff > 0:
-            return f"+{diff}% (more discount)"
+            return format_html('<span style="color:green;">+{}%</span>', diff)
         elif diff < 0:
-            return f"{diff}% (less discount)"
-        return "Same as base"
+            return format_html('<span style="color:red;">{}%</span>', diff)
+        return "Same"
     difference_display.short_description = "vs Base"
     
     def reset_to_base(self, request, queryset):
@@ -260,54 +370,19 @@ class SeasonModifierOverrideAdmin(admin.ModelAdmin):
         count = queryset.update(is_customized=True)
         self.message_user(request, f"Marked {count} entries as customized.")
     mark_as_customized.short_description = "Mark as customized"
-    
-    
-    
-"""
-Admin configuration for Reservation Import and Analysis.
-
-Add this to your existing pricing/admin.py file.
-
-Features:
-- FileImport admin with file upload action
-- Reservation admin with filters and search
-- BookingSource admin with channel mapping
-- Guest admin with booking history
-"""
-
-from django.contrib import admin
-from django.urls import path, reverse
-from django.shortcuts import render, redirect
-from django.contrib import messages
-from django.http import HttpResponseRedirect
-from django.utils.html import format_html
-from django.utils import timezone
-from django.db.models import Sum, Count, Avg
-from decimal import Decimal
-import tempfile
-import os
 
 
 # =============================================================================
-# BOOKING SOURCE ADMIN
+# BOOKING SOURCE ADMIN (Shared)
 # =============================================================================
 
 @admin.register(BookingSource)
 class BookingSourceAdmin(admin.ModelAdmin):
-    """
-    Admin for managing booking source mappings.
-    
-    Maps import source values (e.g., "Booking.com") to channels.
-    """
+    """Admin for managing booking source mappings."""
     list_display = [
-        'name', 
-        'channel', 
-        'is_direct', 
-        'import_values_display',
-        'user_mappings_display',
-        'reservation_count',
-        'active',
-        'sort_order'
+        'name', 'channel', 'is_direct',
+        'import_values_display', 'user_mappings_display',
+        'reservation_count', 'active', 'sort_order'
     ]
     list_editable = ['channel', 'is_direct', 'active', 'sort_order']
     list_filter = ['channel', 'is_direct', 'active']
@@ -321,23 +396,22 @@ class BookingSourceAdmin(admin.ModelAdmin):
         ('Import Mapping', {
             'fields': ('import_values', 'user_mappings'),
             'description': '''
-                <strong>Import Values:</strong> List of source values to match from import files 
-                (e.g., ["Booking.com", "booking.com"])<br>
-                <strong>User Mappings:</strong> User names that indicate this source when Source column is empty 
-                (e.g., ["Reekko", "Maais"] for direct bookings)
+                <strong>Import Values:</strong> List of source values to match from import files<br>
+                <strong>User Mappings:</strong> User names that indicate this source when Source is empty
             '''
         }),
         ('Commission Override', {
             'fields': ('commission_override',),
             'classes': ('collapse',),
-            'description': 'Override commission % if different from channel default'
         }),
     )
     
     def import_values_display(self, obj):
         """Display import values as comma-separated."""
         if obj.import_values:
-            return ', '.join(obj.import_values[:3])
+            values = obj.import_values[:3]
+            suffix = '...' if len(obj.import_values) > 3 else ''
+            return ', '.join(values) + suffix
         return '—'
     import_values_display.short_description = 'Import Values'
     
@@ -353,35 +427,24 @@ class BookingSourceAdmin(admin.ModelAdmin):
         count = obj.reservations.count()
         if count > 0:
             url = reverse('admin:pricing_reservation_changelist') + f'?booking_source__id__exact={obj.id}'
-            return format_html('<a href="{}">{} reservations</a>', url, count)
+            return format_html('<a href="{}">{}</a>', url, count)
         return '0'
     reservation_count.short_description = 'Reservations'
 
 
 # =============================================================================
-# GUEST ADMIN
+# GUEST ADMIN (Shared - Organization Level)
 # =============================================================================
 
 @admin.register(Guest)
 class GuestAdmin(admin.ModelAdmin):
-    """
-    Admin for guest records with booking history.
-    """
+    """Admin for guest records with booking history."""
     list_display = [
-        'name',
-        'country',
-        'booking_count',
-        'total_nights',
-        'total_revenue_display',
-        'average_booking_value_display',
-        'first_booking_date',
-        'last_booking_date',
-        'is_repeat_display',
+        'name', 'country', 'booking_count', 'total_nights',
+        'total_revenue_display', 'average_booking_value_display',
+        'first_booking_date', 'last_booking_date', 'is_repeat_display'
     ]
-    list_filter = [
-        'country',
-        ('booking_count', admin.EmptyFieldListFilter),
-    ]
+    list_filter = ['country', ('booking_count', admin.EmptyFieldListFilter)]
     search_fields = ['name', 'email', 'country']
     ordering = ['-last_booking_date', 'name']
     readonly_fields = [
@@ -411,6 +474,8 @@ class GuestAdmin(admin.ModelAdmin):
         }),
     )
     
+    actions = ['recalculate_stats']
+    
     def total_revenue_display(self, obj):
         """Format total revenue with currency."""
         return f"${obj.total_revenue:,.2f}"
@@ -420,16 +485,14 @@ class GuestAdmin(admin.ModelAdmin):
     def average_booking_value_display(self, obj):
         """Format average booking value."""
         return f"${obj.average_booking_value:,.2f}"
-    average_booking_value_display.short_description = 'Avg Booking Value'
+    average_booking_value_display.short_description = 'Avg Value'
     
     def is_repeat_display(self, obj):
         """Show repeat guest indicator."""
         if obj.is_repeat_guest:
-            return format_html('<span style="color: green;">✓ Repeat</span>')
-        return format_html('<span style="color: gray;">New</span>')
-    is_repeat_display.short_description = 'Repeat Guest'
-    
-    actions = ['recalculate_stats']
+            return format_html('<span style="color:green;">✓ Repeat</span>')
+        return format_html('<span style="color:gray;">New</span>')
+    is_repeat_display.short_description = 'Repeat'
     
     def recalculate_stats(self, request, queryset):
         """Recalculate statistics for selected guests."""
@@ -442,33 +505,19 @@ class GuestAdmin(admin.ModelAdmin):
 
 
 # =============================================================================
-# FILE IMPORT ADMIN
+# FILE IMPORT ADMIN (Property-Specific)
 # =============================================================================
-
-class FileImportAdminForm:
-    """Custom form for file upload."""
-    pass
-
 
 @admin.register(FileImport)
 class FileImportAdmin(admin.ModelAdmin):
-    """
-    Admin for file imports with upload functionality.
-    """
+    """Admin for file imports with upload functionality."""
     list_display = [
-        'filename',
-        'status_display',
-        'rows_total',
-        'rows_created',
-        'rows_updated',
-        'rows_skipped',
-        'success_rate_display',
-        'date_range_display',
-        'duration_display',
-        'created_at',
+        'filename', 'hotel', 'status_display',
+        'rows_total', 'rows_created', 'rows_updated', 'rows_skipped',
+        'success_rate_display', 'date_range_display', 'duration_display', 'created_at'
     ]
-    list_filter = ['status', 'created_at']
-    search_fields = ['filename']
+    list_filter = ['status', 'hotel', 'hotel__organization', 'created_at']
+    search_fields = ['filename', 'hotel__name']
     ordering = ['-created_at']
     readonly_fields = [
         'filename', 'file_hash', 'status', 'rows_total', 'rows_processed',
@@ -477,17 +526,9 @@ class FileImportAdmin(admin.ModelAdmin):
         'created_at', 'updated_at', 'duration_display', 'success_rate_display'
     ]
     
-    # Disable manual add - force use of upload
-    def has_add_permission(self, request):
-        return True  # We'll redirect to upload page
-    
-    def add_view(self, request, form_url='', extra_context=None):
-        """Redirect add to upload page."""
-        return redirect(reverse('admin:pricing_fileimport_upload'))
-    
     fieldsets = (
         (None, {
-            'fields': ('filename', 'status', 'imported_by')
+            'fields': ('hotel', 'filename', 'status', 'imported_by')
         }),
         ('Statistics', {
             'fields': (
@@ -516,73 +557,13 @@ class FileImportAdmin(admin.ModelAdmin):
         }),
     )
     
-    def status_display(self, obj):
-        """Display status with color coding."""
-        colors = {
-            'pending': 'gray',
-            'processing': 'blue',
-            'completed': 'green',
-            'completed_with_errors': 'orange',
-            'failed': 'red',
-        }
-        color = colors.get(obj.status, 'gray')
-        return format_html(
-            '<span style="color: {}; font-weight: bold;">{}</span>',
-            color, obj.get_status_display()
-        )
-    status_display.short_description = 'Status'
-    status_display.admin_order_field = 'status'
+    def has_add_permission(self, request):
+        return True
     
-    def success_rate_display(self, obj):
-        """Display success rate with progress bar."""
-        rate = obj.success_rate
-        color = 'green' if rate >= 90 else 'orange' if rate >= 70 else 'red'
-        return format_html(
-            '<div style="width:100px; background:#eee; border-radius:3px;">'
-            '<div style="width:{}%; background:{}; height:20px; border-radius:3px; text-align:center; color:white; line-height:20px;">'
-            '{}%</div></div>',
-            rate, color, rate
-        )
-    success_rate_display.short_description = 'Success Rate'
+    def add_view(self, request, form_url='', extra_context=None):
+        """Redirect add to upload page."""
+        return redirect(reverse('admin:pricing_fileimport_upload'))
     
-    def date_range_display(self, obj):
-        """Display date range of imported data."""
-        if obj.date_range_start and obj.date_range_end:
-            return f"{obj.date_range_start} to {obj.date_range_end}"
-        return '—'
-    date_range_display.short_description = 'Date Range'
-    
-    def duration_display(self, obj):
-        """Display import duration."""
-        if obj.duration_seconds:
-            if obj.duration_seconds < 60:
-                return f"{obj.duration_seconds:.1f}s"
-            return f"{obj.duration_seconds / 60:.1f}m"
-        return '—'
-    duration_display.short_description = 'Duration'
-    
-    def errors_display(self, obj):
-        """Display errors in readable format."""
-        from django.utils.safestring import mark_safe
-        from django.utils.html import escape
-        
-        if not obj.errors:
-            return 'No errors'
-        
-        error_items = []
-        for error in obj.errors[:20]:  # Limit to first 20
-            row = error.get('row', '?')
-            msg = escape(str(error.get('message', str(error))))
-            error_items.append('<li>Row {}: {}</li>'.format(row, msg))
-        
-        if len(obj.errors) > 20:
-            error_items.append('<li>... and {} more errors</li>'.format(len(obj.errors) - 20))
-        
-        html = '<ul style="margin:0; padding-left:20px;">{}</ul>'.format(''.join(error_items))
-        return mark_safe(html)
-    errors_display.short_description = 'Errors'
-    
-    # Custom URLs for file upload
     def get_urls(self):
         urls = super().get_urls()
         custom_urls = [
@@ -591,11 +572,21 @@ class FileImportAdmin(admin.ModelAdmin):
         return custom_urls + urls
     
     def upload_view(self, request):
-        """Handle file upload."""
-        from pricing.services import ReservationImportService
+        """Handle file upload for reservation import."""
+        from .services import ReservationImportService
         
         if request.method == 'POST' and request.FILES.get('file'):
             uploaded_file = request.FILES['file']
+            hotel_id = request.POST.get('hotel')
+            
+            # Get the property
+            hotel = None
+            if hotel_id:
+                try:
+                    hotel = Property.objects.get(pk=hotel_id)
+                except Property.DoesNotExist:
+                    messages.error(request, "Invalid property selected.")
+                    return redirect(reverse('admin:pricing_fileimport_changelist'))
             
             # Save to temp file
             with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded_file.name) as tmp:
@@ -606,6 +597,7 @@ class FileImportAdmin(admin.ModelAdmin):
             try:
                 # Create FileImport record
                 file_import = FileImport.objects.create(
+                    hotel=hotel,
                     filename=uploaded_file.name,
                     status='pending',
                     imported_by=request.user.username if request.user else '',
@@ -613,7 +605,7 @@ class FileImportAdmin(admin.ModelAdmin):
                 
                 # Run import
                 service = ReservationImportService()
-                result = service.import_file(tmp_path, file_import)
+                result = service.import_file(tmp_path, file_import, hotel=hotel)
                 
                 if result['success']:
                     messages.success(
@@ -628,24 +620,22 @@ class FileImportAdmin(admin.ModelAdmin):
                         f"Import completed with issues: {len(result['errors'])} errors"
                     )
                 
-                # Redirect to the file import detail page
-                return redirect(
-                    reverse('admin:pricing_fileimport_change', args=[file_import.id])
-                )
+                return redirect(reverse('admin:pricing_fileimport_change', args=[file_import.id]))
                 
             except Exception as e:
                 messages.error(request, f"Import failed: {str(e)}")
             finally:
-                # Clean up temp file
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
             
             return redirect(reverse('admin:pricing_fileimport_changelist'))
         
-        # Show upload form
+        # Show upload form with property selector
+        properties = Property.objects.filter(is_active=True).select_related('organization')
         context = {
             'title': 'Import Reservations',
             'opts': self.model._meta,
+            'properties': properties,
         }
         return render(request, 'pricing/upload.html', context)
     
@@ -654,10 +644,70 @@ class FileImportAdmin(admin.ModelAdmin):
         extra_context = extra_context or {}
         extra_context['show_upload_button'] = True
         return super().changelist_view(request, extra_context=extra_context)
+    
+    def status_display(self, obj):
+        """Display status with color coding."""
+        colors = {
+            'pending': 'gray',
+            'processing': 'blue',
+            'completed': 'green',
+            'completed_with_errors': 'orange',
+            'failed': 'red',
+        }
+        color = colors.get(obj.status, 'gray')
+        return format_html(
+            '<span style="color:{};">{}</span>',
+            color, obj.get_status_display()
+        )
+    status_display.short_description = 'Status'
+    status_display.admin_order_field = 'status'
+    
+    def success_rate_display(self, obj):
+        """Display success rate."""
+        rate = obj.success_rate
+        if rate >= 90:
+            color = 'green'
+        elif rate >= 70:
+            color = 'orange'
+        else:
+            color = 'red'
+        return format_html('<span style="color:{};">{}%</span>', color, rate)
+    success_rate_display.short_description = 'Success Rate'
+    
+    def date_range_display(self, obj):
+        """Display date range of imported data."""
+        if obj.date_range_start and obj.date_range_end:
+            return f"{obj.date_range_start} → {obj.date_range_end}"
+        return '—'
+    date_range_display.short_description = 'Date Range'
+    
+    def duration_display(self, obj):
+        """Display import duration."""
+        seconds = obj.duration_seconds
+        if seconds is not None:
+            if seconds < 60:
+                return f"{seconds:.1f}s"
+            return f"{seconds/60:.1f}m"
+        return '—'
+    duration_display.short_description = 'Duration'
+    
+    def errors_display(self, obj):
+        """Display errors in readable format."""
+        if not obj.errors:
+            return 'No errors'
+        
+        html = '<div style="max-height:300px; overflow:auto;">'
+        for error in obj.errors[:50]:  # Limit to first 50 errors
+            html += f'<p><strong>Row {error.get("row", "?")}:</strong> {error.get("message", "Unknown error")}</p>'
+        if len(obj.errors) > 50:
+            html += f'<p><em>... and {len(obj.errors) - 50} more errors</em></p>'
+        html += '</div>'
+        return format_html(html)
+    errors_display.short_description = 'Errors'
 
 
 # =============================================================================
-# RESERVATION ADMIN
+# RESERVATION ADMIN (Property-Specific)
 # =============================================================================
 
 class LinkedRoomInline(admin.TabularInline):
@@ -681,37 +731,24 @@ class LinkedRoomInline(admin.TabularInline):
 
 @admin.register(Reservation)
 class ReservationAdmin(admin.ModelAdmin):
-    """
-    Admin for reservation records with comprehensive filtering.
-    """
+    """Admin for reservation records with comprehensive filtering."""
     list_display = [
-        'confirmation_display',
-        'arrival_date',
-        'departure_date',
-        'nights',
-        'guest_display',
-        'room_type_display',
-        'channel_display',
-        'total_amount_display',
-        'lead_time_display',
-        'status_display',
-        'multi_room_display',
+        'confirmation_display', 'hotel',
+        'arrival_date', 'departure_date', 'nights',
+        'guest_display', 'room_type_display', 'channel_display',
+        'total_amount_display', 'lead_time_display',
+        'status_display', 'multi_room_display'
     ]
     list_filter = [
-        'status',
-        'channel',
-        'booking_source',
-        'room_type',
-        'rate_plan',
+        'hotel', 'hotel__organization',
+        'status', 'channel', 'booking_source', 'room_type', 'rate_plan',
         'is_multi_room',
         ('arrival_date', admin.DateFieldListFilter),
         ('booking_date', admin.DateFieldListFilter),
     ]
     search_fields = [
-        'confirmation_no',
-        'original_confirmation_no',
-        'guest__name',
-        'guest__email',
+        'confirmation_no', 'original_confirmation_no',
+        'guest__name', 'guest__email', 'hotel__name'
     ]
     date_hierarchy = 'arrival_date'
     ordering = ['-booking_date', '-arrival_date']
@@ -724,8 +761,9 @@ class ReservationAdmin(admin.ModelAdmin):
     ]
     
     fieldsets = (
-        ('Confirmation', {
+        ('Property & Confirmation', {
             'fields': (
+                'hotel',
                 ('confirmation_no', 'original_confirmation_no'),
                 'status',
             )
@@ -734,6 +772,7 @@ class ReservationAdmin(admin.ModelAdmin):
             'fields': (
                 ('booking_date', 'arrival_date', 'departure_date'),
                 ('nights', 'lead_time_days'),
+                'cancellation_date',
             )
         }),
         ('Guest', {
@@ -746,20 +785,13 @@ class ReservationAdmin(admin.ModelAdmin):
             )
         }),
         ('Channel', {
-            'fields': (
-                ('booking_source', 'channel'),
-            )
+            'fields': (('booking_source', 'channel'),)
         }),
         ('Revenue', {
-            'fields': (
-                ('total_amount', 'adr'),
-            )
+            'fields': (('total_amount', 'adr'),)
         }),
         ('Multi-Room', {
-            'fields': (
-                'is_multi_room',
-                ('parent_reservation', 'room_sequence'),
-            ),
+            'fields': ('is_multi_room', ('parent_reservation', 'room_sequence')),
             'classes': ('collapse',),
         }),
         ('Import Info', {
@@ -778,69 +810,50 @@ class ReservationAdmin(admin.ModelAdmin):
     
     inlines = [LinkedRoomInline]
     
+    actions = ['export_selected', 'recalculate_stats']
+    
     def confirmation_display(self, obj):
         """Display confirmation with link to detail."""
-        conf = obj.original_confirmation_no or obj.confirmation_no
-        return format_html('<strong>{}</strong>', conf)
+        return obj.original_confirmation_no or obj.confirmation_no
     confirmation_display.short_description = 'Confirmation'
     confirmation_display.admin_order_field = 'confirmation_no'
     
     def guest_display(self, obj):
-        """Display guest name with country."""
+        """Display guest name with link."""
         if obj.guest:
-            country = f" ({obj.guest.country})" if obj.guest.country else ""
-            if obj.guest.is_repeat_guest:
-                return format_html(
-                    '{}{} <span style="color:green;">★</span>',
-                    obj.guest.name, country
-                )
-            return f"{obj.guest.name}{country}"
+            url = reverse('admin:pricing_guest_change', args=[obj.guest.id])
+            return format_html('<a href="{}">{}</a>', url, obj.guest.name)
         return '—'
     guest_display.short_description = 'Guest'
     
     def room_type_display(self, obj):
-        """Display room type or original name."""
+        """Display room type."""
         if obj.room_type:
             return obj.room_type.name
         return obj.room_type_name or '—'
-    room_type_display.short_description = 'Room Type'
+    room_type_display.short_description = 'Room'
     
     def channel_display(self, obj):
-        """Display channel with color."""
+        """Display channel."""
         if obj.channel:
             return obj.channel.name
-        if obj.booking_source:
-            return format_html('<span style="color:gray;">{}</span>', obj.booking_source.name)
         return '—'
     channel_display.short_description = 'Channel'
     
     def total_amount_display(self, obj):
-        """Display total amount formatted."""
+        """Display total amount with currency."""
         return f"${obj.total_amount:,.2f}"
     total_amount_display.short_description = 'Total'
     total_amount_display.admin_order_field = 'total_amount'
     
     def lead_time_display(self, obj):
-        """Display lead time with bucket."""
-        days = obj.lead_time_days
-        bucket = obj.lead_time_bucket
-        
-        if days <= 7:
-            color = 'red'
-        elif days <= 30:
-            color = 'orange'
-        else:
-            color = 'green'
-        
-        return format_html(
-            '<span style="color:{};">{} days</span><br><small>{}</small>',
-            color, days, bucket
-        )
-    lead_time_display.short_description = 'Lead Time'
+        """Display lead time in days."""
+        return f"{obj.lead_time_days}d"
+    lead_time_display.short_description = 'Lead'
     lead_time_display.admin_order_field = 'lead_time_days'
     
     def status_display(self, obj):
-        """Display status with color."""
+        """Display status with color coding."""
         colors = {
             'confirmed': 'blue',
             'cancelled': 'red',
@@ -849,10 +862,7 @@ class ReservationAdmin(admin.ModelAdmin):
             'no_show': 'orange',
         }
         color = colors.get(obj.status, 'gray')
-        return format_html(
-            '<span style="color:{};">{}</span>',
-            color, obj.get_status_display()
-        )
+        return format_html('<span style="color:{};">{}</span>', color, obj.get_status_display())
     status_display.short_description = 'Status'
     status_display.admin_order_field = 'status'
     
@@ -860,12 +870,9 @@ class ReservationAdmin(admin.ModelAdmin):
         """Display multi-room indicator."""
         if obj.is_multi_room:
             count = obj.linked_room_count
-            return format_html(
-                '<span style="color:purple;">🔗 {} rooms</span>',
-                count
-            )
+            return format_html('<span style="color:purple;">🔗 {}</span>', count)
         return ''
-    multi_room_display.short_description = 'Multi-Room'
+    multi_room_display.short_description = 'Rooms'
     
     def raw_data_display(self, obj):
         """Display raw data in readable format."""
@@ -877,9 +884,7 @@ class ReservationAdmin(admin.ModelAdmin):
             html += f'<tr><td><strong>{key}:</strong></td><td>{value}</td></tr>'
         html += '</table>'
         return format_html(html)
-    raw_data_display.short_description = 'Raw Import Data'
-    
-    actions = ['export_selected', 'recalculate_stats']
+    raw_data_display.short_description = 'Raw Data'
     
     def export_selected(self, request, queryset):
         """Export selected reservations to CSV."""
@@ -891,13 +896,14 @@ class ReservationAdmin(admin.ModelAdmin):
         
         writer = csv.writer(response)
         writer.writerow([
-            'Confirmation', 'Booking Date', 'Arrival', 'Departure', 'Nights',
+            'Property', 'Confirmation', 'Booking Date', 'Arrival', 'Departure', 'Nights',
             'Guest', 'Country', 'Room Type', 'Rate Plan', 'Channel', 'Source',
             'Total', 'ADR', 'Lead Time', 'Status'
         ])
         
-        for res in queryset:
+        for res in queryset.select_related('hotel', 'guest', 'room_type', 'rate_plan', 'channel', 'booking_source'):
             writer.writerow([
+                res.hotel.name if res.hotel else '',
                 res.original_confirmation_no or res.confirmation_no,
                 res.booking_date,
                 res.arrival_date,
@@ -926,3 +932,63 @@ class ReservationAdmin(admin.ModelAdmin):
             count += 1
         self.message_user(request, f'Recalculated stats for {count} reservations.')
     recalculate_stats.short_description = 'Recalculate ADR & lead time'
+
+
+# =============================================================================
+# PICKUP ANALYSIS ADMIN (Property-Specific)
+# =============================================================================
+
+@admin.register(DailyPickupSnapshot)
+class DailyPickupSnapshotAdmin(admin.ModelAdmin):
+    list_display = [
+        'hotel', 'snapshot_date', 'arrival_date', 'days_out',
+        'otb_room_nights', 'otb_revenue_display', 'otb_reservations'
+    ]
+    list_filter = ['hotel', 'hotel__organization', 'snapshot_date']
+    search_fields = ['hotel__name']
+    date_hierarchy = 'snapshot_date'
+    ordering = ['-snapshot_date', 'arrival_date']
+    
+    def otb_revenue_display(self, obj):
+        return f"${obj.otb_revenue:,.2f}"
+    otb_revenue_display.short_description = 'OTB Revenue'
+
+
+@admin.register(MonthlyPickupSnapshot)
+class MonthlyPickupSnapshotAdmin(admin.ModelAdmin):
+    list_display = [
+        'hotel', 'snapshot_date', 'target_month', 'days_out',
+        'otb_room_nights', 'otb_occupancy_percent', 'otb_revenue_display'
+    ]
+    list_filter = ['hotel', 'hotel__organization', 'snapshot_date']
+    search_fields = ['hotel__name']
+    date_hierarchy = 'snapshot_date'
+    ordering = ['-snapshot_date', 'target_month']
+    
+    def otb_revenue_display(self, obj):
+        return f"${obj.otb_revenue:,.2f}"
+    otb_revenue_display.short_description = 'OTB Revenue'
+
+
+@admin.register(PickupCurve)
+class PickupCurveAdmin(admin.ModelAdmin):
+    list_display = [
+        'hotel', 'season_type', 'season', 'days_out',
+        'cumulative_percent', 'sample_size', 'curve_version'
+    ]
+    list_filter = ['hotel', 'hotel__organization', 'season_type']
+    search_fields = ['hotel__name']
+    ordering = ['hotel', 'season_type', '-days_out']
+
+
+@admin.register(OccupancyForecast)
+class OccupancyForecastAdmin(admin.ModelAdmin):
+    list_display = [
+        'hotel', 'target_month', 'forecast_date', 'days_out',
+        'otb_occupancy_percent', 'pickup_forecast_occupancy',
+        'scenario_occupancy', 'variance_percent', 'confidence_level'
+    ]
+    list_filter = ['hotel', 'hotel__organization', 'confidence_level', 'forecast_date']
+    search_fields = ['hotel__name']
+    date_hierarchy = 'forecast_date'
+    ordering = ['hotel', 'target_month', '-forecast_date']

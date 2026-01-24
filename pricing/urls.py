@@ -1,29 +1,119 @@
 """
-Pricing app URLs.
+Pricing app URLs - Multi-Property Structure
+
+URL Hierarchy:
+    /                                           → Root redirect
+    /org/                                       → Organization selector
+    /org/<org_code>/                            → Organization dashboard
+    /org/<org_code>/properties/                 → Property list
+    /org/<org_code>/<prop_code>/                → Property dashboard
+    /org/<org_code>/<prop_code>/matrix/         → Pricing matrix
+    /org/<org_code>/<prop_code>/booking-analysis/
+    /org/<org_code>/<prop_code>/pickup/
+    /org/<org_code>/<prop_code>/api/...         → AJAX endpoints
 """
 
 from django.urls import path
 from .views import (
-    HomeView, PricingMatrixView, EnhancedPricingMatrixView, 
-    AllSeasonsComparisonView, ADRAnalysisView, RevenueAnalysisView, PickupDashboardView, BookingAnalysisDashboardView, booking_analysis_data_ajax, update_room, update_season, parity_data_ajax, revenue_forecast_ajax)
+    # Root & Selector
+    RootRedirectView,
+    OrganizationSelectorView,
+    
+    # Organization level
+    OrganizationDashboardView,
+    PropertyListView,
+    
+    # Property level
+    PropertyDashboardView,
+    PricingMatrixView,
+    BookingAnalysisDashboardView,
+    PickupDashboardView,
+    
+    # AJAX endpoints
+    parity_data_ajax,
+    revenue_forecast_ajax,
+    booking_analysis_data_ajax,
+    pickup_summary_ajax,
+    update_room,
+    update_season,
+)
 
 app_name = 'pricing'
 
 urlpatterns = [
-    path('', HomeView.as_view(), name='home'),
-    path('matrix/', PricingMatrixView.as_view(), name='matrix'),
-    path('all-seasons/', AllSeasonsComparisonView.as_view(), name='all_seasons'),
-    path('enhanced-matrix/', EnhancedPricingMatrixView.as_view(), name='enhanced_matrix'),
-    path('adr-analysis/', ADRAnalysisView.as_view(), name='adr_analysis'),
-    path('revenue-analysis/', RevenueAnalysisView.as_view(), name='revenue_analysis'),
-    path('room/<int:room_id>/update/', update_room, name='update_room'),
-    path('season/<int:season_id>/update/', update_season, name='update_season'),
-    path('parity-data/', parity_data_ajax, name='parity_data_ajax'),
-    path('api/revenue-forecast/', revenue_forecast_ajax, name='revenue_forecast_ajax'),  # ADD THIS LINE
-    path('pickup/', PickupDashboardView.as_view(), name='pickup_dashboard'),
-    path('booking-analysis/', BookingAnalysisDashboardView.as_view(), name='booking_analysis_dashboard'),
-    path('booking-analysis/data/', booking_analysis_data_ajax, name='booking_analysis_data_ajax'),
-
-
-
+    # ==========================================================================
+    # ROOT & ORGANIZATION SELECTOR
+    # ==========================================================================
+    path('', RootRedirectView.as_view(), name='root'),
+    path('org/', OrganizationSelectorView.as_view(), name='org_selector'),
+    
+    # ==========================================================================
+    # ORGANIZATION LEVEL
+    # ==========================================================================
+    path('org/<slug:org_code>/', 
+         OrganizationDashboardView.as_view(), 
+         name='org_dashboard'),
+    
+    path('org/<slug:org_code>/properties/', 
+         PropertyListView.as_view(), 
+         name='property_list'),
+    
+    # ==========================================================================
+    # PROPERTY LEVEL - MAIN VIEWS
+    # ==========================================================================
+    path('org/<slug:org_code>/<slug:prop_code>/', 
+         PropertyDashboardView.as_view(), 
+         name='property_dashboard'),
+    
+    path('org/<slug:org_code>/<slug:prop_code>/matrix/', 
+         PricingMatrixView.as_view(), 
+         name='matrix'),
+    
+    path('org/<slug:org_code>/<slug:prop_code>/booking-analysis/', 
+         BookingAnalysisDashboardView.as_view(), 
+         name='booking_analysis_dashboard'),
+    
+    path('org/<slug:org_code>/<slug:prop_code>/pickup/', 
+         PickupDashboardView.as_view(), 
+         name='pickup_dashboard'),
+    
+    # ==========================================================================
+    # PROPERTY LEVEL - AJAX ENDPOINTS
+    # ==========================================================================
+    path('org/<slug:org_code>/<slug:prop_code>/api/parity-data/', 
+         parity_data_ajax, 
+         name='parity_data_ajax'),
+    
+    path('org/<slug:org_code>/<slug:prop_code>/api/revenue-forecast/', 
+         revenue_forecast_ajax, 
+         name='revenue_forecast_ajax'),
+    
+    path('org/<slug:org_code>/<slug:prop_code>/api/booking-analysis/', 
+         booking_analysis_data_ajax, 
+         name='booking_analysis_data_ajax'),
+    
+    path('org/<slug:org_code>/<slug:prop_code>/api/pickup-summary/', 
+         pickup_summary_ajax, 
+         name='pickup_summary_ajax'),
+    
+    path('org/<slug:org_code>/<slug:prop_code>/api/room/<int:room_id>/update/', 
+         update_room, 
+         name='update_room'),
+    
+    path('org/<slug:org_code>/<slug:prop_code>/api/season/<int:season_id>/update/', 
+         update_season, 
+         name='update_season'),
 ]
+
+
+# =============================================================================
+# LEGACY URL REDIRECTS (Optional - remove after migration)
+# =============================================================================
+# If you have old bookmarks or links, you can add redirects here:
+#
+# from django.views.generic import RedirectView
+# 
+# urlpatterns += [
+#     path('matrix/', RedirectView.as_view(pattern_name='pricing:root'), name='legacy_matrix'),
+#     path('booking-analysis/', RedirectView.as_view(pattern_name='pricing:root'), name='legacy_booking'),
+# ]

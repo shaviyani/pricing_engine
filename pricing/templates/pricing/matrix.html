@@ -1,9 +1,12 @@
 {% extends 'pricing/base.html' %}
 {% load pricing_filters %}
+{% load humanize %}
 
 {% block title %}Pricing Matrix - {{ selected_season.name }}{% endblock %}
 
 {% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
 <div class="space-y-6">
     <!-- Header -->
     <div class="flex items-center justify-between">
@@ -12,16 +15,12 @@
             <p class="text-gray-600 mt-1">Compact view of all rates for quick comparison</p>
         </div>
         <div class="flex space-x-2">
-            <a href="{% url 'pricing:all_seasons' %}" 
-               class="inline-flex items-center px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg transition">
-                All Seasons View
-            </a>
-            <a href="{% url 'pricing:home' %}" 
+            <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}" 
                class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
                 </svg>
-                Back to Home
+                Back to Dashboard
             </a>
         </div>
     </div>
@@ -130,7 +129,7 @@
                                                     <td class="sticky left-0 z-10 bg-blue-100 px-6 py-2 text-xs font-semibold text-gray-900 border-r border-gray-300 w-64">
                                                         {{ rate_plan.name }}
                                                         {% if rate_plan.meal_supplement > 0 %}
-                                                        <span class="text-gray-600 font-normal">(+${{ rate_plan.meal_supplement }}/person)</span>
+                                                        <span class="text-gray-600 font-normal">(+${{ rate_plan.meal_supplement|intcomma }}/person)</span>
                                                         {% endif %}
                                                     </td>
                                                     {% for season in seasons %}
@@ -151,7 +150,7 @@
                                                             {% if forloop.first %}
                                                                 {% with season_rates=mod_data.seasons|get_item:season.id %}
                                                                 {% if season_rates %}
-                                                                    ${{ season_rates.breakdown.bar_rate }}
+                                                                    ${{ season_rates.breakdown.bar_rate|floatformat:2|intcomma }}
                                                                 {% endif %}
                                                                 {% endwith %}
                                                             {% endif %}
@@ -191,11 +190,11 @@
                                                              data-room="{{ channel.id }}-{{ room.id }}" 
                                                              data-season="{{ season.id }}" 
                                                              data-rate="{{ season_rates.rate }}">
-                                                            ${{ season_rates.rate }}
+                                                            ${{ season_rates.rate|floatformat:2|intcomma }}
                                                         </div>
                                                         {% if channel.commission_percent > 0 %}
                                                         <div class="text-xs text-gray-500">
-                                                            Net: ${{ season_rates.breakdown.net_revenue }}
+                                                            Net: ${{ season_rates.breakdown.net_revenue|floatformat:2|intcomma }}
                                                         </div>
                                                         {% endif %}
                                                         
@@ -204,19 +203,19 @@
                                                             <div class="font-semibold mb-1">{{ mod_data.modifier.name }}</div>
                                                             <div class="text-xs text-gray-400 mb-2">{{ room.name }} - {{ rate_plan.name }} - {{ season.name }}</div>
                                                             <div class="space-y-0.5">
-                                                                <div class="flex justify-between"><span>Base:</span><span>${{ season_rates.breakdown.base_rate }}</span></div>
-                                                                <div class="flex justify-between"><span>× Season:</span><span>${{ season_rates.breakdown.seasonal_rate }}</span></div>
+                                                                <div class="flex justify-between"><span>Base:</span><span>${{ season_rates.breakdown.base_rate|floatformat:2|intcomma }}</span></div>
+                                                                <div class="flex justify-between"><span>× Season:</span><span>${{ season_rates.breakdown.seasonal_rate|floatformat:2|intcomma }}</span></div>
                                                                 {% if season_rates.breakdown.meal_cost > 0 %}
-                                                                <div class="flex justify-between"><span>+ Meals:</span><span>${{ season_rates.breakdown.meal_cost }}</span></div>
+                                                                <div class="flex justify-between"><span>+ Meals:</span><span>${{ season_rates.breakdown.meal_cost|floatformat:2|intcomma }}</span></div>
                                                                 {% endif %}
-                                                                <div class="flex justify-between border-t border-gray-700 pt-1 font-semibold"><span>BAR:</span><span>${{ season_rates.breakdown.bar_rate }}</span></div>
+                                                                <div class="flex justify-between border-t border-gray-700 pt-1 font-semibold"><span>BAR:</span><span>${{ season_rates.breakdown.bar_rate|floatformat:2|intcomma }}</span></div>
                                                                 {% if season_rates.breakdown.total_discount_percent > 0 %}
                                                                 <div class="flex justify-between"><span>- Discount:</span><span>-{{ season_rates.breakdown.total_discount_percent }}%</span></div>
                                                                 {% endif %}
-                                                                <div class="flex justify-between border-t border-gray-700 pt-1 font-bold text-green-300"><span>Guest Pays:</span><span>${{ season_rates.breakdown.final_rate }}</span></div>
+                                                                <div class="flex justify-between border-t border-gray-700 pt-1 font-bold text-green-300"><span>Guest Pays:</span><span>${{ season_rates.breakdown.final_rate|floatformat:2|intcomma }}</span></div>
                                                                 {% if channel.commission_percent > 0 %}
-                                                                <div class="flex justify-between pt-1 border-t border-gray-700"><span>- Commission:</span><span class="text-red-300">-${{ season_rates.breakdown.commission_amount }}</span></div>
-                                                                <div class="flex justify-between font-bold text-blue-300"><span>You Receive:</span><span>${{ season_rates.breakdown.net_revenue }}</span></div>
+                                                                <div class="flex justify-between pt-1 border-t border-gray-700"><span>- Commission:</span><span class="text-red-300">-${{ season_rates.breakdown.commission_amount|floatformat:2|intcomma }}</span></div>
+                                                                <div class="flex justify-between font-bold text-blue-300"><span>You Receive:</span><span>${{ season_rates.breakdown.net_revenue|floatformat:2|intcomma }}</span></div>
                                                                 {% endif %}
                                                             </div>
                                                         </div>
@@ -452,6 +451,7 @@
 
     {% endif %}
 </div>
+</div>
 {% endblock %}
 
 {% block extra_css %}
@@ -482,10 +482,13 @@
 
 {% block extra_js %}
 <script>
+// API base URL for this property
+var apiBaseUrl = "{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}".replace(/\/$/, '');
+
 // Toggle room section collapse/expand
 function toggleRoomSection(roomId) {
-    const section = document.getElementById('room-section-' + roomId);
-    const chevron = document.getElementById('chevron-' + roomId);
+    var section = document.getElementById('room-section-' + roomId);
+    var chevron = document.getElementById('chevron-' + roomId);
     
     if (section.classList.contains('collapsed')) {
         section.classList.remove('collapsed');
@@ -537,10 +540,10 @@ function closeSeasonModal() {
 
 // Update pricing fields based on selected method
 function updatePricingFields() {
-    const method = document.getElementById('pricing_method').value;
-    const indexField = document.getElementById('room_index_field');
-    const adjustmentField = document.getElementById('room_adjustment_field');
-    const baseRateHelp = document.getElementById('base_rate_help');
+    var method = document.getElementById('pricing_method').value;
+    var indexField = document.getElementById('room_index_field');
+    var adjustmentField = document.getElementById('room_adjustment_field');
+    var baseRateHelp = document.getElementById('base_rate_help');
     
     if (method === 'direct') {
         indexField.classList.add('hidden');
@@ -557,44 +560,73 @@ function updatePricingFields() {
     }
 }
 
-// Handle form submission
-document.getElementById('roomForm').addEventListener('submit', async function(e) {
+// Handle room form submission
+document.getElementById('roomForm').addEventListener('submit', function(e) {
     e.preventDefault();
     
-    const formData = new FormData(this);
-    const roomId = formData.get('room_id');
+    var formData = new FormData(this);
+    var roomId = formData.get('room_id');
+    var url = "{% url 'pricing:update_room' org_code=org.code prop_code=prop.code room_id=0 %}".replace('/0/', '/' + roomId + '/');
     
-    try {
-        const response = await fetch(`/room/${roomId}/update/`, {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': getCookie('csrftoken'),
-            },
-            body: formData
-        });
-        
-        const data = await response.json();
-        
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: formData
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
         if (data.success) {
             closeRoomModal();
-            // Reload page to show updated data
             window.location.reload();
         } else {
             alert('Error: ' + data.message);
         }
-    } catch (error) {
+    })
+    .catch(function(error) {
         console.error('Error:', error);
         alert('Error saving room. Please try again.');
-    }
+    });
+});
+
+// Handle season form submission
+document.getElementById('seasonForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    var formData = new FormData(this);
+    var seasonId = formData.get('season_id');
+    var url = "{% url 'pricing:update_season' org_code=org.code prop_code=prop.code season_id=0 %}".replace('/0/', '/' + seasonId + '/');
+    
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: formData
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+        if (data.success) {
+            closeSeasonModal();
+            window.location.reload();
+        } else {
+            alert('Error: ' + data.message);
+        }
+    })
+    .catch(function(error) {
+        console.error('Error:', error);
+        alert('Error saving season. Please try again.');
+    });
 });
 
 // Get CSRF token
 function getCookie(name) {
-    let cookieValue = null;
+    var cookieValue = null;
     if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
+        var cookies = document.cookie.split(';');
+        for (var i = 0; i < cookies.length; i++) {
+            var cookie = cookies[i].trim();
             if (cookie.substring(0, name.length + 1) === (name + '=')) {
                 cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
                 break;
@@ -617,47 +649,16 @@ document.getElementById('seasonModal').addEventListener('click', function(e) {
     }
 });
 
-// Handle season form submission
-document.getElementById('seasonForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const formData = new FormData(this);
-    const seasonId = formData.get('season_id');
-    
-    try {
-        const response = await fetch(`/season/${seasonId}/update/`, {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': getCookie('csrftoken'),
-            },
-            body: formData
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            closeSeasonModal();
-            // Reload page to show updated data
-            window.location.reload();
-        } else {
-            alert('Error: ' + data.message);
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        alert('Error saving season. Please try again.');
-    }
-});
-
 // Calculate high/low rates per season for each room section
 document.addEventListener('DOMContentLoaded', function() {
-    const seasonRates = {}; // { "roomId-seasonId": { min, max } }
+    var seasonRates = {}; // { "roomId-seasonId": { min, max } }
     
     // Collect all rates by room section and season
     document.querySelectorAll('.room-rate').forEach(function(element) {
-        const roomId = element.dataset.room;
-        const seasonId = element.dataset.season;
-        const rate = parseFloat(element.dataset.rate);
-        const key = roomId + '-' + seasonId;
+        var roomId = element.dataset.room;
+        var seasonId = element.dataset.season;
+        var rate = parseFloat(element.dataset.rate);
+        var key = roomId + '-' + seasonId;
         
         if (!seasonRates[key]) {
             seasonRates[key] = { min: Infinity, max: -Infinity };
@@ -669,22 +670,22 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Update low/high displays for each season column
     document.querySelectorAll('.room-low').forEach(function(element) {
-        const roomId = element.dataset.room;
-        const seasonId = element.dataset.season;
-        const key = roomId + '-' + seasonId;
+        var roomId = element.dataset.room;
+        var seasonId = element.dataset.season;
+        var key = roomId + '-' + seasonId;
         
-        if (seasonRates[key]) {
-            element.textContent = seasonRates[key].min.toFixed(2);
+        if (seasonRates[key] && seasonRates[key].min !== Infinity) {
+            element.textContent = seasonRates[key].min.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
         }
     });
     
     document.querySelectorAll('.room-high').forEach(function(element) {
-        const roomId = element.dataset.room;
-        const seasonId = element.dataset.season;
-        const key = roomId + '-' + seasonId;
+        var roomId = element.dataset.room;
+        var seasonId = element.dataset.season;
+        var key = roomId + '-' + seasonId;
         
-        if (seasonRates[key]) {
-            element.textContent = seasonRates[key].max.toFixed(2);
+        if (seasonRates[key] && seasonRates[key].max !== -Infinity) {
+            element.textContent = seasonRates[key].max.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
         }
     });
 });
