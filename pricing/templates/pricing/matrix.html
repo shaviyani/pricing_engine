@@ -84,36 +84,42 @@
                     {% for room in rooms %}
                         <!-- Collapsible Room Header -->
                         <tr class="bg-gradient-to-r from-blue-50 to-blue-100 border-t-2 border-blue-200 cursor-pointer hover:from-blue-100 hover:to-blue-150 transition"
-                            onclick="toggleRoomSection('{{ channel.id }}-{{ room.id }}')">
-                            <td class="sticky left-0 z-10 bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-2 text-sm border-r border-gray-300">
-                                <div class="flex items-center space-x-2">
-                                    <!-- Chevron Icon -->
-                                    <svg class="w-4 h-4 text-blue-600 transform transition-transform duration-200 -rotate-90" 
-                                         id="chevron-{{ channel.id }}-{{ room.id }}"
-                                         viewBox="0 0 24 24">
-                                        <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
-                                    </svg>
-                                    <div>
-                                        <div class="font-bold text-gray-900 hover:text-blue-600 transition" 
-                                             onclick="event.stopPropagation(); openRoomModal({{ room.id }}, '{{ room.name }}', '{{ room.base_rate }}', '{{ room.room_index }}', '{{ room.room_adjustment }}', '{{ room.pricing_method }}', {{ room.number_of_rooms }}, {{ room.sort_order }})">
-                                            {{ room.name }}
-                                        </div>
-                                        <div class="text-xs text-gray-600 font-normal">
-                                            {{ room.number_of_rooms }} rooms
-                                        </div>
-                                    </div>
-                                </div>
-                            </td>
-                            {% for season in seasons %}
-                            <td class="px-2 py-2 text-center text-xs border-r border-gray-200">
-                                <div class="font-semibold">
-                                    <span class="text-green-600">$<span class="room-low" data-room="{{ channel.id }}-{{ room.id }}" data-season="{{ season.id }}">—</span></span>
-                                    <span class="text-gray-400 mx-1">-</span>
-                                    <span class="text-amber-600">$<span class="room-high" data-room="{{ channel.id }}-{{ room.id }}" data-season="{{ season.id }}">—</span></span>
-                                </div>
-                            </td>
-                            {% endfor %}
-                        </tr>
+        onclick="toggleRoomSection('{{ channel.id }}-{{ room.id }}')">
+        <td class="sticky left-0 z-10 bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-2 text-sm border-r border-gray-300">
+            <div class="flex items-center space-x-2">
+                <!-- Chevron Icon -->
+                <svg class="w-4 h-4 text-blue-600 transform transition-transform duration-200 -rotate-90" 
+                     id="chevron-{{ channel.id }}-{{ room.id }}"
+                     viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+                </svg>
+                <div>
+                    <div class="font-bold text-gray-900 hover:text-blue-600 transition" 
+                         onclick="event.stopPropagation(); openRoomModal({{ room.id }}, '{{ room.name }}', '{{ room.base_rate }}', '{{ room.room_index }}', '{{ room.room_adjustment }}', '{{ room.pricing_method }}', {{ room.number_of_rooms }}, {{ room.sort_order }})">
+                        {{ room.name }}
+                    </div>
+                    <div class="text-xs text-gray-600 font-normal">
+                        {{ room.number_of_rooms }} rooms
+                    </div>
+                </div>
+            </div>
+        </td>
+        {% for season in seasons %}
+        <td class="px-2 py-2 text-center text-sm border-r border-gray-200">
+            <!-- B&B Standard Rate from summary_rates -->
+            {% with rate=summary_rates|get_item:channel.id|get_item:room.id|get_item:season.id %}
+            {% if rate %}
+            <div class="font-semibold text-gray-900">
+                ${{ rate|floatformat:2|intcomma }}
+            </div>
+            <div class="text-xs text-gray-500">B&B</div>
+            {% else %}
+            <span class="text-gray-400">—</span>
+            {% endif %}
+            {% endwith %}
+        </td>
+        {% endfor %}
+    </tr>
                         
                         <!-- Collapsible Content - All Rate Plans for this Room -->
                         <tr id="room-section-{{ channel.id }}-{{ room.id }}" class="room-content collapsed">

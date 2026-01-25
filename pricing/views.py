@@ -477,7 +477,7 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
 
 
 # =============================================================================
-# PRICING MATRIX
+# PRICING MATRIX - Updated with B&B Standard Summary Rate
 # =============================================================================
 
 class PricingMatrixView(PropertyMixin, TemplateView):
@@ -490,6 +490,8 @@ class PricingMatrixView(PropertyMixin, TemplateView):
         - For each Room Type + Rate Plan:
             - BAR row showing baseline rates
             - Modifier rows showing discounted rates
+    
+    Summary row shows B&B Standard rate (Bed & Breakfast rate plan with Standard modifier).
     """
     template_name = 'pricing/matrix.html'
     
@@ -526,7 +528,7 @@ class PricingMatrixView(PropertyMixin, TemplateView):
             selected_season = seasons.first()
         
         # Build matrix
-        matrix = self._build_matrix(prop, seasons, rooms, rate_plans, channels, selected_season)
+        matrix, summary_rates = self._build_matrix(prop, seasons, rooms, rate_plans, channels, selected_season)
         
         context['seasons'] = seasons
         context['selected_season'] = selected_season
@@ -534,6 +536,7 @@ class PricingMatrixView(PropertyMixin, TemplateView):
         context['rate_plans'] = rate_plans
         context['channels'] = channels
         context['matrix'] = matrix
+        context['summary_rates'] = summary_rates  # NEW: B&B Standard rates for summary
         
         return context
     
@@ -548,11 +551,25 @@ class PricingMatrixView(PropertyMixin, TemplateView):
                 'seasons': {season_id: {'rate': Decimal, 'breakdown': dict}}
             }]
         }
+        
+        Also builds summary_rates[channel_id][room_id][season_id] = B&B Standard rate
         """
         matrix = {}
+        summary_rates = {}  # NEW: For collapsed row display
+        
+        # Find the B&B rate plan and Standard modifier for summary display
+        bb_rate_plan = rate_plans.filter(name__icontains='bed & breakfast').first()
+        if not bb_rate_plan:
+            bb_rate_plan = rate_plans.filter(name__icontains='b&b').first()
+        if not bb_rate_plan:
+            bb_rate_plan = rate_plans.filter(name__icontains='breakfast').first()
+        if not bb_rate_plan:
+            # Fallback to first rate plan
+            bb_rate_plan = rate_plans.first()
         
         for channel in channels:
             matrix[channel.id] = {}
+            summary_rates[channel.id] = {}
             
             # Get active modifiers for this channel (RateModifier is shared)
             modifiers = RateModifier.objects.filter(
@@ -560,8 +577,16 @@ class PricingMatrixView(PropertyMixin, TemplateView):
                 active=True
             ).order_by('sort_order')
             
+            # Find Standard modifier (0% discount or first one)
+            standard_modifier = modifiers.filter(discount_percent=0).first()
+            if not standard_modifier:
+                standard_modifier = modifiers.filter(name__icontains='standard').first()
+            if not standard_modifier:
+                standard_modifier = modifiers.first()
+            
             for room in rooms:
                 matrix[channel.id][room.id] = {}
+                summary_rates[channel.id][room.id] = {}
                 
                 for rate_plan in rate_plans:
                     # Calculate BAR for selected season (display reference)
@@ -594,6 +619,10 @@ class PricingMatrixView(PropertyMixin, TemplateView):
                                 'rate': final_rate,
                                 'breakdown': breakdown
                             }
+                            
+                            # NEW: Capture B&B Standard rate for summary
+                            if rate_plan == bb_rate_plan and modifier == standard_modifier:
+                                summary_rates[channel.id][room.id][season.id] = final_rate
                         
                         modifiers_list.append(modifier_data)
                     
@@ -602,8 +631,7 @@ class PricingMatrixView(PropertyMixin, TemplateView):
                         'modifiers': modifiers_list
                     }
         
-        return matrix
-
+        return matrix, summary_rates
 
 # =============================================================================
 # BOOKING ANALYSIS
