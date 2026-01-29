@@ -26,8 +26,11 @@ from .views import (
     # Property level
     PropertyDashboardView,
     PricingMatrixView,
+    PricingMatrixPDFView,
+    PricingMatrixChannelView,
     BookingAnalysisDashboardView,
     PickupDashboardView,
+    MonthDetailAPIView,
     
     # AJAX endpoints
     parity_data_ajax,
@@ -69,6 +72,17 @@ urlpatterns = [
          PricingMatrixView.as_view(), 
          name='matrix'),
     
+    path(
+        '<str:org_code>/<str:prop_code>/pricing/matrix/pdf/',
+        PricingMatrixPDFView.as_view(),
+        name='pricing_matrix_pdf'
+    ),
+    
+    path(
+   '<str:org_code>/<str:prop_code>/pricing/matrix/channel/',
+     PricingMatrixChannelView.as_view(),
+     name='pricing_matrix_channel' ),
+     
     path('org/<slug:org_code>/<slug:prop_code>/booking-analysis/', 
          BookingAnalysisDashboardView.as_view(), 
          name='booking_analysis_dashboard'),
@@ -103,6 +117,12 @@ urlpatterns = [
     path('org/<slug:org_code>/<slug:prop_code>/api/season/<int:season_id>/update/', 
          update_season, 
          name='update_season'),
+    
+    path(
+    '<str:org_code>/<str:prop_code>/api/month-detail/',
+    MonthDetailAPIView.as_view(),
+    name='month_detail_api'
+),
 ]
 
 
@@ -117,3 +137,4 @@ urlpatterns = [
 #     path('matrix/', RedirectView.as_view(pattern_name='pricing:root'), name='legacy_matrix'),
 #     path('booking-analysis/', RedirectView.as_view(pattern_name='pricing:root'), name='legacy_booking'),
 # ]
+

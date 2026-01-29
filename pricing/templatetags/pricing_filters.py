@@ -45,3 +45,21 @@ def add_filter(value, arg):
         return int(value) + int(arg)
     except (ValueError, TypeError):
         return 0
+    
+    
+@register.filter
+def get_item(dictionary, key):
+    """
+    Get an item from a dictionary using a variable key.
+    
+    Usage in template:
+        {{ mydict|get_item:key_variable }}
+    
+    Example:
+        {% with rate=room_data.summary_rates|get_item:season.id %}
+            {{ rate }}
+        {% endwith %}
+    """
+    if dictionary is None:
+        return None
+    return dictionary.get(key)

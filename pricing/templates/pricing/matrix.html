@@ -2,74 +2,61 @@
 {% load pricing_filters %}
 {% load humanize %}
 
-{% block title %}Pricing Matrix - {{ selected_season.name }}{% endblock %}
+{% block title %}Pricing Matrix{% endblock %}
 
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
 <div class="space-y-6">
     <!-- Header -->
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-3xl font-bold text-gray-900">Pricing Matrix - {{ selected_season.name }}</h1>
-            <p class="text-gray-600 mt-1">Compact view of all rates for quick comparison</p>
-        </div>
-        <div class="flex space-x-2">
-            <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}" 
-               class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                </svg>
-                Back to Dashboard
+<div class="flex items-center justify-between">
+    <div>
+        <h1 class="text-3xl font-bold text-gray-900">Pricing Matrix</h1>
+        <p class="text-gray-600 mt-1">Room-centric view with B&B Standard rates</p>
+    </div>
+    <div class="flex space-x-2">
+        <!-- View Toggle -->
+        <div class="inline-flex rounded-lg border border-gray-200 bg-white p-1">
+            <span class="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md">
+                By Room
+            </span>
+            <a href="{% url 'pricing:pricing_matrix_channel' org_code=org.code prop_code=property.code %}" 
+               class="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 rounded-md">
+                By Channel
             </a>
         </div>
+        <!-- PDF Export Button -->
+        <a href="{% url 'pricing:pricing_matrix_pdf' org_code=org.code prop_code=property.code %}" 
+           class="inline-flex items-center px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                      d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Export PDF
+        </a>
+        <!-- Back to Dashboard -->
+        <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=property.code %}" 
+           class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+            </svg>
+            Back to Dashboard
+        </a>
     </div>
+</div>
 
-    {% if not has_data %}
-    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-        <h3 class="mt-2 text-lg font-medium text-gray-900">No Data Available</h3>
-        <p class="mt-1 text-sm text-gray-500">Load sample data or add your own.</p>
-        <div class="mt-6">
-            <a href="{% url 'admin:index' %}" class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">
-                Go to Admin
-            </a>
-        </div>
-    </div>
-    {% else %}
-
-    
-    <!-- Compact Matrix by Channel -->
-    {% for channel in channels %}
+    <!-- Pricing Matrix Table -->
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        <!-- Channel Header -->
-        <div class="bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200 px-4 py-3">
-            <div class="flex items-center justify-between">
-                <h2 class="text-lg font-bold text-gray-900">{{ channel.name }}</h2>
-                <div class="flex items-center space-x-3 text-xs">
-                    {% if channel.base_discount_percent > 0 %}
-                    <span class="px-2 py-1 rounded bg-green-100 text-green-800 font-medium">
-                        -{{ channel.base_discount_percent }}% Discount
-                    </span>
-                    {% endif %}
-                    {% if channel.commission_percent > 0 %}
-                    <span class="px-2 py-1 rounded bg-amber-100 text-amber-800 font-medium">
-                        {{ channel.commission_percent }}% Commission
-                    </span>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-
-        <!-- Compact Table -->
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
+                <!-- Table Header - Seasons -->
                 <thead class="bg-gray-50">
                     <tr>
-                        <th scope="col" class="sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-64 border-r border-gray-300">
-                            Room / Rate Plan / Modifier
+                        <th scope="col" class="sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-72 border-r border-gray-300">
+                            Room / Channel
                         </th>
                         {% for season in seasons %}
-                        <th scope="col" class="px-4 py-3 text-center text-xs font-medium border-r border-gray-200">
+                        <th scope="col" class="px-4 py-3 text-center text-xs font-medium border-r border-gray-200 min-w-32">
                             <div class="font-semibold text-gray-900 hover:text-blue-600 transition cursor-pointer"
                                  onclick="openSeasonModal({{ season.id }}, '{{ season.name }}', '{{ season.start_date|date:"Y-m-d" }}', '{{ season.end_date|date:"Y-m-d" }}', '{{ season.season_index }}', '{{ season.expected_occupancy }}')">
                                 {{ season.name }}
@@ -80,197 +67,209 @@
                         {% endfor %}
                     </tr>
                 </thead>
+                
                 <tbody class="bg-white divide-y divide-gray-200">
-                    {% for room in rooms %}
-                        <!-- Collapsible Room Header -->
-                        <tr class="bg-gradient-to-r from-blue-50 to-blue-100 border-t-2 border-blue-200 cursor-pointer hover:from-blue-100 hover:to-blue-150 transition"
-        onclick="toggleRoomSection('{{ channel.id }}-{{ room.id }}')">
-        <td class="sticky left-0 z-10 bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-2 text-sm border-r border-gray-300">
-            <div class="flex items-center space-x-2">
-                <!-- Chevron Icon -->
-                <svg class="w-4 h-4 text-blue-600 transform transition-transform duration-200 -rotate-90" 
-                     id="chevron-{{ channel.id }}-{{ room.id }}"
-                     viewBox="0 0 24 24">
-                    <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
-                </svg>
-                <div>
-                    <div class="font-bold text-gray-900 hover:text-blue-600 transition" 
-                         onclick="event.stopPropagation(); openRoomModal({{ room.id }}, '{{ room.name }}', '{{ room.base_rate }}', '{{ room.room_index }}', '{{ room.room_adjustment }}', '{{ room.pricing_method }}', {{ room.number_of_rooms }}, {{ room.sort_order }})">
-                        {{ room.name }}
-                    </div>
-                    <div class="text-xs text-gray-600 font-normal">
-                        {{ room.number_of_rooms }} rooms
-                    </div>
-                </div>
-            </div>
-        </td>
-        {% for season in seasons %}
-        <td class="px-2 py-2 text-center text-sm border-r border-gray-200">
-            <!-- B&B Standard Rate from summary_rates -->
-            {% with rate=summary_rates|get_item:channel.id|get_item:room.id|get_item:season.id %}
-            {% if rate %}
-            <div class="font-semibold text-gray-900">
-                ${{ rate|floatformat:2|intcomma }}
-            </div>
-            <div class="text-xs text-gray-500">B&B</div>
-            {% else %}
-            <span class="text-gray-400">—</span>
-            {% endif %}
-            {% endwith %}
-        </td>
-        {% endfor %}
-    </tr>
-                        
-                        <!-- Collapsible Content - All Rate Plans for this Room -->
-                        <tr id="room-section-{{ channel.id }}-{{ room.id }}" class="room-content collapsed">
-                            <td colspan="{{ seasons.count|add:1 }}" class="p-0">
-                                <div class="bg-gray-50">
-                                    <table class="min-w-full">
-                                        <tbody>
-                                            {% for rate_plan in rate_plans %}
-                                            {% with data=matrix|get_item:channel.id|get_item:room.id|get_item:rate_plan.id %}
-                                            {% if data %}
-                                                <!-- Rate Plan Header -->
-                                                <tr class="bg-blue-100 border-t border-blue-200">
-                                                    <td class="sticky left-0 z-10 bg-blue-100 px-6 py-2 text-xs font-semibold text-gray-900 border-r border-gray-300 w-64">
-                                                        {{ rate_plan.name }}
-                                                        {% if rate_plan.meal_supplement > 0 %}
-                                                        <span class="text-gray-600 font-normal">(+${{ rate_plan.meal_supplement|intcomma }}/person)</span>
-                                                        {% endif %}
-                                                    </td>
-                                                    {% for season in seasons %}
-                                                    <td class="px-3 py-2 text-center text-xs border-r border-gray-200">
-                                                        <!-- Empty cell for rate plan header -->
-                                                    </td>
-                                                    {% endfor %}
-                                                </tr>
-                                                
-                                                <!-- BAR Row -->
-                                                <tr class="bg-blue-50 font-semibold">
-                                                    <td class="sticky left-0 z-10 bg-blue-50 px-8 py-2 text-xs text-gray-900 border-r border-gray-300 w-64">
-                                                        BAR (Best Available Rate)
-                                                    </td>
-                                                    {% for season in seasons %}
-                                                    <td class="px-3 py-2 text-center text-sm text-gray-900 border-r border-gray-200">
-                                                        {% for mod_data in data.modifiers %}
-                                                            {% if forloop.first %}
-                                                                {% with season_rates=mod_data.seasons|get_item:season.id %}
-                                                                {% if season_rates %}
-                                                                    ${{ season_rates.breakdown.bar_rate|floatformat:2|intcomma }}
-                                                                {% endif %}
-                                                                {% endwith %}
-                                                            {% endif %}
-                                                        {% endfor %}
-                                                    </td>
-                                                    {% endfor %}
-                                                </tr>
-                                                
-                                                <!-- Modifier Rows -->
-                                                {% for mod_data in data.modifiers %}
-                                                <tr class="hover:bg-blue-50 transition">
-                                                    <td class="sticky left-0 z-10 bg-white px-8 py-2 text-xs border-r border-gray-300 w-64">
-                                                        <div class="flex items-center space-x-2">
-                                                            <span class="text-base">
-                                                                {% if mod_data.modifier.modifier_type == 'member' %}🎯
-                                                                {% elif mod_data.modifier.modifier_type == 'mobile' %}📱
-                                                                {% elif mod_data.modifier.modifier_type == 'promo' %}📧
-                                                                {% elif mod_data.modifier.modifier_type == 'last_minute' %}⚡
-                                                                {% elif mod_data.modifier.modifier_type == 'early_bird' %}🐦
-                                                                {% elif mod_data.modifier.modifier_type == 'corporate' %}🏢
-                                                                {% else %}•{% endif %}
-                                                            </span>
-                                                            <div>
-                                                                <div class="font-medium text-gray-900">{{ mod_data.modifier.name }}</div>
-                                                                {% if mod_data.modifier.discount_percent > 0 %}
-                                                                <div class="text-xs text-gray-500">-{{ mod_data.modifier.discount_percent }}%</div>
-                                                                {% endif %}
-                                                            </div>
-                                                        </div>
-                                                    </td>
-                                                    
-                                                    {% for season in seasons %}
-                                                    <td class="px-3 py-2 text-center relative tooltip-trigger border-r border-gray-200">
-                                                        {% with season_rates=mod_data.seasons|get_item:season.id %}
-                                                        {% if season_rates %}
-                                                        <div class="text-sm font-bold text-gray-900 room-rate" 
-                                                             data-room="{{ channel.id }}-{{ room.id }}" 
-                                                             data-season="{{ season.id }}" 
-                                                             data-rate="{{ season_rates.rate }}">
-                                                            ${{ season_rates.rate|floatformat:2|intcomma }}
-                                                        </div>
-                                                        {% if channel.commission_percent > 0 %}
-                                                        <div class="text-xs text-gray-500">
-                                                            Net: ${{ season_rates.breakdown.net_revenue|floatformat:2|intcomma }}
-                                                        </div>
-                                                        {% endif %}
-                                                        
-                                                        <!-- Tooltip -->
-                                                        <div class="tooltip absolute z-20 w-64 bg-gray-900 text-white text-xs rounded-lg shadow-lg p-3 left-1/2 transform -translate-x-1/2 top-full mt-1">
-                                                            <div class="font-semibold mb-1">{{ mod_data.modifier.name }}</div>
-                                                            <div class="text-xs text-gray-400 mb-2">{{ room.name }} - {{ rate_plan.name }} - {{ season.name }}</div>
-                                                            <div class="space-y-0.5">
-                                                                <div class="flex justify-between"><span>Base:</span><span>${{ season_rates.breakdown.base_rate|floatformat:2|intcomma }}</span></div>
-                                                                <div class="flex justify-between"><span>× Season:</span><span>${{ season_rates.breakdown.seasonal_rate|floatformat:2|intcomma }}</span></div>
-                                                                {% if season_rates.breakdown.meal_cost > 0 %}
-                                                                <div class="flex justify-between"><span>+ Meals:</span><span>${{ season_rates.breakdown.meal_cost|floatformat:2|intcomma }}</span></div>
-                                                                {% endif %}
-                                                                <div class="flex justify-between border-t border-gray-700 pt-1 font-semibold"><span>BAR:</span><span>${{ season_rates.breakdown.bar_rate|floatformat:2|intcomma }}</span></div>
-                                                                {% if season_rates.breakdown.total_discount_percent > 0 %}
-                                                                <div class="flex justify-between"><span>- Discount:</span><span>-{{ season_rates.breakdown.total_discount_percent }}%</span></div>
-                                                                {% endif %}
-                                                                <div class="flex justify-between border-t border-gray-700 pt-1 font-bold text-green-300"><span>Guest Pays:</span><span>${{ season_rates.breakdown.final_rate|floatformat:2|intcomma }}</span></div>
-                                                                {% if channel.commission_percent > 0 %}
-                                                                <div class="flex justify-between pt-1 border-t border-gray-700"><span>- Commission:</span><span class="text-red-300">-${{ season_rates.breakdown.commission_amount|floatformat:2|intcomma }}</span></div>
-                                                                <div class="flex justify-between font-bold text-blue-300"><span>You Receive:</span><span>${{ season_rates.breakdown.net_revenue|floatformat:2|intcomma }}</span></div>
-                                                                {% endif %}
-                                                            </div>
-                                                        </div>
-                                                        {% else %}
-                                                            <span class="text-gray-400">—</span>
-                                                        {% endif %}
-                                                        {% endwith %}
-                                                    </td>
-                                                    {% endfor %}
-                                                </tr>
-                                                {% endfor %}
-                                            {% endif %}
-                                            {% endwith %}
-                                            {% endfor %}
-                                        </tbody>
-                                    </table>
+                    {% for room_id, room_data in matrix.items %}
+                    {% with room=room_data.room %}
+                    
+                    <!-- ========================================================= -->
+                    <!-- ROOM HEADER ROW -->
+                    <!-- ========================================================= -->
+                    <tr class="bg-gradient-to-r from-blue-100 to-blue-200 border-t-2 border-blue-300 cursor-pointer hover:from-blue-150 hover:to-blue-250 transition"
+                        onclick="toggleSection('room-{{ room.id }}')">
+                        <td class="sticky left-0 z-10 bg-gradient-to-r from-blue-100 to-blue-200 px-4 py-3 border-r border-gray-300">
+                            <div class="flex items-center space-x-2">
+                                <svg class="w-5 h-5 text-blue-600 transform transition-transform duration-200" 
+                                     id="chevron-room-{{ room.id }}"
+                                     viewBox="0 0 24 24">
+                                    <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+                                </svg>
+                                <div>
+                                    <div class="font-bold text-gray-900 text-base hover:text-blue-600 transition"
+                                         onclick="event.stopPropagation(); openRoomModal({{ room.id }}, '{{ room.name }}', '{{ room.base_rate }}', '{{ room.room_index }}', '{{ room.room_adjustment }}', '{{ room.pricing_method }}', {{ room.number_of_rooms }}, {{ room.sort_order }})">
+                                        {{ room.name }}
+                                    </div>
+                                    <div class="text-xs text-gray-600">
+                                        {{ room.number_of_rooms }} rooms • Base: ${{ room.base_rate|floatformat:2|intcomma }}
+                                    </div>
                                 </div>
-                            </td>
-                        </tr>
+                            </div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-4 py-3 text-center border-r border-gray-200">
+                            <!-- Empty for room header -->
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    
+                    <!-- ========================================================= -->
+                    <!-- CHANNEL ROWS (Collapsible under Room) -->
+                    <!-- ========================================================= -->
+                    {% for channel_id, channel_data in room_data.channels.items %}
+                    {% with channel=channel_data.channel %}
+                    
+                    <!-- Channel Summary Row - Shows B&B Standard Rate -->
+                    <tr class="section-room-{{ room.id }} bg-gray-50 cursor-pointer hover:bg-gray-100 transition"
+                        onclick="toggleSection('room-{{ room.id }}-channel-{{ channel.id }}')">
+                        <td class="sticky left-0 z-10 bg-gray-50 hover:bg-gray-100 px-4 py-2 border-r border-gray-300">
+                            <div class="flex items-center space-x-2 pl-6">
+                                <svg class="w-4 h-4 text-gray-500 transform transition-transform duration-200 -rotate-90" 
+                                     id="chevron-room-{{ room.id }}-channel-{{ channel.id }}"
+                                     viewBox="0 0 24 24">
+                                    <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+                                </svg>
+                                <div>
+                                    <div class="font-semibold text-gray-800">{{ channel.name }}</div>
+                                    <div class="text-xs text-gray-500">
+                                        {% if channel.base_discount_percent > 0 %}
+                                        <span class="text-green-600">-{{ channel.base_discount_percent }}%</span>
+                                        {% endif %}
+                                        {% if channel.commission_percent > 0 %}
+                                        <span class="text-amber-600 ml-1">{{ channel.commission_percent }}% comm</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-4 py-2 text-center border-r border-gray-200">
+                            {% with rate=channel_data.summary_rates|get_item:season.id %}
+                            {% if rate %}
+                            <div class="font-semibold text-gray-900">${{ rate|floatformat:2|intcomma }}</div>
+                            <div class="text-xs text-gray-500">B&B Std</div>
+                            {% else %}
+                            <span class="text-gray-400">—</span>
+                            {% endif %}
+                            {% endwith %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    
+                    <!-- ========================================================= -->
+                    <!-- CHANNEL BREAKDOWN (Collapsible - Rate Plans & Modifiers) -->
+                    <!-- ========================================================= -->
+                    {% for rate_plan_id, rp_data in channel_data.rate_plans.items %}
+                    {% with rate_plan=rp_data.rate_plan %}
+                    
+                    <!-- Rate Plan Header -->
+                    <tr class="section-room-{{ room.id }}-channel-{{ channel.id }} hidden bg-blue-50 border-t border-blue-100">
+                        <td class="sticky left-0 z-10 bg-blue-50 px-4 py-2 border-r border-gray-300">
+                            <div class="pl-12 font-medium text-gray-800">
+                                {{ rate_plan.name }}
+                                {% if rate_plan.meal_supplement > 0 %}
+                                <span class="text-xs text-gray-500 font-normal">(+${{ rate_plan.meal_supplement|floatformat:2 }}/person)</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-3 py-2 text-center border-r border-gray-200">
+                            <!-- Empty for rate plan header -->
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    
+                    <!-- BAR Row -->
+                    <tr class="section-room-{{ room.id }}-channel-{{ channel.id }} hidden bg-white">
+                        <td class="sticky left-0 z-10 bg-white px-4 py-1.5 border-r border-gray-300">
+                            <div class="pl-16 text-xs text-gray-600 font-medium">BAR</div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-3 py-1.5 text-center text-sm text-gray-700 border-r border-gray-200">
+                            {% with bar=rp_data.bar_rates|get_item:season.id %}
+                            {% if bar %}${{ bar|floatformat:2|intcomma }}{% else %}—{% endif %}
+                            {% endwith %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    
+                    <!-- Modifier Rows -->
+                    {% for mod_data in rp_data.modifiers %}
+                    <tr class="section-room-{{ room.id }}-channel-{{ channel.id }} hidden bg-white hover:bg-gray-50 transition">
+                        <td class="sticky left-0 z-10 bg-white hover:bg-gray-50 px-4 py-1.5 border-r border-gray-300">
+                            <div class="pl-16 flex items-center space-x-2">
+                                <span class="text-sm">
+                                    {% if mod_data.modifier.modifier_type == 'member' %}🎯
+                                    {% elif mod_data.modifier.modifier_type == 'mobile' %}📱
+                                    {% elif mod_data.modifier.modifier_type == 'promo' %}📧
+                                    {% elif mod_data.modifier.modifier_type == 'last_minute' %}⚡
+                                    {% elif mod_data.modifier.modifier_type == 'early_bird' %}🐦
+                                    {% elif mod_data.modifier.modifier_type == 'corporate' %}🏢
+                                    {% else %}•{% endif %}
+                                </span>
+                                <div class="text-xs">
+                                    <span class="text-gray-700">{{ mod_data.modifier.name }}</span>
+                                    {% if mod_data.modifier.discount_percent > 0 %}
+                                    <span class="text-green-600 ml-1">-{{ mod_data.modifier.discount_percent }}%</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-3 py-1.5 text-center relative tooltip-trigger border-r border-gray-200">
+                            {% with season_rates=mod_data.seasons|get_item:season.id %}
+                            {% if season_rates %}
+                            <div class="text-sm font-medium text-gray-900">${{ season_rates.rate|floatformat:2|intcomma }}</div>
+                            {% if channel.commission_percent > 0 %}
+                            <div class="text-xs text-gray-500">Net: ${{ season_rates.breakdown.net_revenue|floatformat:2|intcomma }}</div>
+                            {% endif %}
+                            
+                            <!-- Tooltip -->
+                            <div class="tooltip absolute z-20 w-56 bg-gray-900 text-white text-xs rounded-lg shadow-lg p-3 left-1/2 transform -translate-x-1/2 top-full mt-1">
+                                <div class="font-semibold mb-1">{{ mod_data.modifier.name }}</div>
+                                <div class="text-xs text-gray-400 mb-2">{{ room.name }} • {{ rate_plan.name }}</div>
+                                <div class="space-y-0.5">
+                                    <div class="flex justify-between"><span>Base:</span><span>${{ season_rates.breakdown.base_rate|floatformat:2 }}</span></div>
+                                    <div class="flex justify-between"><span>× Season:</span><span>${{ season_rates.breakdown.seasonal_rate|floatformat:2 }}</span></div>
+                                    {% if season_rates.breakdown.meal_cost > 0 %}
+                                    <div class="flex justify-between"><span>+ Meals:</span><span>${{ season_rates.breakdown.meal_cost|floatformat:2 }}</span></div>
+                                    {% endif %}
+                                    <div class="flex justify-between border-t border-gray-700 pt-1 font-semibold"><span>BAR:</span><span>${{ season_rates.breakdown.bar_rate|floatformat:2 }}</span></div>
+                                    {% if season_rates.breakdown.total_discount_percent > 0 %}
+                                    <div class="flex justify-between"><span>- Discount:</span><span>-{{ season_rates.breakdown.total_discount_percent }}%</span></div>
+                                    {% endif %}
+                                    <div class="flex justify-between border-t border-gray-700 pt-1 font-bold text-green-300"><span>Guest Pays:</span><span>${{ season_rates.breakdown.final_rate|floatformat:2 }}</span></div>
+                                    {% if channel.commission_percent > 0 %}
+                                    <div class="flex justify-between pt-1 border-t border-gray-700"><span>- Commission:</span><span class="text-red-300">-${{ season_rates.breakdown.commission_amount|floatformat:2 }}</span></div>
+                                    <div class="flex justify-between font-bold text-blue-300"><span>You Receive:</span><span>${{ season_rates.breakdown.net_revenue|floatformat:2 }}</span></div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% else %}
+                            <span class="text-gray-400">—</span>
+                            {% endif %}
+                            {% endwith %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                    
+                    {% endwith %}
+                    {% endfor %}
+                    
+                    {% endwith %}
+                    {% endfor %}
+                    
+                    {% endwith %}
                     {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
-    {% endfor %}
 
     <!-- Legend -->
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
         <h3 class="text-sm font-semibold text-gray-900 mb-2">Legend</h3>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-            <div>
-                <span class="font-semibold">BAR:</span> Best Available Rate
-            </div>
-            <div>
-                <span class="font-semibold">Guest Pays:</span> Final rate with discounts
-            </div>
-            <div>
-                <span class="font-semibold">Net:</span> Your revenue after commission
-            </div>
-            <div>
-                <span class="font-semibold">Hover:</span> See full breakdown
-            </div>
+            <div><span class="font-semibold">B&B Std:</span> Bed & Breakfast Standard rate</div>
+            <div><span class="font-semibold">BAR:</span> Best Available Rate</div>
+            <div><span class="font-semibold">Net:</span> Your revenue after commission</div>
+            <div><span class="font-semibold">Hover:</span> See full breakdown</div>
         </div>
     </div>
 
     <!-- Room Edit Modal -->
     <div id="roomModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50">
         <div class="relative top-5 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-lg bg-white">
-            <!-- Modal Header -->
             <div class="flex items-center justify-between pb-3 border-b">
                 <h3 class="text-xl font-semibold text-gray-900">Edit Room</h3>
                 <button onclick="closeRoomModal()" class="text-gray-400 hover:text-gray-600 transition">
@@ -279,96 +278,45 @@
                     </svg>
                 </button>
             </div>
-            
-            <!-- Modal Body -->
             <form id="roomForm" class="mt-4">
                 <input type="hidden" id="room_id" name="room_id">
-                
                 <div class="space-y-4">
-                    <!-- Room Name -->
                     <div>
-                        <label for="room_name" class="block text-sm font-medium text-gray-700 mb-1">
-                            Room Name *
-                        </label>
-                        <input type="text" id="room_name" name="name" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <label for="room_name" class="block text-sm font-medium text-gray-700 mb-1">Room Name *</label>
+                        <input type="text" id="room_name" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                    
-                    <!-- Pricing Method -->
                     <div>
-                        <label for="pricing_method" class="block text-sm font-medium text-gray-700 mb-1">
-                            Pricing Method *
-                        </label>
-                        <select id="pricing_method" name="pricing_method" required
-                                onchange="updatePricingFields()"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <label for="pricing_method" class="block text-sm font-medium text-gray-700 mb-1">Pricing Method *</label>
+                        <select id="pricing_method" name="pricing_method" required onchange="updatePricingFields()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                             <option value="direct">Direct Base Rate</option>
                             <option value="index">Index Multiplier</option>
                             <option value="adjustment">Fixed Adjustment</option>
                         </select>
-                        <p class="mt-1 text-xs text-gray-500">How to calculate room rate</p>
                     </div>
-                    
-                    <!-- Base Rate -->
                     <div>
-                        <label for="base_rate" class="block text-sm font-medium text-gray-700 mb-1">
-                            Base Rate ($) *
-                        </label>
-                        <input type="number" id="base_rate" name="base_rate" step="0.01" min="0" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <p class="mt-1 text-xs text-gray-500" id="base_rate_help">Base rate in USD</p>
+                        <label for="base_rate" class="block text-sm font-medium text-gray-700 mb-1">Base Rate ($) *</label>
+                        <input type="number" id="base_rate" name="base_rate" step="0.01" min="0" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                    
-                    <!-- Room Index (for Index method) -->
                     <div id="room_index_field">
-                        <label for="room_index" class="block text-sm font-medium text-gray-700 mb-1">
-                            Room Index (Multiplier)
-                        </label>
-                        <input type="number" id="room_index" name="room_index" step="0.01" min="0" value="1.00"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <p class="mt-1 text-xs text-gray-500">e.g., 1.0=same, 1.5=50% more, 2.0=double</p>
+                        <label for="room_index" class="block text-sm font-medium text-gray-700 mb-1">Room Index</label>
+                        <input type="number" id="room_index" name="room_index" step="0.01" min="0" value="1.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                    
-                    <!-- Room Adjustment (for Adjustment method) -->
                     <div id="room_adjustment_field">
-                        <label for="room_adjustment" class="block text-sm font-medium text-gray-700 mb-1">
-                            Room Adjustment ($)
-                        </label>
-                        <input type="number" id="room_adjustment" name="room_adjustment" step="0.01" value="0.00"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <p class="mt-1 text-xs text-gray-500">Fixed amount to add to base rate (e.g., +$30, +$100)</p>
+                        <label for="room_adjustment" class="block text-sm font-medium text-gray-700 mb-1">Room Adjustment ($)</label>
+                        <input type="number" id="room_adjustment" name="room_adjustment" step="0.01" value="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                    
-                    <!-- Number of Rooms -->
                     <div>
-                        <label for="number_of_rooms" class="block text-sm font-medium text-gray-700 mb-1">
-                            Number of Rooms *
-                        </label>
-                        <input type="number" id="number_of_rooms" name="number_of_rooms" min="1" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <label for="number_of_rooms" class="block text-sm font-medium text-gray-700 mb-1">Number of Rooms *</label>
+                        <input type="number" id="number_of_rooms" name="number_of_rooms" min="1" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                    
-                    <!-- Sort Order -->
                     <div>
-                        <label for="sort_order" class="block text-sm font-medium text-gray-700 mb-1">
-                            Sort Order
-                        </label>
-                        <input type="number" id="sort_order" name="sort_order" min="0" value="0"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <p class="mt-1 text-xs text-gray-500">Display order (lower numbers appear first)</p>
+                        <label for="sort_order" class="block text-sm font-medium text-gray-700 mb-1">Sort Order</label>
+                        <input type="number" id="sort_order" name="sort_order" min="0" value="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
                 </div>
-                
-                <!-- Modal Footer -->
                 <div class="flex items-center justify-end space-x-3 pt-4 mt-4 border-t">
-                    <button type="button" onclick="closeRoomModal()"
-                            class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
-                        Cancel
-                    </button>
-                    <button type="submit"
-                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">
-                        Save Changes
-                    </button>
+                    <button type="button" onclick="closeRoomModal()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">Save Changes</button>
                 </div>
             </form>
         </div>
@@ -377,7 +325,6 @@
     <!-- Season Edit Modal -->
     <div id="seasonModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50">
         <div class="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-lg bg-white">
-            <!-- Modal Header -->
             <div class="flex items-center justify-between pb-3 border-b">
                 <h3 class="text-xl font-semibold text-gray-900">Edit Season</h3>
                 <button onclick="closeSeasonModal()" class="text-gray-400 hover:text-gray-600 transition">
@@ -386,76 +333,40 @@
                     </svg>
                 </button>
             </div>
-            
-            <!-- Modal Body -->
             <form id="seasonForm" class="mt-4">
                 <input type="hidden" id="season_id" name="season_id">
-                
                 <div class="space-y-4">
-                    <!-- Season Name -->
                     <div>
-                        <label for="season_name" class="block text-sm font-medium text-gray-700 mb-1">
-                            Season Name *
-                        </label>
-                        <input type="text" id="season_name" name="name" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <label for="season_name" class="block text-sm font-medium text-gray-700 mb-1">Season Name *</label>
+                        <input type="text" id="season_name" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                    
-                    <!-- Date Range -->
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label for="start_date" class="block text-sm font-medium text-gray-700 mb-1">
-                                Start Date *
-                            </label>
-                            <input type="date" id="start_date" name="start_date" required
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <label for="start_date" class="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+                            <input type="date" id="start_date" name="start_date" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                         </div>
                         <div>
-                            <label for="end_date" class="block text-sm font-medium text-gray-700 mb-1">
-                                End Date *
-                            </label>
-                            <input type="date" id="end_date" name="end_date" required
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <label for="end_date" class="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
+                            <input type="date" id="end_date" name="end_date" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                         </div>
                     </div>
-                    
-                    <!-- Season Index -->
                     <div>
-                        <label for="season_index" class="block text-sm font-medium text-gray-700 mb-1">
-                            Season Index (Multiplier) *
-                        </label>
-                        <input type="number" id="season_index" name="season_index" step="0.01" min="0" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <p class="mt-1 text-xs text-gray-500">Multiplier for base rates (e.g., 0.8 for 20% lower, 1.3 for 30% higher)</p>
+                        <label for="season_index" class="block text-sm font-medium text-gray-700 mb-1">Season Index *</label>
+                        <input type="number" id="season_index" name="season_index" step="0.01" min="0" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                    
-                    <!-- Expected Occupancy -->
                     <div>
-                        <label for="expected_occupancy" class="block text-sm font-medium text-gray-700 mb-1">
-                            Expected Occupancy (%) *
-                        </label>
-                        <input type="number" id="expected_occupancy" name="expected_occupancy" step="0.01" min="0" max="100" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <p class="mt-1 text-xs text-gray-500">Expected occupancy percentage for this season (e.g., 70.00 for 70%)</p>
+                        <label for="expected_occupancy" class="block text-sm font-medium text-gray-700 mb-1">Expected Occupancy (%) *</label>
+                        <input type="number" id="expected_occupancy" name="expected_occupancy" step="0.01" min="0" max="100" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
                 </div>
-                
-                <!-- Modal Footer -->
                 <div class="flex items-center justify-end space-x-3 pt-4 mt-4 border-t">
-                    <button type="button" onclick="closeSeasonModal()"
-                            class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
-                        Cancel
-                    </button>
-                    <button type="submit"
-                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">
-                        Save Changes
-                    </button>
+                    <button type="button" onclick="closeSeasonModal()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">Save Changes</button>
                 </div>
             </form>
         </div>
     </div>
 
-    {% endif %}
 </div>
 </div>
 {% endblock %}
@@ -466,46 +377,39 @@
     .tooltip { display: none; pointer-events: none; }
     .tooltip-trigger:hover .tooltip { display: block; }
     
-    /* Collapsible sections */
-    .room-content {
-        display: table-row;
-    }
-    .room-content.collapsed {
-        display: none;
-    }
-    
     /* Compact table spacing */
     table th, table td {
         padding: 0.5rem 0.75rem;
-    }
-    
-    /* Hover effects */
-    tbody tr:hover {
-        background-color: rgb(239 246 255);
     }
 </style>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-// API base URL for this property
-var apiBaseUrl = "{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}".replace(/\/$/, '');
-
-// Toggle room section collapse/expand
-function toggleRoomSection(roomId) {
-    var section = document.getElementById('room-section-' + roomId);
-    var chevron = document.getElementById('chevron-' + roomId);
+// Toggle section visibility
+function toggleSection(sectionId) {
+    var sections = document.querySelectorAll('.section-' + sectionId);
+    var chevron = document.getElementById('chevron-' + sectionId);
+    var isHidden = sections.length > 0 && sections[0].classList.contains('hidden');
     
-    if (section.classList.contains('collapsed')) {
-        section.classList.remove('collapsed');
-        chevron.style.transform = 'rotate(0deg)';
-    } else {
-        section.classList.add('collapsed');
-        chevron.style.transform = 'rotate(-90deg)';
+    sections.forEach(function(section) {
+        if (isHidden) {
+            section.classList.remove('hidden');
+        } else {
+            section.classList.add('hidden');
+        }
+    });
+    
+    if (chevron) {
+        if (isHidden) {
+            chevron.style.transform = 'rotate(0deg)';
+        } else {
+            chevron.style.transform = 'rotate(-90deg)';
+        }
     }
 }
 
-// Open room modal
+// Room modal functions
 function openRoomModal(roomId, name, baseRate, roomIndex, roomAdjustment, pricingMethod, numberOfRooms, sortOrder) {
     document.getElementById('room_id').value = roomId;
     document.getElementById('room_name').value = name;
@@ -515,18 +419,16 @@ function openRoomModal(roomId, name, baseRate, roomIndex, roomAdjustment, pricin
     document.getElementById('pricing_method').value = pricingMethod;
     document.getElementById('number_of_rooms').value = numberOfRooms;
     document.getElementById('sort_order').value = sortOrder;
-    
     updatePricingFields();
     document.getElementById('roomModal').classList.remove('hidden');
 }
 
-// Close room modal
 function closeRoomModal() {
     document.getElementById('roomModal').classList.add('hidden');
     document.getElementById('roomForm').reset();
 }
 
-// Open season modal
+// Season modal functions
 function openSeasonModal(seasonId, name, startDate, endDate, seasonIndex, expectedOccupancy) {
     document.getElementById('season_id').value = seasonId;
     document.getElementById('season_name').value = name;
@@ -534,51 +436,42 @@ function openSeasonModal(seasonId, name, startDate, endDate, seasonIndex, expect
     document.getElementById('end_date').value = endDate;
     document.getElementById('season_index').value = seasonIndex;
     document.getElementById('expected_occupancy').value = expectedOccupancy;
-    
     document.getElementById('seasonModal').classList.remove('hidden');
 }
 
-// Close season modal
 function closeSeasonModal() {
     document.getElementById('seasonModal').classList.add('hidden');
     document.getElementById('seasonForm').reset();
 }
 
-// Update pricing fields based on selected method
+// Update pricing fields visibility
 function updatePricingFields() {
     var method = document.getElementById('pricing_method').value;
     var indexField = document.getElementById('room_index_field');
     var adjustmentField = document.getElementById('room_adjustment_field');
-    var baseRateHelp = document.getElementById('base_rate_help');
     
     if (method === 'direct') {
         indexField.classList.add('hidden');
         adjustmentField.classList.add('hidden');
-        baseRateHelp.textContent = 'Used directly as room rate';
     } else if (method === 'index') {
         indexField.classList.remove('hidden');
         adjustmentField.classList.add('hidden');
-        baseRateHelp.textContent = 'Reference rate multiplied by room index';
     } else if (method === 'adjustment') {
         indexField.classList.add('hidden');
         adjustmentField.classList.remove('hidden');
-        baseRateHelp.textContent = 'Reference rate plus room adjustment';
     }
 }
 
-// Handle room form submission
+// Form submissions
 document.getElementById('roomForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     var formData = new FormData(this);
     var roomId = formData.get('room_id');
     var url = "{% url 'pricing:update_room' org_code=org.code prop_code=prop.code room_id=0 %}".replace('/0/', '/' + roomId + '/');
     
     fetch(url, {
         method: 'POST',
-        headers: {
-            'X-CSRFToken': getCookie('csrftoken'),
-        },
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
         body: formData
     })
     .then(function(response) { return response.json(); })
@@ -591,24 +484,19 @@ document.getElementById('roomForm').addEventListener('submit', function(e) {
         }
     })
     .catch(function(error) {
-        console.error('Error:', error);
-        alert('Error saving room. Please try again.');
+        alert('Error saving room.');
     });
 });
 
-// Handle season form submission
 document.getElementById('seasonForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     var formData = new FormData(this);
     var seasonId = formData.get('season_id');
     var url = "{% url 'pricing:update_season' org_code=org.code prop_code=prop.code season_id=0 %}".replace('/0/', '/' + seasonId + '/');
     
     fetch(url, {
         method: 'POST',
-        headers: {
-            'X-CSRFToken': getCookie('csrftoken'),
-        },
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
         body: formData
     })
     .then(function(response) { return response.json(); })
@@ -621,8 +509,7 @@ document.getElementById('seasonForm').addEventListener('submit', function(e) {
         }
     })
     .catch(function(error) {
-        console.error('Error:', error);
-        alert('Error saving season. Please try again.');
+        alert('Error saving season.');
     });
 });
 
@@ -642,58 +529,12 @@ function getCookie(name) {
     return cookieValue;
 }
 
-// Close modal when clicking outside
+// Close modals on outside click
 document.getElementById('roomModal').addEventListener('click', function(e) {
-    if (e.target === this) {
-        closeRoomModal();
-    }
+    if (e.target === this) closeRoomModal();
 });
-
 document.getElementById('seasonModal').addEventListener('click', function(e) {
-    if (e.target === this) {
-        closeSeasonModal();
-    }
-});
-
-// Calculate high/low rates per season for each room section
-document.addEventListener('DOMContentLoaded', function() {
-    var seasonRates = {}; // { "roomId-seasonId": { min, max } }
-    
-    // Collect all rates by room section and season
-    document.querySelectorAll('.room-rate').forEach(function(element) {
-        var roomId = element.dataset.room;
-        var seasonId = element.dataset.season;
-        var rate = parseFloat(element.dataset.rate);
-        var key = roomId + '-' + seasonId;
-        
-        if (!seasonRates[key]) {
-            seasonRates[key] = { min: Infinity, max: -Infinity };
-        }
-        
-        if (rate < seasonRates[key].min) seasonRates[key].min = rate;
-        if (rate > seasonRates[key].max) seasonRates[key].max = rate;
-    });
-    
-    // Update low/high displays for each season column
-    document.querySelectorAll('.room-low').forEach(function(element) {
-        var roomId = element.dataset.room;
-        var seasonId = element.dataset.season;
-        var key = roomId + '-' + seasonId;
-        
-        if (seasonRates[key] && seasonRates[key].min !== Infinity) {
-            element.textContent = seasonRates[key].min.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-        }
-    });
-    
-    document.querySelectorAll('.room-high').forEach(function(element) {
-        var roomId = element.dataset.room;
-        var seasonId = element.dataset.season;
-        var key = roomId + '-' + seasonId;
-        
-        if (seasonRates[key] && seasonRates[key].max !== -Infinity) {
-            element.textContent = seasonRates[key].max.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-        }
-    });
+    if (e.target === this) closeSeasonModal();
 });
 </script>
 {% endblock %}

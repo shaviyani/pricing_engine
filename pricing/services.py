@@ -15,6 +15,11 @@ Three-step calculation process:
 2. Seasonal Rate + (Meal Supplement × Occupancy) = Rate Plan Price
 3. Rate Plan Price × (1 - Discount%) = Final Channel Rate
 """
+
+from decimal import Decimal, ROUND_HALF_UP
+import math
+
+
 def calculate_seasonal_rate(room_base_rate, season_index):
     """
     Step 1: Apply season index to base rate.
@@ -95,71 +100,137 @@ def calculate_modifier_rate(channel_base_rate, modifier_discount_percent):
     return final_rate.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
-def calculate_final_rate(room_base_rate, season_index, meal_supplement, 
-                        discount_percent, occupancy=2):
+def ceil_to_increment(value, increment=5):
     """
-    Master calculator - combines all three steps (LEGACY - for backward compatibility).
+    Round up to nearest increment.
+    
+    Args:
+        value: Decimal or float - The value to round
+        increment: int - Round up to this increment (default 5)
+    
+    Returns:
+        Decimal - Rounded value
+    
+    Examples:
+        ceil_to_increment(142.50) -> 145
+        ceil_to_increment(96.30) -> 100
+        ceil_to_increment(100.00) -> 100
+        ceil_to_increment(88.75, 10) -> 90
+    """
+    if value is None:
+        return None
+    float_val = float(value)
+    ceiled = math.ceil(float_val / increment) * increment
+    return Decimal(str(ceiled))
+
+
+def calculate_final_rate(room_base_rate, season_index, meal_supplement, 
+                         channel_base_discount, modifier_discount=Decimal('0.00'),
+                         commission_percent=Decimal('0.00'), occupancy=2,
+                         apply_ceiling=True, ceiling_increment=5):
+    """
+    Enhanced calculator with BAR, channel base discount, rate modifier, and ceiling support.
+    
+    Full Pricing Flow:
+    1. Base Rate × Season Index = Seasonal Rate
+    2. Seasonal Rate + Meal Supplements = BAR (Best Available Rate)
+    3. BAR - Channel Base Discount = Channel Base Rate
+    4. Channel Base Rate - Modifier Discount = Final Guest Rate
+    5. Final Guest Rate - Commission = Net Revenue (what you actually get)
+    6. (Optional) Apply ceiling to round up rates to nearest increment
     
     Args:
         room_base_rate: Decimal - Base rate for the room
         season_index: Decimal - Season multiplier
         meal_supplement: Decimal - Meal cost per person
-        discount_percent: Decimal - Channel discount percentage
+        channel_base_discount: Decimal - Channel's base discount from BAR
+        modifier_discount: Decimal - Additional modifier discount (default 0)
+        commission_percent: Decimal - Commission the channel takes (default 0)
         occupancy: int - Number of people (default 2)
+        apply_ceiling: bool - Whether to round up rates (default True)
+        ceiling_increment: int - Round to nearest X dollars (default 5)
     
     Returns:
         tuple: (final_rate, breakdown_dict)
-    
-    Example:
-        rate, breakdown = calculate_final_rate(
-            Decimal('65.00'), 
-            Decimal('1.30'), 
-            Decimal('6.00'), 
-            Decimal('15.00'),
-            2
-        )
-        >>> rate = Decimal('82.03')
-        >>> breakdown = {
-                'base_rate': Decimal('65.00'),
-                'season_index': Decimal('1.30'),
-                'seasonal_rate': Decimal('84.50'),
-                'meal_supplement_per_person': Decimal('6.00'),
-                'occupancy': 2,
-                'meal_cost': Decimal('12.00'),
-                'rate_plan_price': Decimal('96.50'),
-                'discount_percent': Decimal('15.00'),
-                'discount_amount': Decimal('14.47'),
-                'final_rate': Decimal('82.03'),
-            }
     """
     # Step 1: Calculate seasonal rate
     seasonal_rate = calculate_seasonal_rate(room_base_rate, season_index)
     
-    # Step 2: Calculate rate plan price with meals
+    # Step 2: Calculate BAR (Best Available Rate)
     meal_cost = meal_supplement * occupancy
-    rate_plan_price = calculate_rate_plan_price(seasonal_rate, meal_supplement, occupancy)
+    bar_rate = calculate_rate_plan_price(seasonal_rate, meal_supplement, occupancy)
     
-    # Step 3: Apply channel discount
-    final_rate = calculate_channel_rate(rate_plan_price, discount_percent)
+    # Step 3: Apply channel base discount
+    channel_base_rate = calculate_channel_rate(bar_rate, channel_base_discount)
     
-    # Calculate discount amount
-    discount_amount = rate_plan_price - final_rate
+    # Step 4: Apply rate modifier discount
+    final_rate = calculate_modifier_rate(channel_base_rate, modifier_discount)
     
-    # Build breakdown for display/debugging
+    # Step 5: Calculate net revenue (what you actually receive)
+    commission_amount = final_rate * (commission_percent / Decimal('100.00'))
+    net_revenue = final_rate - commission_amount
+    
+    # Calculate total savings from BAR
+    total_discount = channel_base_discount + modifier_discount
+    total_savings = bar_rate - final_rate
+    
+    # Step 6: Apply ceiling to round up rates
+    if apply_ceiling:
+        bar_rate_display = ceil_to_increment(bar_rate, ceiling_increment)
+        final_rate_display = ceil_to_increment(final_rate, ceiling_increment)
+        channel_base_rate_display = ceil_to_increment(channel_base_rate, ceiling_increment)
+        net_revenue_display = ceil_to_increment(net_revenue, ceiling_increment)
+        # Recalculate commission based on ceiled final rate
+        commission_amount_display = final_rate_display * (commission_percent / Decimal('100.00'))
+        commission_amount_display = commission_amount_display.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    else:
+        bar_rate_display = bar_rate
+        final_rate_display = final_rate
+        channel_base_rate_display = channel_base_rate
+        net_revenue_display = net_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        commission_amount_display = commission_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    
+    # Build comprehensive breakdown
     breakdown = {
+        # Step 1
         'base_rate': room_base_rate,
         'season_index': season_index,
         'seasonal_rate': seasonal_rate,
+        
+        # Step 2
         'meal_supplement_per_person': meal_supplement,
         'occupancy': occupancy,
         'meal_cost': meal_cost,
-        'rate_plan_price': rate_plan_price,
-        'discount_percent': discount_percent,
-        'discount_amount': discount_amount,
-        'final_rate': final_rate,
+        'bar_rate': bar_rate_display,  # Ceiled BAR
+        'bar_rate_exact': bar_rate,    # Exact BAR for reference
+        
+        # Step 3
+        'channel_base_discount_percent': channel_base_discount,
+        'channel_base_discount_amount': bar_rate - channel_base_rate,
+        'channel_base_rate': channel_base_rate_display,  # Ceiled
+        
+        # Step 4
+        'modifier_discount_percent': modifier_discount,
+        'modifier_discount_amount': channel_base_rate - final_rate,
+        'final_rate': final_rate_display,  # Ceiled - Guest pays this
+        'final_rate_exact': final_rate,    # Exact for reference
+        
+        # Summary
+        'total_discount_percent': total_discount,
+        'total_savings': total_savings,
+        
+        # Step 5 - Revenue
+        'commission_percent': commission_percent,
+        'commission_amount': commission_amount_display,
+        'net_revenue': net_revenue_display,  # Ceiled - You receive this
+        'net_revenue_exact': net_revenue.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+        
+        # Ceiling info
+        'ceiling_applied': apply_ceiling,
+        'ceiling_increment': ceiling_increment,
     }
     
-    return final_rate, breakdown
+    return final_rate_display, breakdown
 
 
 def calculate_final_rate_with_modifier(room_base_rate, season_index, meal_supplement, 
@@ -167,6 +238,7 @@ def calculate_final_rate_with_modifier(room_base_rate, season_index, meal_supple
                                        commission_percent=Decimal('0.00'), occupancy=2):
     """
     Enhanced calculator with BAR, channel base discount, and rate modifier support.
+    (Original function without ceiling - kept for backward compatibility)
     
     Full Pricing Flow:
     1. Base Rate × Season Index = Seasonal Rate
@@ -186,20 +258,6 @@ def calculate_final_rate_with_modifier(room_base_rate, season_index, meal_supple
     
     Returns:
         tuple: (final_rate, breakdown_dict)
-    
-    Example:
-        # OTA Genius Member Rate
-        rate, breakdown = calculate_final_rate_with_modifier(
-            room_base_rate=Decimal('65.00'),
-            season_index=Decimal('1.30'),
-            meal_supplement=Decimal('6.00'),
-            channel_base_discount=Decimal('0.00'),  # OTA has no base discount
-            modifier_discount=Decimal('10.00'),     # Genius gets 10% off
-            commission_percent=Decimal('18.00'),    # OTA takes 18% commission
-            occupancy=2
-        )
-        >>> rate = Decimal('86.85')  # Guest pays this
-        >>> breakdown['net_revenue'] = Decimal('71.22')  # You receive this
     """
     # Step 1: Calculate seasonal rate
     seasonal_rate = calculate_seasonal_rate(room_base_rate, season_index)
@@ -256,24 +314,6 @@ def calculate_final_rate_with_modifier(room_base_rate, season_index, meal_supple
     }
     
     return final_rate, breakdown
-
-
-def format_currency(amount, currency_symbol='$'):
-    """
-    Format Decimal amount as currency string.
-    
-    Args:
-        amount: Decimal - Amount to format
-        currency_symbol: str - Currency symbol (default '$')
-    
-    Returns:
-        str - Formatted currency string
-    
-    Example:
-        format_currency(Decimal('82.03'))
-        >>> '$82.03'
-    """
-    return f"{currency_symbol}{amount:,.2f}"
 
 
 """
@@ -1316,8 +1356,10 @@ class ReservationImportService:
         'Res #', 'Res#', 'Res. No', 'Res No', 'Res.No',
         'Conf. No', 'Conf No', 'Confirmation', 'Confirmation No', 'ConfNo',
         'Reservation', 'Reservation No', 'Booking No', 'BookingNo',
-        # SynXis format
-        'confirmation_no',
+        # NEW: SynXis Activity Report
+        'FXRes#',
+        'TPRes#',
+        'BookingSr.No',
     ],
     
     # =========================================================================
@@ -1328,7 +1370,7 @@ class ReservationImportService:
         'Booking Date', 'Res. Date', 'Res Date', 'Booked On', 
         'Created', 'Book Date', 'Created Date',
         # SynXis format - Status Date is when booking was made/modified
-        'Status Date',
+        'BookedDate',
     ],
     
     # Booking time (for Thundi format)
@@ -3341,3 +3383,345 @@ class BookingAnalysisService:
             'net_revenue': gross_revenue - cancelled_revenue,
             'net_room_nights': gross_room_nights - cancelled_room_nights,
         }
+        
+    def get_month_detail(self, year, month):
+        """
+        Get detailed analysis for a specific arrival month.
+        
+        Args:
+            year: Arrival year
+            month: Arrival month (1-12)
+        
+        Returns:
+            Dict with summary, velocity, room_distribution, lead_time, 
+            channel_distribution, country_distribution
+        """
+        from django.db.models import Sum, Count, Avg, F
+        from django.db.models.functions import TruncMonth
+        
+        # Base queryset for this arrival month
+        base_qs = self._get_base_queryset().filter(
+            arrival_date__year=year,
+            arrival_date__month=month
+        )
+        
+        # Active bookings only for summary
+        active_qs = base_qs.filter(
+            status__in=['confirmed', 'checked_in', 'checked_out']
+        )
+        
+        # Get room types for available calculation
+        room_types = self._get_room_types()
+        total_rooms = sum(rt.number_of_rooms for rt in room_types) or 1
+        days_in_month = calendar.monthrange(year, month)[1]
+        available = total_rooms * days_in_month
+        
+        # ===================
+        # SUMMARY
+        # ===================
+        summary_stats = active_qs.aggregate(
+            revenue=Sum('total_amount'),
+            room_nights=Sum('nights'),
+            bookings=Count('id')
+        )
+        
+        revenue = float(summary_stats['revenue'] or 0)
+        room_nights = summary_stats['room_nights'] or 0
+        adr = revenue / room_nights if room_nights > 0 else 0
+        occupancy = (room_nights / available * 100) if available > 0 else 0
+        
+        summary = {
+            'revenue': revenue,
+            'room_nights': room_nights,
+            'occupancy': occupancy,
+            'adr': adr,
+            'bookings': summary_stats['bookings'] or 0,
+            'available': available,
+        }
+        
+        # ===================
+        # BOOKING VELOCITY
+        # ===================
+        velocity = self._get_velocity_for_month(base_qs, year, month)
+        
+        # ===================
+        # ROOM DISTRIBUTION
+        # ===================
+        room_distribution = self._get_room_distribution_detail(active_qs)
+        
+        # ===================
+        # LEAD TIME DISTRIBUTION
+        # ===================
+        lead_time = self._get_lead_time_distribution_detail(active_qs)
+        
+        # ===================
+        # CHANNEL DISTRIBUTION
+        # ===================
+        channel_distribution = self._get_channel_distribution_detail(active_qs)
+        
+        # ===================
+        # COUNTRY DISTRIBUTION
+        # ===================
+        country_distribution = self._get_country_distribution(active_qs)
+        
+        return {
+            'year': year,
+            'month': month,
+            'month_name': calendar.month_name[month],
+            'summary': summary,
+            'velocity': velocity,
+            'room_distribution': room_distribution,
+            'lead_time': lead_time,
+            'channel_distribution': channel_distribution,
+            'country_distribution': country_distribution,
+        }
+
+    def _get_velocity_for_month(self, base_qs, year, month):
+        """
+        Get booking velocity for a specific arrival month.
+        
+        IMPORTANT: This now calculates properly so cumulative matches final OTB:
+        - New RN: Only counts ACTIVE bookings created in that month
+        - Lost RN: Cancelled/Void/NoShow bookings created in that month
+        - Net Pickup: New - Lost
+        - Cumulative: Running total = Final Active OTB
+        """
+        from django.db.models import Sum, Count
+        from django.db.models.functions import TruncMonth
+        
+        # Active statuses
+        active_statuses = ['confirmed', 'checked_in', 'checked_out']
+        # Lost statuses (cancelled, void, no_show)
+        lost_statuses = ['cancelled', 'void', 'no_show']
+        
+        # Get ACTIVE bookings grouped by booking month
+        active_bookings = base_qs.filter(
+            booking_date__isnull=False,
+            status__in=active_statuses
+        ).annotate(
+            bm=TruncMonth('booking_date')
+        ).values('bm').annotate(
+            new_bookings=Count('id'),
+            new_nights=Sum('nights'),
+        ).order_by('bm')
+        
+        # Get LOST bookings (cancelled/void/no_show) grouped by booking month
+        lost_bookings = base_qs.filter(
+            booking_date__isnull=False,
+            status__in=lost_statuses
+        ).annotate(
+            bm=TruncMonth('booking_date')
+        ).values('bm').annotate(
+            lost_bookings=Count('id'),
+            lost_nights=Sum('nights'),
+        ).order_by('bm')
+        
+        # Build lookups
+        active_lookup = {a['bm']: a for a in active_bookings}
+        lost_lookup = {l['bm']: l for l in lost_bookings}
+        
+        # Get all booking months
+        all_months = sorted(set(
+            list(active_lookup.keys()) + list(lost_lookup.keys())
+        ))
+        
+        # Build velocity data
+        velocity = []
+        for bm in all_months:
+            active_data = active_lookup.get(bm, {})
+            lost_data = lost_lookup.get(bm, {})
+            
+            new_nights = active_data.get('new_nights', 0) or 0
+            lost_nights = lost_data.get('lost_nights', 0) or 0
+            
+            velocity.append({
+                'booking_month': bm.strftime('%b %Y') if bm else 'Unknown',
+                'new_bookings': active_data.get('new_bookings', 0) or 0,
+                'new_nights': new_nights,
+                'cancellations': lost_data.get('lost_bookings', 0) or 0,
+                'cancelled_nights': lost_nights,
+                'net_pickup': new_nights,  # Only active bookings count
+            })
+        
+        return velocity
+
+    def _get_room_distribution_detail(self, queryset):
+        """Get room night distribution by room type for month detail."""
+        from django.db.models import Sum, Count
+        
+        # Try room_type FK first
+        by_fk = queryset.filter(
+            room_type__isnull=False
+        ).values(
+            'room_type__name'
+        ).annotate(
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            bookings=Count('id')
+        ).order_by('-room_nights')
+        
+        # Then try room_type_name
+        by_name = queryset.filter(
+            room_type__isnull=True
+        ).values(
+            'room_type_name'
+        ).annotate(
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            bookings=Count('id')
+        ).order_by('-room_nights')
+        
+        distribution = []
+        seen = set()
+        
+        for row in by_fk:
+            name = row['room_type__name'] or 'Unknown'
+            if name.lower() not in seen:
+                seen.add(name.lower())
+                distribution.append({
+                    'room_type': name,
+                    'room_nights': row['room_nights'] or 0,
+                    'revenue': float(row['revenue'] or 0),
+                    'bookings': row['bookings'] or 0,
+                })
+        
+        for row in by_name:
+            name = row['room_type_name'] or 'Unknown'
+            if name and name.lower() not in seen:
+                seen.add(name.lower())
+                distribution.append({
+                    'room_type': name,
+                    'room_nights': row['room_nights'] or 0,
+                    'revenue': float(row['revenue'] or 0),
+                    'bookings': row['bookings'] or 0,
+                })
+        
+        return distribution
+
+    def _get_lead_time_distribution_detail(self, queryset):
+        """Get lead time distribution (days between booking and arrival)."""
+        from django.db.models import F
+        
+        # Get bookings with lead time calculated
+        bookings_with_lead = queryset.filter(
+            booking_date__isnull=False,
+            arrival_date__isnull=False
+        )
+        
+        # Define buckets
+        buckets = [
+            ('0-7 days', 0, 7),
+            ('8-14 days', 8, 14),
+            ('15-30 days', 15, 30),
+            ('31-60 days', 31, 60),
+            ('61-90 days', 61, 90),
+            ('90+ days', 91, 9999),
+        ]
+        
+        distribution = []
+        
+        for label, min_days, max_days in buckets:
+            bucket_data = {
+                'bookings': 0,
+                'room_nights': 0,
+                'revenue': Decimal('0.00'),
+            }
+            
+            for booking in bookings_with_lead:
+                if booking.booking_date and booking.arrival_date:
+                    days = (booking.arrival_date - booking.booking_date).days
+                    if min_days <= days <= max_days:
+                        bucket_data['bookings'] += 1
+                        bucket_data['room_nights'] += booking.nights or 0
+                        bucket_data['revenue'] += booking.total_amount or Decimal('0.00')
+            
+            avg_adr = 0
+            if bucket_data['room_nights'] > 0:
+                avg_adr = float(bucket_data['revenue']) / bucket_data['room_nights']
+            
+            distribution.append({
+                'bucket': label,
+                'bookings': bucket_data['bookings'],
+                'room_nights': bucket_data['room_nights'],
+                'revenue': float(bucket_data['revenue']),
+                'avg_adr': avg_adr,
+            })
+        
+        return distribution
+
+    def _get_channel_distribution_detail(self, queryset):
+        """Get distribution by booking channel for month detail."""
+        from django.db.models import Sum, Count
+        
+        # Try channel FK first
+        by_channel = queryset.values(
+            'channel__name'
+        ).annotate(
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            bookings=Count('id')
+        ).order_by('-room_nights')
+        
+        distribution = []
+        for row in by_channel:
+            name = row['channel__name'] or 'Direct/Unknown'
+            distribution.append({
+                'channel': name,
+                'room_nights': row['room_nights'] or 0,
+                'revenue': float(row['revenue'] or 0),
+                'bookings': row['bookings'] or 0,
+            })
+        
+        # If no channel data, try booking_source
+        if not distribution or all(d['channel'] == 'Direct/Unknown' for d in distribution):
+            by_source = queryset.values(
+                'booking_source__name'
+            ).annotate(
+                room_nights=Sum('nights'),
+                revenue=Sum('total_amount'),
+                bookings=Count('id')
+            ).order_by('-room_nights')
+            
+            distribution = []
+            for row in by_source:
+                name = row['booking_source__name'] or 'Unknown'
+                distribution.append({
+                    'channel': name,
+                    'room_nights': row['room_nights'] or 0,
+                    'revenue': float(row['revenue'] or 0),
+                    'bookings': row['bookings'] or 0,
+                })
+        
+        return distribution
+
+    def _get_country_distribution(self, queryset):
+        """Get distribution by guest country."""
+        from django.db.models import Sum, Count
+        
+        by_country = queryset.exclude(
+            guest__country__isnull=True
+        ).exclude(
+            guest__country=''
+        ).exclude(
+            guest__country='-'
+        ).values(
+            'guest__country'
+        ).annotate(
+            room_nights=Sum('nights'),
+            bookings=Count('id')
+        ).order_by('-room_nights')[:10]  # Top 10 countries
+        
+        distribution = []
+        for row in by_country:
+            country = row['guest__country'] or 'Unknown'
+            distribution.append({
+                'country': country,
+                'room_nights': row['room_nights'] or 0,
+                'bookings': row['bookings'] or 0,
+            })
+        
+        # If no guest country data, return placeholder
+        if not distribution:
+            distribution = [{'country': 'Unknown', 'room_nights': 0, 'bookings': 0}]
+        
+        return distribution

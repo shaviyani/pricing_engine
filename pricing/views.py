@@ -16,6 +16,7 @@ import json
 import logging
 from datetime import date, timedelta
 from decimal import Decimal
+from django.http import HttpResponse
 
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.generic import TemplateView, View, ListView
@@ -27,12 +28,26 @@ from django.db.models import Sum, Count, Avg, Q
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch, mm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from io import BytesIO
+from reportlab.graphics.shapes import Drawing, String
+from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from reportlab.graphics.charts.legends import Legend
+from reportlab.graphics.widgets.markers import makeMarker
+import calendar
+
 from .models import (
     Organization, Property,
     Season, RoomType, RatePlan, Channel, RateModifier, SeasonModifierOverride,
     Reservation,
 )
 from .services import (
+    BookingAnalysisService,
     calculate_final_rate,
     calculate_final_rate_with_modifier,
 )
@@ -411,7 +426,9 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
                 channel_base_discount=Decimal('0.00'),
                 modifier_discount=Decimal('0.00'),
                 commission_percent=Decimal('0.00'),
-                occupancy=2
+                occupancy=2,
+                apply_ceiling=True,
+                ceiling_increment=5
             )
             
             # Calculate rate for each channel
@@ -437,7 +454,9 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
                     channel_base_discount=channel.base_discount_percent,
                     modifier_discount=season_discount,
                     commission_percent=channel.commission_percent,
-                    occupancy=2
+                    occupancy=2,
+                    apply_ceiling=True,
+                    ceiling_increment=5
                 )
                 
                 difference = channel_rate - bar_rate
@@ -477,21 +496,26 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
 
 
 # =============================================================================
-# PRICING MATRIX - Updated with B&B Standard Summary Rate
+# PRICING MATRIX - Room-Centric Design
+# =============================================================================
+# Structure:
+#   Room Name
+#   ├── Channel 1 (B&B Standard rate)
+#   │   └── [Expand: Rate Plans & Modifiers]
+#   ├── Channel 2 (B&B Standard rate)
+#   │   └── [Expand: Rate Plans & Modifiers]
+#   └── Channel 3 (B&B Standard rate)
+#       └── [Expand: Rate Plans & Modifiers]
 # =============================================================================
 
 class PricingMatrixView(PropertyMixin, TemplateView):
     """
     Pricing matrix showing all rate combinations.
     
-    Display structure:
-    - Seasons as columns
-    - For each Channel:
-        - For each Room Type + Rate Plan:
-            - BAR row showing baseline rates
-            - Modifier rows showing discounted rates
-    
-    Summary row shows B&B Standard rate (Bed & Breakfast rate plan with Standard modifier).
+    Room-centric display structure:
+    - Room as main collapsible row
+    - Channels as sub-rows with B&B Standard rate summary
+    - Rate Plans & Modifiers as expandable detail
     """
     template_name = 'pricing/matrix.html'
     
@@ -527,8 +551,11 @@ class PricingMatrixView(PropertyMixin, TemplateView):
         else:
             selected_season = seasons.first()
         
-        # Build matrix
-        matrix, summary_rates = self._build_matrix(prop, seasons, rooms, rate_plans, channels, selected_season)
+        # Find B&B rate plan for summary display
+        bb_rate_plan = self._find_bb_rate_plan(rate_plans)
+        
+        # Build room-centric matrix
+        matrix = self._build_matrix(prop, seasons, rooms, rate_plans, channels, bb_rate_plan)
         
         context['seasons'] = seasons
         context['selected_season'] = selected_season
@@ -536,66 +563,66 @@ class PricingMatrixView(PropertyMixin, TemplateView):
         context['rate_plans'] = rate_plans
         context['channels'] = channels
         context['matrix'] = matrix
-        context['summary_rates'] = summary_rates  # NEW: B&B Standard rates for summary
+        context['bb_rate_plan'] = bb_rate_plan
         
         return context
     
-    def _build_matrix(self, prop, seasons, rooms, rate_plans, channels, selected_season):
-        """
-        Build the pricing matrix data structure.
-        
-        Structure: matrix[channel_id][room_id][rate_plan_id] = {
-            'bar_rate': Decimal,
-            'modifiers': [{
-                'modifier': RateModifier,
-                'seasons': {season_id: {'rate': Decimal, 'breakdown': dict}}
-            }]
-        }
-        
-        Also builds summary_rates[channel_id][room_id][season_id] = B&B Standard rate
-        """
-        matrix = {}
-        summary_rates = {}  # NEW: For collapsed row display
-        
-        # Find the B&B rate plan and Standard modifier for summary display
+    def _find_bb_rate_plan(self, rate_plans):
+        """Find the Bed & Breakfast rate plan."""
         bb_rate_plan = rate_plans.filter(name__icontains='bed & breakfast').first()
         if not bb_rate_plan:
             bb_rate_plan = rate_plans.filter(name__icontains='b&b').first()
         if not bb_rate_plan:
             bb_rate_plan = rate_plans.filter(name__icontains='breakfast').first()
         if not bb_rate_plan:
-            # Fallback to first rate plan
             bb_rate_plan = rate_plans.first()
+        return bb_rate_plan
+    
+    def _find_standard_modifier(self, modifiers):
+        """Find the Standard modifier (0% discount)."""
+        standard_modifier = modifiers.filter(discount_percent=0).first()
+        if not standard_modifier:
+            standard_modifier = modifiers.filter(name__icontains='standard').first()
+        if not standard_modifier:
+            standard_modifier = modifiers.first()
+        return standard_modifier
+    
+    def _build_matrix(self, prop, seasons, rooms, rate_plans, channels, bb_rate_plan):
+        """
+        Build room-centric pricing matrix.
+        """
+        matrix = {}
         
-        for channel in channels:
-            matrix[channel.id] = {}
-            summary_rates[channel.id] = {}
+        for room in rooms:
+            matrix[room.id] = {
+                'room': room,
+                'channels': {}
+            }
             
-            # Get active modifiers for this channel (RateModifier is shared)
-            modifiers = RateModifier.objects.filter(
-                channel=channel,
-                active=True
-            ).order_by('sort_order')
-            
-            # Find Standard modifier (0% discount or first one)
-            standard_modifier = modifiers.filter(discount_percent=0).first()
-            if not standard_modifier:
-                standard_modifier = modifiers.filter(name__icontains='standard').first()
-            if not standard_modifier:
-                standard_modifier = modifiers.first()
-            
-            for room in rooms:
-                matrix[channel.id][room.id] = {}
-                summary_rates[channel.id][room.id] = {}
+            for channel in channels:
+                # Get active modifiers for this channel
+                modifiers = RateModifier.objects.filter(
+                    channel=channel,
+                    active=True
+                ).order_by('sort_order')
+                
+                # Find Standard modifier for summary
+                standard_modifier = self._find_standard_modifier(modifiers)
+                
+                channel_data = {
+                    'channel': channel,
+                    'summary_rates': {},
+                    'rate_plans': {}
+                }
                 
                 for rate_plan in rate_plans:
-                    # Calculate BAR for selected season (display reference)
-                    seasonal_rate = room.get_effective_base_rate() * selected_season.season_index
-                    meal_cost = rate_plan.meal_supplement * 2
-                    bar_rate = seasonal_rate + meal_cost
+                    rate_plan_data = {
+                        'rate_plan': rate_plan,
+                        'bar_rates': {},
+                        'modifiers': []
+                    }
                     
-                    # Calculate rates for each modifier across ALL seasons
-                    modifiers_list = []
+                    # Calculate rates for each modifier across all seasons
                     for modifier in modifiers:
                         modifier_data = {
                             'modifier': modifier,
@@ -605,14 +632,17 @@ class PricingMatrixView(PropertyMixin, TemplateView):
                         for season in seasons:
                             season_discount = modifier.get_discount_for_season(season)
                             
-                            final_rate, breakdown = calculate_final_rate_with_modifier(
+                            # CHANGED: Use calculate_final_rate with ceiling
+                            final_rate, breakdown = calculate_final_rate(
                                 room_base_rate=room.get_effective_base_rate(),
                                 season_index=season.season_index,
                                 meal_supplement=rate_plan.meal_supplement,
                                 channel_base_discount=channel.base_discount_percent,
                                 modifier_discount=season_discount,
                                 commission_percent=channel.commission_percent,
-                                occupancy=2
+                                occupancy=2,
+                                apply_ceiling=True,
+                                ceiling_increment=5
                             )
                             
                             modifier_data['seasons'][season.id] = {
@@ -620,18 +650,752 @@ class PricingMatrixView(PropertyMixin, TemplateView):
                                 'breakdown': breakdown
                             }
                             
-                            # NEW: Capture B&B Standard rate for summary
+                            # Store BAR rate (from breakdown)
+                            if season.id not in rate_plan_data['bar_rates']:
+                                rate_plan_data['bar_rates'][season.id] = breakdown['bar_rate']
+                            
+                            # Capture B&B Standard rate for channel summary
                             if rate_plan == bb_rate_plan and modifier == standard_modifier:
-                                summary_rates[channel.id][room.id][season.id] = final_rate
+                                channel_data['summary_rates'][season.id] = final_rate
                         
-                        modifiers_list.append(modifier_data)
+                        rate_plan_data['modifiers'].append(modifier_data)
                     
-                    matrix[channel.id][room.id][rate_plan.id] = {
-                        'bar_rate': bar_rate,
-                        'modifiers': modifiers_list
-                    }
+                    channel_data['rate_plans'][rate_plan.id] = rate_plan_data
+                
+                matrix[room.id]['channels'][channel.id] = channel_data
         
-        return matrix, summary_rates
+        return matrix
+
+class PricingMatrixPDFView(PropertyMixin, View):
+    """
+    Export pricing matrix as PDF.
+    
+    URL: /org/{org_code}/{prop_code}/pricing/matrix/pdf/
+    """
+    
+    def get(self, request, *args, **kwargs):
+        # Get property using PropertyMixin pattern
+        prop = self.get_property()
+        org = prop.organization
+        
+        # Get property-scoped data
+        qs = self.get_property_querysets(prop)
+        seasons = list(qs['seasons'])
+        rooms = list(qs['rooms'])
+        rate_plans = list(qs['rate_plans'])
+        channels = list(qs['channels'])
+        
+        if not all([seasons, rooms, rate_plans, channels]):
+            return HttpResponse("No data available for PDF export", status=400)
+        
+        # Find B&B rate plan
+        bb_rate_plan = self._find_bb_rate_plan(rate_plans)
+        
+        # Build matrix data
+        matrix = self._build_matrix_data(seasons, rooms, rate_plans, channels, bb_rate_plan)
+        
+        # Generate PDF
+        pdf_buffer = self._generate_pdf(prop, org, seasons, rooms, channels, rate_plans, matrix, bb_rate_plan)
+        
+        # Return PDF response
+        response = HttpResponse(pdf_buffer, content_type='application/pdf')
+        filename = f"pricing_matrix_{prop.code}_{timezone.now().strftime('%Y%m%d')}.pdf"
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        
+        return response
+    
+    def get_property(self):
+        """Get property from URL kwargs."""
+        from pricing.models import Property
+        org_code = self.kwargs.get('org_code')
+        prop_code = self.kwargs.get('prop_code')
+        return Property.objects.select_related('organization').get(
+            organization__code=org_code,
+            code=prop_code,
+            is_active=True
+        )
+    
+    def get_property_querysets(self, prop):
+        """Get property-scoped querysets."""
+        from pricing.models import Season, RoomType, RatePlan, Channel
+        return {
+            'seasons': Season.objects.filter(hotel=prop).order_by('start_date'),
+            'rooms': RoomType.objects.filter(hotel=prop).order_by('sort_order', 'name'),
+            'rate_plans': RatePlan.objects.all().order_by('sort_order', 'name'),
+            'channels': Channel.objects.all().order_by('sort_order', 'name'),
+        }
+    
+    def _find_bb_rate_plan(self, rate_plans):
+        """Find the Bed & Breakfast rate plan."""
+        for rp in rate_plans:
+            if 'bed & breakfast' in rp.name.lower():
+                return rp
+            if 'b&b' in rp.name.lower():
+                return rp
+            if 'breakfast' in rp.name.lower():
+                return rp
+        return rate_plans[0] if rate_plans else None
+    
+    def _find_standard_modifier(self, modifiers):
+        """Find the Standard modifier (0% discount)."""
+        for mod in modifiers:
+            if mod.discount_percent == 0:
+                return mod
+            if 'standard' in mod.name.lower():
+                return mod
+        return modifiers[0] if modifiers else None
+    
+    def _build_matrix_data(self, seasons, rooms, rate_plans, channels, bb_rate_plan):
+        """Build matrix data structure for PDF."""
+        from pricing.models import RateModifier
+        from pricing.services import calculate_final_rate
+        
+        matrix = {}
+        
+        for room in rooms:
+            matrix[room.id] = {
+                'room': room,
+                'channels': {}
+            }
+            
+            for channel in channels:
+                modifiers = list(RateModifier.objects.filter(
+                    channel=channel,
+                    active=True
+                ).order_by('sort_order'))
+                
+                standard_modifier = self._find_standard_modifier(modifiers)
+                
+                channel_data = {
+                    'channel': channel,
+                    'summary_rates': {},
+                    'rate_plans': {}
+                }
+                
+                for rate_plan in rate_plans:
+                    rate_plan_data = {
+                        'rate_plan': rate_plan,
+                        'bar_rates': {},
+                        'modifiers': []
+                    }
+                    
+                    for modifier in modifiers:
+                        modifier_data = {
+                            'modifier': modifier,
+                            'seasons': {}
+                        }
+                        
+                        for season in seasons:
+                            season_discount = modifier.get_discount_for_season(season)
+                            
+                            # CHANGED: Use calculate_final_rate with ceiling
+                            final_rate, breakdown = calculate_final_rate(
+                                room_base_rate=room.get_effective_base_rate(),
+                                season_index=season.season_index,
+                                meal_supplement=rate_plan.meal_supplement,
+                                channel_base_discount=channel.base_discount_percent,
+                                modifier_discount=season_discount,
+                                commission_percent=channel.commission_percent,
+                                occupancy=2,
+                                apply_ceiling=True,
+                                ceiling_increment=5
+                            )
+                            
+                            modifier_data['seasons'][season.id] = {
+                                'rate': final_rate,
+                                'breakdown': breakdown
+                            }
+                            
+                            if season.id not in rate_plan_data['bar_rates']:
+                                rate_plan_data['bar_rates'][season.id] = breakdown['bar_rate']
+                            
+                            if rate_plan == bb_rate_plan and modifier == standard_modifier:
+                                channel_data['summary_rates'][season.id] = final_rate
+                        
+                        rate_plan_data['modifiers'].append(modifier_data)
+                    
+                    channel_data['rate_plans'][rate_plan.id] = rate_plan_data
+                
+                matrix[room.id]['channels'][channel.id] = channel_data
+        
+        return matrix
+    
+    def _generate_pdf(self, prop, org, seasons, rooms, channels, rate_plans, matrix, bb_rate_plan):
+        """Generate the PDF document."""
+        buffer = BytesIO()
+        
+        # Use landscape A4 for wider tables
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=landscape(A4),
+            rightMargin=15*mm,
+            leftMargin=15*mm,
+            topMargin=15*mm,
+            bottomMargin=15*mm
+        )
+        
+        # Styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            spaceAfter=6,
+            textColor=colors.HexColor('#1e3a5f')
+        )
+        subtitle_style = ParagraphStyle(
+            'CustomSubtitle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=colors.grey,
+            spaceAfter=12
+        )
+        section_style = ParagraphStyle(
+            'SectionHeader',
+            parent=styles['Heading2'],
+            fontSize=12,
+            spaceBefore=12,
+            spaceAfter=6,
+            textColor=colors.HexColor('#2563eb')
+        )
+        
+        story = []
+        
+        # Title
+        story.append(Paragraph(f"Pricing Matrix - {prop.name}", title_style))
+        story.append(Paragraph(
+            f"{org.name} | Generated: {timezone.now().strftime('%B %d, %Y at %H:%M')}",
+            subtitle_style
+        ))
+        story.append(Spacer(1, 6*mm))
+        
+        # Summary Table (B&B Standard rates by Room x Channel x Season)
+        story.append(Paragraph("Summary: B&B Standard Rates", section_style))
+        summary_table = self._build_summary_table(seasons, rooms, channels, matrix)
+        story.append(summary_table)
+        
+        # Rate Parity Charts
+        story.append(Spacer(1, 10*mm))
+        story.append(Paragraph("Rate Parity Analysis", section_style))
+        story.append(Paragraph(
+            "Visual comparison of B&B Standard rates across channels",
+            subtitle_style
+        ))
+        story.append(Spacer(1, 4*mm))
+        
+        for room in rooms:
+            chart = self._build_parity_chart(room, seasons, channels, matrix)
+            if chart:
+                story.append(chart)
+                story.append(Spacer(1, 6*mm))
+        
+        # Detailed breakdown per room
+        for room in rooms:
+            room_data = matrix.get(room.id)
+            if not room_data:
+                continue
+            
+            story.append(PageBreak())
+            story.append(Paragraph(f"{room.name} - Detailed Rates", section_style))
+            story.append(Paragraph(
+                f"Base Rate: ${room.base_rate:.2f} | Rooms: {room.number_of_rooms}",
+                subtitle_style
+            ))
+            
+            first_channel = True
+            for channel in channels:
+                channel_data = room_data['channels'].get(channel.id)
+                if not channel_data:
+                    continue
+                
+                # Page break before each new channel (except first)
+                if not first_channel:
+                    story.append(PageBreak())
+                    story.append(Paragraph(f"{room.name} - Detailed Rates (continued)", section_style))
+                first_channel = False
+                
+                story.append(Spacer(1, 4*mm))
+                channel_info = f"{channel.name}"
+                if channel.base_discount_percent > 0:
+                    channel_info += f" (-{channel.base_discount_percent}% discount)"
+                if channel.commission_percent > 0:
+                    channel_info += f" ({channel.commission_percent}% commission)"
+                
+                story.append(Paragraph(channel_info, styles['Heading3']))
+                
+                detail_table = self._build_detail_table(
+                    seasons, rate_plans, channel_data, channel
+                )
+                story.append(detail_table)
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        
+        return buffer
+    
+    def _build_parity_chart(self, room, seasons, channels, matrix):
+        """
+        Build rate parity line chart for a single room type.
+        Shows B&B Standard rates across channels for each season.
+        """
+        # Chart dimensions
+        chart_width = 700
+        chart_height = 200
+        
+        drawing = Drawing(chart_width, chart_height)
+        
+        room_data = matrix.get(room.id)
+        if not room_data:
+            return None
+        
+        # Create line chart
+        chart = HorizontalLineChart()
+        chart.x = 70
+        chart.y = 45
+        chart.width = chart_width - 140
+        chart.height = chart_height - 90
+        
+        # Build data series - one per channel
+        data = []
+        channel_names = []
+        
+        for channel in channels:
+            channel_data = room_data['channels'].get(channel.id)
+            if not channel_data:
+                continue
+            
+            channel_names.append(channel.name)
+            series = []
+            
+            for season in seasons:
+                rate = channel_data['summary_rates'].get(season.id)
+                if rate:
+                    series.append(float(rate))
+                else:
+                    series.append(0)
+            
+            data.append(series)
+        
+        if not data:
+            return None
+        
+        chart.data = data
+        
+        # Category axis (seasons)
+        chart.categoryAxis.categoryNames = [s.name for s in seasons]
+        chart.categoryAxis.labels.fontName = 'Helvetica'
+        chart.categoryAxis.labels.fontSize = 8
+        
+        # Value axis
+        chart.valueAxis.valueMin = 0
+        chart.valueAxis.labels.fontName = 'Helvetica'
+        chart.valueAxis.labels.fontSize = 8
+        chart.valueAxis.labelTextFormat = '$%.0f'
+        chart.valueAxis.gridStrokeColor = colors.HexColor('#e5e7eb')
+        chart.valueAxis.gridStrokeWidth = 0.5
+        chart.valueAxis.visibleGrid = 1
+        
+        # Line colors and styles
+        line_colors = [
+            colors.HexColor('#3b82f6'),  # Blue - OTA
+            colors.HexColor('#10b981'),  # Green - Direct
+            colors.HexColor('#f59e0b'),  # Amber - Agent
+            colors.HexColor('#8b5cf6'),  # Purple
+            colors.HexColor('#ef4444'),  # Red
+        ]
+        
+        for i in range(len(channel_names)):
+            color_idx = i % len(line_colors)
+            chart.lines[i].strokeColor = line_colors[color_idx]
+            chart.lines[i].strokeWidth = 2
+            chart.lines[i].symbol = makeMarker('Circle')
+            chart.lines[i].symbol.fillColor = line_colors[color_idx]
+            chart.lines[i].symbol.strokeColor = colors.white
+            chart.lines[i].symbol.strokeWidth = 1
+            chart.lines[i].symbol.size = 6
+        
+        drawing.add(chart)
+        
+        # Add title
+        title = String(
+            chart_width / 2, 
+            chart_height - 12,
+            f'{room.name} - B&B Standard Rate Parity',
+            fontSize=10,
+            fontName='Helvetica-Bold',
+            textAnchor='middle'
+        )
+        drawing.add(title)
+        
+        # Add legend (horizontal at bottom)
+        legend = Legend()
+        legend.x = chart.x + 80
+        legend.y = 8
+        legend.dx = 8
+        legend.dy = 8
+        legend.fontName = 'Helvetica'
+        legend.fontSize = 8
+        legend.boxAnchor = 'sw'
+        legend.columnMaximum = 1
+        legend.strokeWidth = 0
+        legend.deltax = 90
+        legend.alignment = 'right'
+        
+        legend_items = []
+        for i, channel_name in enumerate(channel_names):
+            color_idx = i % len(line_colors)
+            legend_items.append((line_colors[color_idx], channel_name))
+        
+        legend.colorNamePairs = legend_items
+        drawing.add(legend)
+        
+        return drawing
+    
+    def _build_summary_table(self, seasons, rooms, channels, matrix):
+        """Build summary table with B&B Standard rates."""
+        # Header row with season name, date range, and multiplier
+        header = ['Room / Channel']
+        for s in seasons:
+            # Format: "Peak\nJan 01 - Mar 31\n×1.30"
+            date_range = f"{s.start_date.strftime('%b %d')} - {s.end_date.strftime('%b %d')}"
+            header.append(f"{s.name}\n{date_range}\n×{s.season_index}")
+        
+        data = [header]
+        
+        for room in rooms:
+            room_data = matrix.get(room.id)
+            if not room_data:
+                continue
+            
+            # Room header row
+            room_row = [Paragraph(f"<b>{room.name}</b>", getSampleStyleSheet()['Normal'])]
+            room_row.extend([''] * len(seasons))
+            data.append(room_row)
+            
+            # Channel rows
+            for channel in channels:
+                channel_data = room_data['channels'].get(channel.id)
+                if not channel_data:
+                    continue
+                
+                row = [f"  {channel.name}"]
+                for season in seasons:
+                    rate = channel_data['summary_rates'].get(season.id)
+                    if rate:
+                        row.append(f"${rate:.2f}")
+                    else:
+                        row.append('-')
+                data.append(row)
+        
+        # Calculate column widths to fill page width
+        page_width = landscape(A4)[0]  # 842 points
+        total_margins = 30 * mm  # 15mm left + 15mm right
+        available_width = page_width - total_margins
+        
+        first_col_width = 140  # Room/Channel names
+        remaining_width = available_width - first_col_width
+        season_col_width = remaining_width / len(seasons) if seasons else 90
+        
+        col_widths = [first_col_width] + [season_col_width] * len(seasons)
+        table = Table(data, colWidths=col_widths)
+        
+        # Style
+        style = TableStyle([
+            # Header - with extra padding for multi-line content
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 8),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, 0), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('LEADING', (0, 0), (-1, 0), 10),  # Line spacing for multi-line header
+            
+            # Body
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+            ('TOPPADDING', (0, 1), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+            
+            # Grid
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ])
+        
+        # Highlight room header rows
+        row_idx = 1
+        for room in rooms:
+            style.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#e0e7ff'))
+            style.add('FONTNAME', (0, row_idx), (0, row_idx), 'Helvetica-Bold')
+            row_idx += 1 + len(channels)
+        
+        table.setStyle(style)
+        return table
+    
+    def _build_detail_table(self, seasons, rate_plans, channel_data, channel):
+        """Build detailed rate table for a room/channel combination."""
+        # Header
+        header = ['Rate Plan / Modifier'] + [s.name for s in seasons]
+        data = [header]
+        
+        for rate_plan_id, rp_data in channel_data['rate_plans'].items():
+            rate_plan = rp_data['rate_plan']
+            
+            # Rate plan header
+            rp_name = rate_plan.name
+            if rate_plan.meal_supplement > 0:
+                rp_name += f" (+${rate_plan.meal_supplement:.2f}/person)"
+            
+            rp_row = [Paragraph(f"<b>{rp_name}</b>", getSampleStyleSheet()['Normal'])]
+            rp_row.extend([''] * len(seasons))
+            data.append(rp_row)
+            
+            # BAR row
+            bar_row = ['  BAR']
+            for season in seasons:
+                bar = rp_data['bar_rates'].get(season.id)
+                if bar:
+                    bar_row.append(f"${bar:.2f}")
+                else:
+                    bar_row.append('-')
+            data.append(bar_row)
+            
+            # Modifier rows
+            for mod_data in rp_data['modifiers']:
+                modifier = mod_data['modifier']
+                mod_name = f"  {modifier.name}"
+                if modifier.discount_percent > 0:
+                    mod_name += f" (-{modifier.discount_percent}%)"
+                
+                mod_row = [mod_name]
+                for season in seasons:
+                    season_data = mod_data['seasons'].get(season.id)
+                    if season_data:
+                        rate = season_data['rate']
+                        if channel.commission_percent > 0:
+                            net = season_data['breakdown'].get('net_revenue', rate)
+                            mod_row.append(f"${rate:.2f}\n(Net: ${net:.2f})")
+                        else:
+                            mod_row.append(f"${rate:.2f}")
+                    else:
+                        mod_row.append('-')
+                data.append(mod_row)
+        
+        # Calculate column widths to fill page width
+        page_width = landscape(A4)[0]  # 842 points
+        total_margins = 30 * mm  # 15mm left + 15mm right
+        available_width = page_width - total_margins
+        
+        first_col_width = 160  # Rate Plan / Modifier names
+        remaining_width = available_width - first_col_width
+        season_col_width = remaining_width / len(seasons) if seasons else 90
+        
+        col_widths = [first_col_width] + [season_col_width] * len(seasons)
+        table = Table(data, colWidths=col_widths)
+        
+        # Style
+        style = TableStyle([
+            # Header
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#374151')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 8),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+            
+            # Body
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 7),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+            
+            # Grid
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ])
+        
+        # Find and style rate plan header rows
+        row_idx = 1
+        for rate_plan_id, rp_data in channel_data['rate_plans'].items():
+            style.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#dbeafe'))
+            num_modifiers = len(rp_data['modifiers'])
+            row_idx += 2 + num_modifiers  # header + BAR + modifiers
+        
+        table.setStyle(style)
+        return table
+    
+    
+class PricingMatrixChannelView(PropertyMixin, TemplateView):
+    """
+    Channel-centric pricing matrix.
+    
+    Structure:
+    - Channel as main collapsible row
+    - Rooms as sub-rows with B&B Standard rate
+    - Rate Plans & Modifiers as expandable detail
+    """
+    template_name = 'pricing/matrix_channel.html'
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        prop = context['property']
+        
+        # Get property-scoped data
+        qs = self.get_property_querysets(prop)
+        seasons = qs['seasons']
+        rooms = qs['rooms']
+        rate_plans = qs['rate_plans']
+        channels = qs['channels']
+        
+        # Check if we have data
+        if not all([seasons.exists(), rooms.exists(), rate_plans.exists(), channels.exists()]):
+            context['has_data'] = False
+            context['seasons'] = seasons
+            context['rooms'] = rooms
+            context['rate_plans'] = rate_plans
+            context['channels'] = channels
+            return context
+        
+        context['has_data'] = True
+        
+        # Find B&B rate plan for summary display
+        bb_rate_plan = self._find_bb_rate_plan(rate_plans)
+        
+        # Build channel-centric matrix
+        matrix = self._build_channel_matrix(prop, seasons, rooms, rate_plans, channels, bb_rate_plan)
+        
+        context['seasons'] = seasons
+        context['rooms'] = rooms
+        context['rate_plans'] = rate_plans
+        context['channels'] = channels
+        context['matrix'] = matrix
+        context['bb_rate_plan'] = bb_rate_plan
+        
+        return context
+    
+    def _find_bb_rate_plan(self, rate_plans):
+        """Find the Bed & Breakfast rate plan."""
+        bb_rate_plan = rate_plans.filter(name__icontains='bed & breakfast').first()
+        if not bb_rate_plan:
+            bb_rate_plan = rate_plans.filter(name__icontains='b&b').first()
+        if not bb_rate_plan:
+            bb_rate_plan = rate_plans.filter(name__icontains='breakfast').first()
+        if not bb_rate_plan:
+            bb_rate_plan = rate_plans.first()
+        return bb_rate_plan
+    
+    def _find_standard_modifier(self, modifiers):
+        """Find the Standard modifier (0% discount)."""
+        standard_modifier = modifiers.filter(discount_percent=0).first()
+        if not standard_modifier:
+            standard_modifier = modifiers.filter(name__icontains='standard').first()
+        if not standard_modifier:
+            standard_modifier = modifiers.first()
+        return standard_modifier
+    
+    def _build_channel_matrix(self, prop, seasons, rooms, rate_plans, channels, bb_rate_plan):
+        """
+        Build channel-centric pricing matrix.
+        
+        Structure: matrix[channel_id] = {
+            'channel': Channel object,
+            'rooms': {
+                room_id: {
+                    'room': Room object,
+                    'summary_rates': {season_id: rate},  # B&B Standard
+                    'rate_plans': {
+                        rate_plan_id: {
+                            'rate_plan': RatePlan object,
+                            'bar_rates': {season_id: rate},
+                            'modifiers': [{
+                                'modifier': RateModifier,
+                                'seasons': {season_id: {'rate', 'breakdown'}}
+                            }]
+                        }
+                    }
+                }
+            }
+        }
+        """
+        from pricing.services import calculate_final_rate
+        
+        matrix = {}
+        
+        for channel in channels:
+            # Get active modifiers for this channel
+            modifiers = RateModifier.objects.filter(
+                channel=channel,
+                active=True
+            ).order_by('sort_order')
+            
+            # Find Standard modifier for summary
+            standard_modifier = self._find_standard_modifier(modifiers)
+            
+            matrix[channel.id] = {
+                'channel': channel,
+                'rooms': {}
+            }
+            
+            for room in rooms:
+                room_data = {
+                    'room': room,
+                    'summary_rates': {},  # B&B Standard rates per season
+                    'rate_plans': {}
+                }
+                
+                for rate_plan in rate_plans:
+                    rate_plan_data = {
+                        'rate_plan': rate_plan,
+                        'bar_rates': {},
+                        'modifiers': []
+                    }
+                    
+                    # Calculate rates for each modifier across all seasons
+                    for modifier in modifiers:
+                        modifier_data = {
+                            'modifier': modifier,
+                            'seasons': {}
+                        }
+                        
+                        for season in seasons:
+                            season_discount = modifier.get_discount_for_season(season)
+                            
+                            final_rate, breakdown = calculate_final_rate(
+                                room_base_rate=room.get_effective_base_rate(),
+                                season_index=season.season_index,
+                                meal_supplement=rate_plan.meal_supplement,
+                                channel_base_discount=channel.base_discount_percent,
+                                modifier_discount=season_discount,
+                                commission_percent=channel.commission_percent,
+                                occupancy=2,
+                                apply_ceiling=True,
+                                ceiling_increment=5
+                            )
+                            
+                            modifier_data['seasons'][season.id] = {
+                                'rate': final_rate,
+                                'breakdown': breakdown
+                            }
+                            
+                            # Store BAR rate (from breakdown)
+                            if season.id not in rate_plan_data['bar_rates']:
+                                rate_plan_data['bar_rates'][season.id] = breakdown['bar_rate']
+                            
+                            # Capture B&B Standard rate for room summary
+                            if rate_plan == bb_rate_plan and modifier == standard_modifier:
+                                room_data['summary_rates'][season.id] = final_rate
+                        
+                        rate_plan_data['modifiers'].append(modifier_data)
+                    
+                    room_data['rate_plans'][rate_plan.id] = rate_plan_data
+                
+                matrix[channel.id]['rooms'][room.id] = room_data
+        
+        return matrix
 
 # =============================================================================
 # BOOKING ANALYSIS
@@ -1549,3 +2313,33 @@ def update_season(request, org_code, prop_code, season_id):
     except Exception as e:
         logger.exception("Update season error")
         return JsonResponse({'success': False, 'message': str(e)}, status=400)
+    
+    
+class MonthDetailAPIView(PropertyMixin, View):
+    """
+    API endpoint for month detail modal.
+    
+    URL: /org/{org_code}/{prop_code}/api/month-detail/
+    Params: month (1-12), year (YYYY)
+    
+    Returns JSON with:
+    - summary: revenue, room_nights, occupancy, adr
+    - velocity: booking velocity by month
+    - room_distribution: room nights by room type
+    - lead_time: lead time distribution
+    - channel_distribution: bookings by channel
+    - country_distribution: bookings by country
+    """
+    
+    def get(self, request, *args, **kwargs):
+        prop = self.get_property()
+        
+        month = int(request.GET.get('month', 1))
+        year = int(request.GET.get('year', date.today().year))
+        
+        service = BookingAnalysisService(property=prop)
+        data = service.get_month_detail(year, month)
+        
+        return JsonResponse(data)
+
+
