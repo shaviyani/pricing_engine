@@ -1332,6 +1332,38 @@ from django.db import transaction
 from django.utils import timezone
 
 
+"""
+Updated ReservationImportService - Complete Version
+====================================================
+
+Replace the existing ReservationImportService class in pricing_services.py with this.
+
+Key fixes:
+1. SynXis Activity Report header detection (skips 3 rows)
+2. Type column maps to status: New/Amend -> confirmed, Cancel -> cancelled
+3. Multi-room sequence tracking per (confirmation_no + arrival_date)
+4. Unique lookup includes arrival_date: (hotel, confirmation_no, arrival_date, room_sequence)
+5. Room type code mapping for SynXis short codes
+6. Channel mapping from CompanyName/TravelAgent
+7. Date parsing for SynXis format: '2025-06-06 2:30 PM'
+
+IMPORTANT: Also update your Reservation model Meta class:
+    unique_together = ['hotel', 'confirmation_no', 'arrival_date', 'room_sequence']
+"""
+
+from decimal import Decimal, InvalidOperation
+from datetime import datetime, date
+from pathlib import Path
+from typing import Dict, Tuple, Optional, Any
+from collections import defaultdict
+import pandas as pd
+import hashlib
+import re
+
+from django.db import transaction
+from django.utils import timezone
+
+
 class ReservationImportService:
     """
     Service for importing reservation data from Excel/CSV files.
@@ -1339,304 +1371,240 @@ class ReservationImportService:
     Supports multiple PMS formats including:
     - ABS PMS: "Res#", "Arr", "Dept", "Revenue($)"
     - Thundi/Biosphere: "Res #", "Arrival", "Dept", "Total"
+    - SynXis Activity Report: "FXRes#", "ArrivalDate/Time", "Type"
     
     Column Mapping handles various naming conventions automatically.
-    
-    Multi-Property Support:
-    - Pass hotel parameter to import_file() to assign reservations to a property
-    - If not provided, uses hotel from file_import record
     """
     
-    DEFAULT_COLUMN_MAPPING = {
     # =========================================================================
-    # CONFIRMATION NUMBER
+    # SYNXIS ACTIVITY REPORT ROOM TYPE MAPPING
     # =========================================================================
-    'confirmation_no': [
-        # ABS / Thundi formats
-        'Res #', 'Res#', 'Res. No', 'Res No', 'Res.No',
-        'Conf. No', 'Conf No', 'Confirmation', 'Confirmation No', 'ConfNo',
-        'Reservation', 'Reservation No', 'Booking No', 'BookingNo',
-        # NEW: SynXis Activity Report
-        'FXRes#',
-        'TPRes#',
-        'BookingSr.No',
-    ],
-    
-    # =========================================================================
-    # BOOKING DATE
-    # =========================================================================
-    'booking_date': [
-        # ABS / Thundi formats
-        'Booking Date', 'Res. Date', 'Res Date', 'Booked On', 
-        'Created', 'Book Date', 'Created Date',
-        # SynXis format - Status Date is when booking was made/modified
-        'BookedDate',
-    ],
-    
-    # Booking time (for Thundi format)
-    'booking_time': [
-        'Booking Time', 'Time', 'Created Time',
-    ],
-    
-    # =========================================================================
-    # ARRIVAL / DEPARTURE
-    # =========================================================================
-    'arrival_date': [
-        # Common formats
-        'Arrival', 'Arr',
-        'Check In', 'CheckIn', 'Arrival Date', 'Check-In',
-        # SynXis format
-        'arrival_date',
-    ],
-    
-    'departure_date': [
-        # Common formats
-        'Dept', 'Departure',
-        'Check Out', 'CheckOut', 'Departure Date', 'Check-Out',
-        # SynXis format
-        'departure_date',
-    ],
-    
-    # =========================================================================
-    # NIGHTS
-    # =========================================================================
-    'nights': [
-        'No Of Nights', 'Nights', 'Night', 'LOS', 'Length of Stay',
-        'NoOfNights', 'Number of Nights',
-    ],
-    
-    # =========================================================================
-    # PAX / OCCUPANCY
-    # =========================================================================
-    'pax': ['Pax', 'Guests', 'Occupancy'],
-    
-    'adults': [
-        'Adults', 'Adult', 'No of Adults',
-        # SynXis format
-        'Total Adult Occupancy',
-    ],
-    
-    'children': [
-        'Children', 'Child', 'Kids', 'No of Children',
-        # SynXis - need special handling to sum child age groups
-        'Total Child Occupancy For Age Group1',
-    ],
-    
-    # SynXis child age group columns (for summing)
-    'children_group1': ['Total Child Occupancy For Age Group1'],
-    'children_group2': ['Total Child Occupancy For Age Group2'],
-    'children_group3': ['Total Child Occupancy For Age Group3'],
-    'children_group4': ['Total Child Occupancy For Age Group4'],
-    'children_group5': ['Total Child Occupancy For Age Group5'],
-    'children_unknown': ['Total Child Occupancy For Unknown Age Group'],
-    
-    # =========================================================================
-    # ROOM
-    # =========================================================================
-    'room_no': [
-        # ABS / Thundi formats
-        'Room', 'Room No', 'Room Number', 'RoomNo', 
-        'Room Type', 'RoomType', 'Room Name',
-    ],
-    
-    # =========================================================================
-    # SOURCE / CHANNEL
-    # =========================================================================
-    'source': [
-        # ABS formats
-        'Source', 'Business Source',
-        # Thundi format
-        'Booking Source', 'channel',
-        # SynXis format - Secondary Channel has actual OTA name
-        'Secondary Channel',
-    ],
-    
-    # SynXis primary channel (SYDC, WEB) - for categorization
-    'channel_type': [
-        'Channel',
-    ],
-    
-    # SynXis sub-source details
-    'sub_source': ['Sub Source'],
-    'sub_source_code': ['Sub Source Code'],
-    
-    # OTA confirmation number
-    'ota_confirmation': [
-        'Channel Connect Confirm #',
-        'OTA Confirmation', 'OTA Conf',
-    ],
-    
-    # =========================================================================
-    # USER / AGENT
-    # =========================================================================
-    'user': ['User', 'Created By', 'Agent', 'Booked By'],
-    
-    # =========================================================================
-    # RATE PLAN
-    # =========================================================================
-    'rate_plan': [
-        # ABS / Thundi formats
-        'Rate Type', 'Rate Plan', 'RatePlan', 'Meal Plan', 'Board',
-        'Board Type', 'Package',
-        # SynXis format
-        'Rate Type Code',
-        'Rate Category Name',
-    ],
-    
-    # =========================================================================
-    # AMOUNTS / PRICING
-    # =========================================================================
-    'total_amount': [
-        # Thundi format
-        'Total', 'Grand Total', 'Total Amount',
-        # ABS formats
-        'Revenue($)', 'Balance Due($)', 'Revenue',
-        'Amount', 'Net Amount',
-        # SynXis format
-        'Cash Paid(Total)',
-    ],
-    
-    'adr': [
-        'ADR', 'Average Daily Rate', 'Daily Rate', 'Rate',
-        # SynXis format
-        'Avg Rate',
-    ],
-    
-    'deposit': [
-        'Deposit', 'Deposit Amount', 'Advance',
-        # SynXis format
-        'Pay at Property',
-    ],
-    
-    'total_charges': ['Total Charges', 'Charges', 'Extra Charges'],
-    
-    # SynXis pricing details
-    'total_adult_price': ['Total Price For Adult'],
-    'points_used': ['Points Used(Total)'],
-    'cash_refund': ['Cash Refund(Total)'],
-    
-    # =========================================================================
-    # GUEST INFO
-    # =========================================================================
-    'guest_name': [
-        'Guest Name', 'Name', 'Guest', 'Customer', 'Customer Name',
-    ],
-    
-    'country': [
-        'Country', 'Nationality', 'Guest Country',
-        # SynXis format - 2-letter country codes
-        'Guest Location',
-    ],
-    
-    'city': ['City', 'Guest City'],
-    'state': ['State', 'Province', 'Guest State'],
-    'zip_code': ['Zip Code', 'Postal Code', 'Zip', 'Postcode'],
-    'email': ['Email', 'Guest Email', 'E-mail'],
-    
-    # =========================================================================
-    # STATUS
-    # =========================================================================
-    'status': [
-        'Status', 'Booking Status', 'State', 'Res.Type',
-        'Reservation Status',
-    ],
-    
-    'reservation_type': [
-        'Reservationn Type', 'Reservation Type', 'Res Type',
-        'Booking Type',
-    ],
-    
-    # =========================================================================
-    # CANCELLATION
-    # =========================================================================
-    'cancellation_date': [
-        'Cancellation Date', 'Cancelled Date', 'Cancel Date',
-    ],
-    
-    # =========================================================================
-    # OTHER
-    # =========================================================================
-    'market_code': ['Market Code', 'Market', 'Segment'],
-    'payment_type': ['Payment Type', 'Payment Method', 'Payment'],
-    'hotel_name': ['Hotel Name', 'Property', 'Hotel'],
-    
-    # SynXis specific
-    'pms_confirmation': ['PMS Confirmation\nCode', 'PMS Confirmation Code'],
-    'rooms_count': ['Rooms'],
-    'promotion': ['Promotion'],
-    'promo_discount': ['Promo\nDiscount', 'Promo Discount'],
-    'loyalty_program': ['Loyalty Program'],
-    'loyalty_level': ['Loyalty Level Name'],
-}
-
-
-    # =============================================================================
-    # SYNXIS ROOM TYPE MAPPING
-    # =============================================================================
-    # Maps SynXis room type codes to standard room type names
-    # Update these based on your actual room configuration
-
     SYNXIS_ROOM_TYPE_MAPPING = {
-        # Deluxe variants
-        'SHDLX001': 'Deluxe Room',
-        'SHDLX002': 'Deluxe Room',
-        'SHDLX003': 'Deluxe Room',
-        'SHDLX004': 'Deluxe Room',
-        # Standard
-        'SHSTD001': 'Standard Room',
-        # Grand
-        'SHGRD001': 'Grand Room',
-        'SHGRD002': 'Grand Room',
+        'STS': 'Standard Room + Family Room',
+        'SUB': 'Standard Room + Family Room',
+        'SUS': 'Standard Room + Family Room',
+        'SBC': 'Standard Room + Family Room',
+        'DEF': 'Deluxe (Balcony / Veranda)',
+        'GDB': 'Deluxe (Balcony / Veranda)',
+        'GIS': 'Premium Deluxe Islandview with Balcony',
+        'PDS': 'Premium Deluxe Seaview with Balcony',
+        'PM': 'Premium Deluxe Seaview with Balcony',
     }
-
-
-    # =============================================================================
-    # SYNXIS RATE PLAN MAPPING
-    # =============================================================================
-    # Maps SynXis rate type codes to standard rate plan names
-    # Update these based on your actual rate plan configuration
-
-    SYNXIS_RATE_PLAN_MAPPING = {
-        # Standard OTA rates
-        'SHSTROTA001': 'Room Only',
-        'SHSTROTA002': 'Room Only',
-        # Booking.com rates
-        'SHHBBCM': 'Half Board',      # HB Booking.com
-        'SHFBBCM': 'Full Board',      # FB Booking.com
-        'SHBBWBCM': 'Bed & Breakfast', # BB Booking.com
-        # Agoda rates
-        'SHHBAGD': 'Half Board',      # HB Agoda
-        'SHFBAGD': 'Full Board',      # FB Agoda
-        # Expedia rates
-        'SHFBEXP': 'Full Board',      # FB Expedia
-        # Booking Engine rates
-        'SHSTRSBE001': 'Room Only',   # Standard BE
-        'SHFBSBE003': 'Full Board',   # FB BE
+    
+    # =========================================================================
+    # CHANNEL MAPPING (CompanyName/TravelAgent -> Channel)
+    # =========================================================================
+    CHANNEL_MAPPING = {
+        'booking.com': 'Booking.com',
+        'agoda.com': 'Agoda',
+        'agoda': 'Agoda',
+        'expedia': 'Expedia',
+        'trip.com': 'Trip.com',
+        'fit - free individual traveler': 'Direct',
+        'fit- free individual traveler': 'Direct',
+        'web bookings dir': 'Direct',
+        'house use': 'Direct',
+        'complimentary': 'Direct',
+        'owners package': 'Direct',
+        'owners fnf package': 'Direct',
+        'fam trip': 'Direct',
     }
-
-
-    # =============================================================================
-    # SYNXIS CHANNEL MAPPING
-    # =============================================================================
-    # Maps SynXis secondary channel values to your channel names
-
-    SYNXIS_CHANNEL_MAPPING = {
-        # OTAs
-        'Booking.com': 'OTA',
-        'Agoda.com': 'OTA',
-        'Expedia': 'OTA',
-        'Expedia Affiliate Network': 'OTA',
-        # Direct
-        'Booking Engine': 'Direct',
-        'Mobile': 'Direct',
-        'Web': 'Direct',
-    }
+    
+    DEFAULT_COLUMN_MAPPING = {
+        # =========================================================================
+        # CONFIRMATION NUMBER
+        # =========================================================================
+        'confirmation_no': [
+            # SynXis Activity Report
+            'FXRes#', 'TPRes#', 'BookingSr.No',
+            # Standard PMS formats
+            'Res #', 'Res#', 'Res. No', 'Res No', 'Res.No',
+            'Conf. No', 'Conf No', 'Confirmation', 'Confirmation No', 'ConfNo',
+            'Reservation', 'Reservation No', 'Booking No', 'BookingNo',
+        ],
         
+        # =========================================================================
+        # DATES
+        # =========================================================================
+        'booking_date': [
+            # SynXis Activity Report
+            'BookedDate',
+            # Standard formats
+            'Booking Date', 'Res. Date', 'Res Date', 'Booked On', 
+            'Created', 'Book Date', 'Created Date',
+        ],
+        
+        'booking_time': [
+            'Booking Time', 'Time', 'Created Time',
+        ],
+        
+        'arrival_date': [
+            # SynXis Activity Report
+            'ArrivalDate/Time',
+            # Standard formats
+            'Arrival', 'Arr', 'Check In', 'CheckIn', 'Arrival Date', 'Check-In',
+        ],
+        
+        'departure_date': [
+            # SynXis Activity Report
+            'DepartureDate/Time',
+            # Standard formats
+            'Dept', 'Departure', 'Check Out', 'CheckOut', 'Departure Date', 'Check-Out',
+        ],
+        
+        'cancellation_date': [
+            'Cancellation Date', 'Cancelled Date', 'Cancel Date',
+        ],
+        
+        # =========================================================================
+        # NIGHTS / PAX
+        # =========================================================================
+        'nights': [
+            # SynXis Activity Report
+            'Room Nights',
+            # Standard formats
+            'No Of Nights', 'Nights', 'Night', 'LOS', 'Length of Stay',
+            'NoOfNights', 'Number of Nights',
+        ],
+        
+        'pax': ['Pax', 'Guests', 'Occupancy'],
+        'adults': [
+            # SynXis Activity Report
+            'Adult',
+            # Standard formats
+            'Adults', 'No of Adults',
+        ],
+        'children': [
+            # SynXis Activity Report
+            'Child',
+            # Standard formats
+            'Children', 'Kids', 'No of Children',
+        ],
+        
+        # =========================================================================
+        # ROOM TYPE
+        # =========================================================================
+        'room_no': [
+            # SynXis Activity Report
+            'Room Type',
+            # Standard formats
+            'Room', 'Room No', 'Room Number', 'RoomNo', 'RoomType', 'Room Name',
+        ],
+        
+        # =========================================================================
+        # SOURCE / CHANNEL
+        # =========================================================================
+        'source': [
+            # SynXis Activity Report
+            'CompanyName/TravelAgent',
+            # Standard formats
+            'Source', 'Business Source', 'Channel', 'Booking Source', 'channel',
+        ],
+        
+        'user': [
+            # SynXis Activity Report
+            'User Name',
+            # Standard formats
+            'User', 'Created By', 'Agent', 'Booked By',
+        ],
+        
+        # =========================================================================
+        # RATE PLAN
+        # =========================================================================
+        'rate_plan': [
+            'Rate Type', 'Rate Plan', 'RatePlan', 'Meal Plan', 'Board',
+            'Board Type', 'Package',
+        ],
+        
+        # =========================================================================
+        # AMOUNTS
+        # =========================================================================
+        'total_amount': [
+            # SynXis Activity Report
+            'TotalRoomRate',
+            # Standard formats
+            'Total', 'Grand Total', 'Total Amount',
+            'Revenue($)', 'Balance Due($)', 'Revenue', 'Amount', 'Net Amount',
+        ],
+        
+        'adr': [
+            # SynXis Activity Report
+            'AvgRoomRate',
+            # Standard formats
+            'ADR', 'Average Daily Rate', 'Daily Rate', 'Rate',
+        ],
+        
+        'deposit': ['Deposit', 'Deposit Amount', 'Advance'],
+        
+        'total_charges': ['Total Charges', 'Charges', 'Extra Charges'],
+        
+        # =========================================================================
+        # GUEST INFO
+        # =========================================================================
+        'guest_name': [
+            # SynXis Activity Report
+            'Guest Name',
+            # Standard formats
+            'Name', 'Guest', 'Customer', 'Customer Name',
+        ],
+        
+        'country': [
+            # SynXis Activity Report
+            'Nationality',
+            # Standard formats
+            'Country', 'Guest Country',
+        ],
+        
+        'city': ['City', 'Guest City'],
+        'state': ['State', 'Province', 'Guest State'],
+        'zip_code': ['Zip Code', 'Postal Code', 'Zip', 'Postcode'],
+        'email': ['Email', 'Guest Email', 'E-mail'],
+        
+        # =========================================================================
+        # STATUS
+        # =========================================================================
+        'status': [
+            'Status', 'Booking Status', 'State', 'Res.Type', 'Reservation Status',
+        ],
+        
+        # SynXis Activity Report uses 'Type' column for action type
+        'reservation_type': [
+            # SynXis Activity Report - CRITICAL for status mapping
+            'Type',
+            # Standard formats
+            'Reservationn Type', 'Reservation Type', 'Res Type', 'Booking Type',
+        ],
+        
+        # =========================================================================
+        # OTHER
+        # =========================================================================
+        'market_code': [
+            # SynXis Activity Report
+            'Segment',
+            # Standard formats
+            'Market Code', 'Market',
+        ],
+        
+        'payment_type': ['Payment Type', 'Payment Method', 'Payment'],
+        
+        'rooms_count': [
+            # SynXis Activity Report
+            'No Of Rooms',
+            # Standard formats
+            'Rooms',
+        ],
+        
+        'hotel_name': ['Hotel Name', 'Property', 'Hotel', 'Property/Code'],
+        
+        'pms_confirmation': ['PMS Confirmation\nCode', 'PMS Confirmation Code'],
+        'promotion': ['Promotion'],
+    }
+    
     # Status mapping from import values to model choices
     STATUS_MAPPING = {
         'confirmed': [
             'confirmed', 'confirm', 'active', 'booked',
-            'confirm booking',  # Thundi format
+            'confirm booking',
         ],
         'cancelled': [
             'cancelled', 'canceled', 'cancel', 'void',
@@ -1652,14 +1620,16 @@ class ReservationImportService:
         ],
     }
     
-    def __init__(self, column_mapping: Dict = None):
+    def __init__(self, column_mapping: Dict = None, hotel=None):
         """
         Initialize import service.
         
         Args:
             column_mapping: Custom column mapping (optional)
+            hotel: Property instance to import to (optional)
         """
         self.column_mapping = column_mapping or self.DEFAULT_COLUMN_MAPPING
+        self.hotel = hotel
         self.errors = []
         self.stats = {
             'rows_total': 0,
@@ -1668,7 +1638,11 @@ class ReservationImportService:
             'rows_updated': 0,
             'rows_skipped': 0,
         }
-        self.hotel = None  # Will be set during import
+        # Track sequence numbers for multi-room bookings
+        # Key: (confirmation_no, arrival_date) -> sequence counter
+        self._sequence_tracker = defaultdict(int)
+        # Flag to indicate SynXis Activity Report format
+        self._is_synxis_activity = False
     
     def import_file(self, file_path: str, file_import=None, hotel=None) -> Dict:
         """
@@ -1677,20 +1651,22 @@ class ReservationImportService:
         Args:
             file_path: Path to Excel or CSV file
             file_import: Optional FileImport record for tracking
-            hotel: Optional Property instance to assign to reservations
-                   If not provided, uses hotel from file_import
+            hotel: Property to import to (optional, overrides __init__ hotel)
         
         Returns:
             Dict with import results
         """
-        from pricing.models import FileImport
+        from pricing.models import FileImport, Property
         
         file_path = Path(file_path)
+        
+        # Use provided hotel or fall back to instance hotel
+        self.hotel = hotel or self.hotel
         
         # Create or get FileImport record
         if file_import is None:
             file_import = FileImport.objects.create(
-                hotel=hotel,
+                hotel=self.hotel,
                 filename=file_path.name,
                 status='processing',
                 started_at=timezone.now(),
@@ -1700,15 +1676,12 @@ class ReservationImportService:
             file_import.started_at = timezone.now()
             file_import.save()
         
-        # Determine which hotel to use (parameter takes precedence)
-        self.hotel = hotel or file_import.hotel
-        
         try:
             # Calculate file hash for duplicate detection
             file_import.file_hash = self._calculate_file_hash(file_path)
             file_import.save()
             
-            # Read the file
+            # Read the file (with SynXis header detection)
             df = self._read_file(file_path)
             
             if df is None or df.empty:
@@ -1728,6 +1701,20 @@ class ReservationImportService:
             # Map columns
             df = self._map_columns(df)
             
+            # Filter invalid confirmation numbers (footer rows, etc.)
+            if 'confirmation_no' in df.columns:
+                initial_count = len(df)
+                df['_conf_str'] = df['confirmation_no'].astype(str)
+                df = df[df['_conf_str'].str.match(r'^\d+$', na=False)]
+                df = df.drop(columns=['_conf_str'])
+                
+                invalid_filtered = initial_count - len(df)
+                if invalid_filtered > 0:
+                    self.errors.append({
+                        'row': 0,
+                        'message': f'Filtered out {invalid_filtered} invalid/footer rows'
+                    })
+            
             # Filter out day-use bookings (Nights == 0)
             if 'nights' in df.columns:
                 initial_count = len(df)
@@ -1740,6 +1727,11 @@ class ReservationImportService:
                         'message': f'Filtered out {day_use_filtered} day-use bookings (Nights=0)'
                     })
             
+            # Update rows_total after filtering
+            self.stats['rows_total'] = len(df)
+            file_import.rows_total = len(df)
+            file_import.save()
+            
             # Process rows
             self._process_dataframe(df, file_import)
             
@@ -1748,7 +1740,7 @@ class ReservationImportService:
             file_import.rows_created = self.stats['rows_created']
             file_import.rows_updated = self.stats['rows_updated']
             file_import.rows_skipped = self.stats['rows_skipped']
-            file_import.errors = self.errors
+            file_import.errors = self.errors[:100]  # Limit stored errors
             file_import.completed_at = timezone.now()
             
             if self.errors and any(e.get('row', 0) > 0 for e in self.errors):
@@ -1771,27 +1763,72 @@ class ReservationImportService:
             raise
     
     def _read_file(self, file_path: Path) -> Optional[pd.DataFrame]:
-        """Read Excel or CSV file into DataFrame."""
+        """
+        Read Excel or CSV file into DataFrame.
+        
+        Handles SynXis Activity Report format with 3 header rows.
+        """
         suffix = file_path.suffix.lower()
         
         try:
+            # First, check if this is a SynXis Activity Report
+            skiprows = 0
+            
+            if suffix == '.csv':
+                # Read first line to check for SynXis header
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                        first_line = f.readline()
+                    
+                    if 'Reservation Activity Report' in first_line or first_line.startswith(',,'):
+                        skiprows = 3
+                        self._is_synxis_activity = True
+                        self.errors.append({
+                            'row': 0,
+                            'message': 'Detected SynXis Activity Report format - skipped 3 header rows'
+                        })
+                except:
+                    pass
+            
+            # Read the file
             if suffix in ['.xlsx', '.xls']:
-                return pd.read_excel(file_path)
+                df = pd.read_excel(file_path, skiprows=skiprows)
             elif suffix == '.csv':
                 # Try different encodings
+                df = None
                 for encoding in ['utf-8', 'latin1', 'cp1252']:
                     try:
-                        # Use index_col=False to prevent first column being used as index
-                        return pd.read_csv(file_path, encoding=encoding, index_col=False)
+                        df = pd.read_csv(
+                            file_path, 
+                            encoding=encoding, 
+                            index_col=False,
+                            skiprows=skiprows
+                        )
+                        break
                     except UnicodeDecodeError:
                         continue
-                return pd.read_csv(file_path, encoding='utf-8', errors='replace', index_col=False)
+                
+                if df is None:
+                    df = pd.read_csv(
+                        file_path, 
+                        encoding='utf-8', 
+                        errors='replace', 
+                        index_col=False,
+                        skiprows=skiprows
+                    )
             else:
                 self.errors.append({
                     'row': 0,
                     'message': f'Unsupported file format: {suffix}'
                 })
                 return None
+            
+            # Detect SynXis format by columns
+            if df is not None and ('FXRes#' in df.columns or 'Type' in df.columns):
+                self._is_synxis_activity = True
+            
+            return df
+            
         except Exception as e:
             self.errors.append({
                 'row': 0,
@@ -1799,32 +1836,6 @@ class ReservationImportService:
             })
             return None
     
-    def _is_synxis_format(self, df: pd.DataFrame) -> bool:
-        """
-        Detect if the file is in SynXis format.
-        
-        SynXis files have distinctive columns like:
-        - 'Secondary Channel'
-        - 'Channel Connect Confirm #'
-        - 'Total Adult Occupancy'
-        - 'Rate Type Code'
-        
-        Returns:
-            True if SynXis format detected
-        """
-        synxis_indicators = [
-            'Secondary Channel',
-            'Channel Connect Confirm #',
-            'Total Adult Occupancy',
-            'Rate Type Code',
-            'Rate Category Name',
-            'Sub Source Code',
-        ]
-    
-        # Check if at least 3 SynXis-specific columns exist
-        matches = sum(1 for col in synxis_indicators if col in df.columns)
-        return matches >= 3
-        
     def _clean_excel_escapes(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Clean Excel-escaped values like ="314" to just 314.
@@ -1882,18 +1893,9 @@ class ReservationImportService:
     
     def _process_dataframe(self, df: pd.DataFrame, file_import) -> None:
         """Process each row of the DataFrame."""
-        from pricing.models import Reservation, RoomType, RatePlan, BookingSource, Guest
+        from pricing.models import Reservation, RoomType, RatePlan
         
-                # Detect format
-        is_synxis = self._is_synxis_format(df)
-
-        if is_synxis:
-            self.errors.append({
-                'row': 0,
-                'message': 'Detected SynXis format - using SynXis-specific processing'
-            })
         # Pre-fetch reference data for performance
-        # Filter by hotel if set
         if self.hotel:
             room_types = {rt.name.lower(): rt for rt in RoomType.objects.filter(hotel=self.hotel)}
         else:
@@ -1901,8 +1903,13 @@ class ReservationImportService:
         
         rate_plans = {rp.name.lower(): rp for rp in RatePlan.objects.all()}
         
+        # Reset sequence tracker for this import
+        self._sequence_tracker = defaultdict(int)
+        
         for i, (idx, row) in enumerate(df.iterrows()):
             row_num = i + 2  # Excel row number (1-indexed + header)
+            if self._is_synxis_activity:
+                row_num += 3  # Account for skipped header rows
             
             try:
                 self._process_row(row, row_num, file_import, room_types, rate_plans)
@@ -1915,11 +1922,13 @@ class ReservationImportService:
                 self.stats['rows_skipped'] += 1
     
     def _process_row(self, row: pd.Series, row_num: int, file_import,
-                 room_types: Dict, rate_plans: Dict) -> None:
+                     room_types: Dict, rate_plans: Dict) -> None:
         """Process a single row and create/update reservation."""
-        from pricing.models import Reservation, RoomType, RatePlan, BookingSource, Guest
+        from pricing.models import Reservation, BookingSource, Channel, Guest
         
-        # Extract confirmation number
+        # =====================================================================
+        # CONFIRMATION NUMBER
+        # =====================================================================
         raw_conf = str(row.get('confirmation_no', '')).strip()
         if not raw_conf or raw_conf == 'nan':
             self.stats['rows_skipped'] += 1
@@ -1927,7 +1936,9 @@ class ReservationImportService:
         
         base_conf, sequence = Reservation.parse_confirmation_no(raw_conf)
         
-        # Parse dates
+        # =====================================================================
+        # DATES - Parse early (needed for sequence tracking)
+        # =====================================================================
         booking_date = self._parse_date(row.get('booking_date'))
         arrival_date = self._parse_date(row.get('arrival_date'))
         departure_date = self._parse_date(row.get('departure_date'))
@@ -1941,69 +1952,52 @@ class ReservationImportService:
             self.stats['rows_skipped'] += 1
             return
         
-        # Calculate nights if not provided
+        # =====================================================================
+        # MULTI-ROOM SEQUENCE TRACKING
+        # =====================================================================
+        # For SynXis Activity Report (and similar), generate sequence based on
+        # occurrence within the same confirmation_no + arrival_date
+        if self._is_synxis_activity:
+            tracker_key = (base_conf, arrival_date)
+            self._sequence_tracker[tracker_key] += 1
+            sequence = self._sequence_tracker[tracker_key]
+        
+        # =====================================================================
+        # NIGHTS
+        # =====================================================================
         nights = self._parse_int(row.get('nights'))
         if not nights:
             nights = (departure_date - arrival_date).days
         
-        # Parse pax (handles "2 \ 0" and "2 / 0" formats)
+        # =====================================================================
+        # PAX
+        # =====================================================================
         adults, children = self._parse_pax(row)
         
-        # FIX: Calculate SynXis children (removed erroneous return statement)
-        if children == 0:
-            synxis_children = self._calculate_synxis_children(row)
-            if synxis_children > 0:
-                children = synxis_children
-        
-        # =======================================================================
-        # ROOM TYPE HANDLING - with SynXis support
-        # =======================================================================
+        # =====================================================================
+        # ROOM TYPE
+        # =====================================================================
         room_type_raw = str(row.get('room_no', '')).strip()
+        room_type, room_type_name = self._extract_room_type(room_type_raw, room_types)
         
-        # Check if this is a SynXis room code
-        if room_type_raw.startswith('SH') and len(room_type_raw) >= 7:
-            # SynXis format - map the code to standard name
-            room_type_name = self._map_synxis_room_type(room_type_raw)
-        else:
-            # Standard format - extract room type from room field
-            room_type_name = room_type_raw
-        
-        # FIX: Look up the RoomType object by mapped name
-        room_type = room_types.get(room_type_name.lower()) if room_type_name else None
-        
-        # If not found by exact match, try the extract method for non-SynXis
-        if room_type is None and not room_type_raw.startswith('SH'):
-            room_type, room_type_name = self._extract_room_type(room_type_raw, room_types)
-        
-        # =======================================================================
-        # RATE PLAN HANDLING - with SynXis support
-        # =======================================================================
+        # =====================================================================
+        # RATE PLAN
+        # =====================================================================
         rate_plan_raw = str(row.get('rate_plan', '')).strip()
+        rate_plan, rate_plan_name = self._map_rate_plan(rate_plan_raw, rate_plans)
         
-        # Check if this is a SynXis rate code
-        if rate_plan_raw.startswith('SH') and len(rate_plan_raw) >= 6:
-            # SynXis format - map the code to standard name
-            rate_plan_name = self._map_synxis_rate_plan(rate_plan_raw)
-        else:
-            # Standard format
-            rate_plan_name = rate_plan_raw
-        
-        # FIX: Look up the RatePlan object by mapped name
-        rate_plan = rate_plans.get(rate_plan_name.lower()) if rate_plan_name else None
-        
-        # If not found by exact match, try the map method for non-SynXis
-        if rate_plan is None and not rate_plan_raw.startswith('SH'):
-            rate_plan, rate_plan_name = self._map_rate_plan(rate_plan_raw, rate_plans)
-        
-        # =======================================================================
-        # BOOKING SOURCE HANDLING
-        # =======================================================================
+        # =====================================================================
+        # BOOKING SOURCE / CHANNEL
+        # =====================================================================
         source_str = str(row.get('source', '')).strip()
         
-        # If source is empty or "PMS", it's likely a direct booking
         if not source_str or source_str == 'nan' or source_str.upper() == 'PMS':
             source_str = 'Direct'
         
+        # Map to channel
+        channel = self._map_channel(source_str)
+        
+        # Get or create booking source
         booking_source = BookingSource.find_source(
             source_str,
             str(row.get('user', ''))
@@ -2012,12 +2006,16 @@ class ReservationImportService:
         if not booking_source:
             booking_source = BookingSource.get_or_create_unknown()
         
-        # =======================================================================
-        # GUEST HANDLING
-        # =======================================================================
+        # Update channel on booking source if we mapped one
+        if channel and booking_source and not booking_source.channel:
+            booking_source.channel = channel
+            booking_source.save(update_fields=['channel'])
+        
+        # =====================================================================
+        # GUEST
+        # =====================================================================
         guest_name = str(row.get('guest_name', '')).strip()
         country = str(row.get('country', '')).strip()
-        city = str(row.get('city', '')).strip()
         email = str(row.get('email', '')).strip()
         
         if guest_name and guest_name != 'nan':
@@ -2029,48 +2027,55 @@ class ReservationImportService:
         else:
             guest = None
         
-        # =======================================================================
+        # =====================================================================
         # AMOUNTS
-        # =======================================================================
+        # =====================================================================
         total_amount = self._parse_decimal(row.get('total_amount'))
         adr = self._parse_decimal(row.get('adr'))
-        deposit = self._parse_decimal(row.get('deposit'))
         
-        # =======================================================================
-        # STATUS
-        # =======================================================================
+        # Calculate ADR if not provided
+        if adr == Decimal('0.00') and total_amount > 0 and nights > 0:
+            adr = (total_amount / Decimal(str(nights))).quantize(Decimal('0.01'))
+        
+        # =====================================================================
+        # STATUS - CRITICAL FOR SYNXIS
+        # =====================================================================
         raw_status = str(row.get('status', 'confirmed')).strip()
         status = self._map_status(raw_status)
         
-        # If status is Active but there's a cancellation date, it might be cancelled
+        # SynXis Activity Report: Type column determines actual status
+        # Type='Cancel' -> cancelled, Type='New'/'Amend' -> confirmed
+        res_type = str(row.get('reservation_type', '')).strip().lower()
+        if res_type == 'cancel':
+            status = 'cancelled'
+        elif res_type in ['new', 'amend']:
+            status = 'confirmed'
+        
+        # Cancellation date also indicates cancelled
         if cancellation_date and status == 'confirmed':
             status = 'cancelled'
         
-        # Determine if multi-room
+        # =====================================================================
+        # CREATE OR UPDATE RESERVATION
+        # =====================================================================
         is_multi_room = sequence > 1
-        
-        # Build raw data for storage
         raw_data = {k: str(v) for k, v in row.items() if pd.notna(v)}
         
-        # =======================================================================
-        # CREATE OR UPDATE RESERVATION
-        # =======================================================================
         with transaction.atomic():
-            # Build lookup criteria
+            # IMPORTANT: Lookup includes arrival_date to differentiate
+            # same confirmation_no with different stay dates
             lookup = {
                 'confirmation_no': base_conf,
+                'arrival_date': arrival_date,
                 'room_sequence': sequence,
             }
             
-            # If hotel is set, include it in lookup for proper multi-property support
             if self.hotel:
                 lookup['hotel'] = self.hotel
             
-            # Build defaults
             defaults = {
                 'original_confirmation_no': raw_conf,
                 'booking_date': booking_date or arrival_date,
-                'arrival_date': arrival_date,
                 'departure_date': departure_date,
                 'nights': nights,
                 'adults': adults,
@@ -2080,9 +2085,10 @@ class ReservationImportService:
                 'rate_plan': rate_plan,
                 'rate_plan_name': rate_plan_name,
                 'booking_source': booking_source,
-                'channel': booking_source.channel if booking_source else None,
+                'channel': channel or (booking_source.channel if booking_source else None),
                 'guest': guest,
                 'total_amount': total_amount,
+                'adr': adr,
                 'status': status,
                 'cancellation_date': cancellation_date,
                 'is_multi_room': is_multi_room,
@@ -2090,7 +2096,6 @@ class ReservationImportService:
                 'raw_data': raw_data,
             }
             
-            # Always set hotel in defaults if we have one
             if self.hotel:
                 defaults['hotel'] = self.hotel
             
@@ -2167,6 +2172,7 @@ class ReservationImportService:
         Extracts room type from a 'Room' column.
         
         Handles:
+        - SynXis short codes: "STS", "DEF", "PDS", etc.
         - "116 Standard" -> "Standard"
         - "Room 101 - Deluxe" -> "Deluxe"
         - "Premium Seaview" -> "Premium Seaview"
@@ -2183,9 +2189,16 @@ class ReservationImportService:
         if not room_str or room_str.lower() == 'nan':
             return None, ''
         
-        # 2. Extract Name (Removing Room Numbers)
+        # 2. Check SynXis room type codes first
+        room_upper = room_str.upper()
+        if room_upper in self.SYNXIS_ROOM_TYPE_MAPPING:
+            mapped_name = self.SYNXIS_ROOM_TYPE_MAPPING[room_upper]
+            if mapped_name.lower() in room_types:
+                return room_types[mapped_name.lower()], mapped_name
+            return None, mapped_name
+        
+        # 3. Extract Name (Removing Room Numbers)
         # Handles "116 Standard" or "116 - Standard"
-        # The regex looks for leading digits and optional separators
         match = re.match(r'^\d+[\s\-\:]*(.+)$', room_str)
         if match:
             room_type_name = match.group(1).strip()
@@ -2194,7 +2207,7 @@ class ReservationImportService:
 
         room_type_lower = room_type_name.lower()
         
-        # 3. Layered Matching Logic (Waterfall)
+        # 4. Layered Matching Logic (Waterfall)
         
         # Tier 1: Exact Match
         if room_type_lower in room_types:
@@ -2206,7 +2219,6 @@ class ReservationImportService:
                 return rt_obj, room_type_name
                 
         # Tier 3: Keyword Mapping
-        # Maps common variations to a root concept
         keywords_map = {
             'standard': ['standard', 'std'],
             'deluxe': ['deluxe', 'premium', 'dlx'],
@@ -2216,7 +2228,6 @@ class ReservationImportService:
             'view': ['sea', 'seaview', 'ocean', 'beach', 'garden', 'pool', 'island']
         }
         
-        # Identify which keyword groups are present in the input string
         found_groups = {
             group for group, synonyms in keywords_map.items()
             if any(syn in room_type_lower for syn in synonyms)
@@ -2224,13 +2235,44 @@ class ReservationImportService:
         
         if found_groups:
             for rt_name, rt_obj in room_types.items():
-                # Check if this specific RoomType object matches any of the found keyword groups
                 rt_name_lower = rt_name.lower()
                 if any(any(syn in rt_name_lower for syn in keywords_map[group]) for group in found_groups):
                     return rt_obj, room_type_name
 
-        # 4. Fallback: No structured match found
+        # 5. Fallback: No structured match found
         return None, room_type_name
+    
+    def _map_channel(self, source_str: str) -> Optional[Any]:
+        """Map source string to Channel object."""
+        from pricing.models import Channel
+        
+        if not source_str or source_str == 'nan':
+            return None
+        
+        source_lower = source_str.strip().lower()
+        
+        # Check mapping
+        channel_name = None
+        for key, name in self.CHANNEL_MAPPING.items():
+            if key and key in source_lower:
+                channel_name = name
+                break
+        
+        if not channel_name:
+            # Try to determine from content
+            if 'booking.com' in source_lower:
+                channel_name = 'Booking.com'
+            elif 'agoda' in source_lower:
+                channel_name = 'Agoda'
+            elif 'expedia' in source_lower:
+                channel_name = 'Expedia'
+            elif 'trip.com' in source_lower:
+                channel_name = 'Trip.com'
+        
+        if channel_name:
+            return Channel.objects.filter(name__iexact=channel_name).first()
+        
+        return None
     
     def _map_rate_plan(self, rate_plan_str: str, rate_plans: Dict) -> Tuple[Optional[Any], str]:
         """
@@ -2289,7 +2331,7 @@ class ReservationImportService:
         return 'confirmed'  # Default
     
     def _parse_date(self, value) -> Optional[date]:
-        """Parse date from various formats including datetime with AM/PM."""
+        """Parse date from various formats including SynXis datetime with AM/PM."""
         if pd.isna(value):
             return None
         
@@ -2303,6 +2345,10 @@ class ReservationImportService:
         
         # Date formats to try - ORDER MATTERS (most specific first)
         formats = [
+            # SynXis Activity Report format (MUST BE FIRST)
+            '%Y-%m-%d %I:%M %p',       # 2025-06-06 2:30 PM
+            '%Y-%m-%d %I:%M:%S %p',    # 2025-06-06 2:30:00 PM
+            
             # DateTime formats with AM/PM
             '%d-%m-%Y %I:%M:%S %p',    # 19-01-2026 11:31:00 AM
             '%d-%m-%Y %H:%M:%S',       # 19-01-2026 11:31:00
@@ -2310,9 +2356,9 @@ class ReservationImportService:
             '%d/%m/%Y %H:%M:%S',       # 19/01/2026 11:31:00
             
             # Date-only formats
+            '%Y-%m-%d',    # 2026-01-02
             '%d-%m-%Y',    # 02-01-2026
             '%d/%m/%Y',    # 02/01/2026
-            '%Y-%m-%d',    # 2026-01-02
             '%m/%d/%Y',    # 01/02/2026
             '%Y/%m/%d',    # 2026/01/02
             '%d.%m.%Y',    # 02.01.2026
@@ -2391,14 +2437,14 @@ class ReservationImportService:
             room_sequence__gt=1
         )
         
-        # If hotel is set, also filter by hotel
         if self.hotel:
             multi_room_qs = multi_room_qs.filter(hotel=self.hotel)
         
         for res in multi_room_qs:
-            # Find the parent (sequence 1)
+            # Find the parent (sequence 1) with same confirmation AND arrival date
             parent_lookup = {
                 'confirmation_no': res.confirmation_no,
+                'arrival_date': res.arrival_date,
                 'room_sequence': 1
             }
             if self.hotel:
@@ -2415,77 +2461,6 @@ class ReservationImportService:
                 if not parent.is_multi_room:
                     parent.is_multi_room = True
                     parent.save(update_fields=['is_multi_room'])
-                    
-    def _map_synxis_room_type(self, room_code: str) -> str:
-        """
-        Map SynXis room type code to standard room name.
-        
-        Args:
-            room_code: SynXis room code (e.g., 'SHDLX001')
-        
-        Returns:
-            Standard room name or original code if not mapped
-        """
-        if not room_code:
-            return ''
-        
-        room_code = str(room_code).strip().upper()
-        return self.SYNXIS_ROOM_TYPE_MAPPING.get(room_code, room_code)
-    
-    def _map_synxis_rate_plan(self, rate_code: str) -> str:
-        """
-        Map SynXis rate type code to standard rate plan name.
-        
-        Args:
-            rate_code: SynXis rate code (e.g., 'SHHBBCM')
-        
-        Returns:
-            Standard rate plan name or original code if not mapped
-        """
-        if not rate_code:
-            return ''
-        
-        rate_code = str(rate_code).strip().upper()
-        return self.SYNXIS_RATE_PLAN_MAPPING.get(rate_code, rate_code)
-    
-    def _calculate_synxis_children(self, row: pd.Series) -> int:
-        """
-        Calculate total children from SynXis age group columns.
-        
-        SynXis splits children into age groups:
-        - Total Child Occupancy For Age Group1
-        - Total Child Occupancy For Age Group2
-        - Total Child Occupancy For Age Group3
-        - Total Child Occupancy For Age Group4
-        - Total Child Occupancy For Age Group5
-        - Total Child Occupancy For Unknown Age Group
-        
-        Returns:
-            Total children count
-        """
-        child_columns = [
-            'Total Child Occupancy For Age Group1',
-            'Total Child Occupancy For Age Group2', 
-            'Total Child Occupancy For Age Group3',
-            'Total Child Occupancy For Age Group4',
-            'Total Child Occupancy For Age Group5',
-            'Total Child Occupancy For Unknown Age Group',
-            # Also check mapped names
-            'children_group1', 'children_group2', 'children_group3',
-            'children_group4', 'children_group5', 'children_unknown',
-        ]
-        
-        total_children = 0
-        for col in child_columns:
-            if col in row.index:
-                val = row.get(col)
-                if pd.notna(val):
-                    try:
-                        total_children += int(float(val))
-                    except (ValueError, TypeError):
-                        pass
-        
-        return total_children
     
     def _build_result(self, file_import) -> Dict:
         """Build result dictionary from file import."""
@@ -2554,6 +2529,17 @@ class ReservationImportService:
                 'message': f'Missing required columns: {missing}'
             })
         
+        # Filter invalid confirmation numbers for stats
+        if 'confirmation_no' in df.columns:
+            df['_conf_str'] = df['confirmation_no'].astype(str)
+            invalid_conf = len(df[~df['_conf_str'].str.match(r'^\d+$', na=False)])
+            if invalid_conf > 0:
+                warnings.append({
+                    'message': f'{invalid_conf} rows with invalid confirmation numbers will be filtered'
+                })
+            df = df[df['_conf_str'].str.match(r'^\d+$', na=False)]
+            df = df.drop(columns=['_conf_str'])
+        
         # Check for day-use bookings
         if 'nights' in df.columns:
             day_use_count = len(df[df['nights'].fillna(0).astype(float).astype(int) == 0])
@@ -2562,8 +2548,22 @@ class ReservationImportService:
                     'message': f'{day_use_count} day-use bookings will be filtered out'
                 })
         
-        # Check for cancelled reservations
-        if 'status' in df.columns:
+        # Check for cancelled reservations (SynXis Type column)
+        if 'reservation_type' in df.columns:
+            type_counts = df['reservation_type'].value_counts()
+            if 'Cancel' in type_counts.index:
+                warnings.append({
+                    'message': f'{type_counts["Cancel"]} cancelled reservations (Type=Cancel) - will be imported with status=cancelled'
+                })
+            if 'New' in type_counts.index:
+                warnings.append({
+                    'message': f'{type_counts["New"]} new reservations (Type=New) - will be imported with status=confirmed'
+                })
+            if 'Amend' in type_counts.index:
+                warnings.append({
+                    'message': f'{type_counts["Amend"]} amended reservations (Type=Amend) - will be imported with status=confirmed'
+                })
+        elif 'status' in df.columns:
             cancelled_count = len(df[df['status'].str.lower().str.contains('cancel', na=False)])
             if cancelled_count > 0:
                 warnings.append({
@@ -2587,6 +2587,7 @@ class ReservationImportService:
             'total_rows': len(df),
             'columns_found': list(df.columns),
             'date_range': None,
+            'is_synxis_activity': self._is_synxis_activity,
         }
         
         if 'arrival_date' in df.columns:

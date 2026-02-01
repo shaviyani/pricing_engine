@@ -1125,7 +1125,7 @@ class Reservation(models.Model):
             models.Index(fields=['lead_time_days']),
             models.Index(fields=['confirmation_no', 'room_sequence']),
         ]
-        unique_together = ['hotel', 'confirmation_no', 'room_sequence']
+        unique_together = ['hotel', 'confirmation_no','arrival_date', 'room_sequence']
     
     def __str__(self):
         return f"{self.original_confirmation_no or self.confirmation_no} - {self.arrival_date}"
@@ -1683,3 +1683,299 @@ class OccupancyForecast(models.Model):
             )
         
         return " ".join(insights) if insights else "Forecast is on track."
+    
+    
+    
+class DateRateOverride(models.Model):
+    """
+    Named rate override that applies to specific dates.
+    
+    The override adjusts the BAR (Best Available Rate) before channel
+    and modifier discounts are applied.
+    
+    Priority system: When multiple overrides apply to the same date,
+    the one with the highest priority wins.
+    
+    Examples:
+        - "New Year Premium": +$50 amount, priority 90
+        - "Eid Discount": -10% percentage, priority 80
+        - "Weekend Boost": +$20 amount, priority 50
+    """
+    OVERRIDE_TYPE_CHOICES = [
+        ('amount', 'Fixed Amount ($)'),
+        ('percentage', 'Percentage (%)'),
+    ]
+    
+    hotel = models.ForeignKey(
+        'Property',
+        on_delete=models.CASCADE,
+        related_name='date_rate_overrides',
+        help_text="Property this override belongs to"
+    )
+    
+    name = models.CharField(
+        max_length=100,
+        help_text="Descriptive name (e.g., 'New Year Premium', 'Eid Discount')"
+    )
+    
+    override_type = models.CharField(
+        max_length=20,
+        choices=OVERRIDE_TYPE_CHOICES,
+        default='amount',
+        help_text="How to apply the adjustment"
+    )
+    
+    adjustment = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Adjustment value. Positive = increase, Negative = decrease. "
+                  "For amount: dollars (e.g., 50 or -20). "
+                  "For percentage: percent (e.g., 10 for +10%, -15 for -15%)"
+    )
+    
+    priority = models.PositiveIntegerField(
+        default=50,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+        help_text="Priority 1-100. Higher priority wins when multiple overrides "
+                  "apply to the same date. (e.g., 90 = high priority)"
+    )
+    
+    active = models.BooleanField(
+        default=True,
+        help_text="Whether this override is currently active"
+    )
+    
+    notes = models.TextField(
+        blank=True,
+        help_text="Internal notes about this override"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-priority', 'name']
+        verbose_name = "Date Rate Override"
+        verbose_name_plural = "Date Rate Overrides"
+    
+    def __str__(self):
+        sign = '+' if self.adjustment >= 0 else ''
+        if self.override_type == 'amount':
+            adj_str = f"{sign}${self.adjustment}"
+        else:
+            adj_str = f"{sign}{self.adjustment}%"
+        
+        status = "" if self.active else " [INACTIVE]"
+        return f"{self.name} ({adj_str}){status}"
+    
+    def get_adjustment_display(self):
+        """Display formatted adjustment."""
+        sign = '+' if self.adjustment >= 0 else ''
+        if self.override_type == 'amount':
+            return f"{sign}${self.adjustment}"
+        return f"{sign}{self.adjustment}%"
+    
+    def get_periods_display(self):
+        """Display all date periods for this override."""
+        periods = self.periods.all()
+        if not periods:
+            return "No dates set"
+        
+        displays = []
+        for period in periods:
+            if period.start_date == period.end_date:
+                displays.append(period.start_date.strftime('%b %d, %Y'))
+            else:
+                displays.append(
+                    f"{period.start_date.strftime('%b %d')} - {period.end_date.strftime('%b %d, %Y')}"
+                )
+        return ", ".join(displays)
+    
+    def applies_to_date(self, check_date):
+        """Check if this override applies to a specific date."""
+        if not self.active:
+            return False
+        
+        return self.periods.filter(
+            start_date__lte=check_date,
+            end_date__gte=check_date
+        ).exists()
+    
+    def calculate_adjusted_bar(self, base_bar):
+        """
+        Apply this override to a BAR rate.
+        
+        Args:
+            base_bar: Decimal - The original BAR before override
+            
+        Returns:
+            Decimal - Adjusted BAR
+        """
+        if self.override_type == 'amount':
+            adjusted = base_bar + self.adjustment
+        else:  # percentage
+            multiplier = Decimal('1.00') + (self.adjustment / Decimal('100.00'))
+            adjusted = base_bar * multiplier
+        
+        # Don't allow negative rates
+        if adjusted < Decimal('0.00'):
+            adjusted = Decimal('0.00')
+        
+        return adjusted.quantize(Decimal('0.01'))
+
+
+class DateRateOverridePeriod(models.Model):
+    """
+    Date period for a rate override.
+    
+    One override can have multiple periods, allowing:
+    - Single day: start_date = end_date
+    - Date range: start_date to end_date
+    - Multiple ranges: Multiple period records
+    
+    Example:
+        "Holiday Premium" override might have:
+        - Period 1: Dec 24 - Dec 26 (Christmas)
+        - Period 2: Dec 31 - Jan 2 (New Year)
+    """
+    override = models.ForeignKey(
+        DateRateOverride,
+        on_delete=models.CASCADE,
+        related_name='periods',
+        help_text="Parent override"
+    )
+    
+    start_date = models.DateField(
+        help_text="Start date (inclusive)"
+    )
+    
+    end_date = models.DateField(
+        help_text="End date (inclusive). Same as start for single day."
+    )
+    
+    class Meta:
+        ordering = ['start_date']
+        verbose_name = "Override Period"
+        verbose_name_plural = "Override Periods"
+    
+    def __str__(self):
+        if self.start_date == self.end_date:
+            return self.start_date.strftime('%b %d, %Y')
+        return f"{self.start_date.strftime('%b %d')} - {self.end_date.strftime('%b %d, %Y')}"
+    
+    def clean(self):
+        """Validate that end_date is not before start_date."""
+        from django.core.exceptions import ValidationError
+        
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            raise ValidationError({
+                'end_date': 'End date cannot be before start date.'
+            })
+    
+    def get_date_count(self):
+        """Return number of days in this period."""
+        return (self.end_date - self.start_date).days + 1
+    
+    def contains_date(self, check_date):
+        """Check if a date falls within this period."""
+        return self.start_date <= check_date <= self.end_date
+    
+    def get_all_dates(self):
+        """Generator yielding all dates in this period."""
+        current = self.start_date
+        while current <= self.end_date:
+            yield current
+            current += timedelta(days=1)
+
+
+# =============================================================================
+# HELPER FUNCTIONS (Add to model managers or as module functions)
+# =============================================================================
+
+def get_override_for_date(hotel, check_date):
+    """
+    Get the highest-priority active override for a specific date.
+    
+    Args:
+        hotel: Property instance
+        check_date: date object
+        
+    Returns:
+        DateRateOverride or None
+    """
+    # Find all active overrides that include this date
+    matching_overrides = DateRateOverride.objects.filter(
+        hotel=hotel,
+        active=True,
+        periods__start_date__lte=check_date,
+        periods__end_date__gte=check_date
+    ).distinct().order_by('-priority')
+    
+    return matching_overrides.first()
+
+
+def get_all_overrides_for_date(hotel, check_date):
+    """
+    Get all active overrides for a specific date, ordered by priority.
+    
+    Args:
+        hotel: Property instance
+        check_date: date object
+        
+    Returns:
+        QuerySet of DateRateOverride objects
+    """
+    return DateRateOverride.objects.filter(
+        hotel=hotel,
+        active=True,
+        periods__start_date__lte=check_date,
+        periods__end_date__gte=check_date
+    ).distinct().order_by('-priority')
+
+
+def get_overrides_for_date_range(hotel, start_date, end_date):
+    """
+    Get all overrides that apply to any date within a range.
+    
+    Args:
+        hotel: Property instance
+        start_date: date object
+        end_date: date object
+        
+    Returns:
+        Dict mapping dates to their highest-priority override
+    """
+    from datetime import timedelta
+    
+    result = {}
+    current = start_date
+    
+    while current <= end_date:
+        override = get_override_for_date(hotel, current)
+        if override:
+            result[current] = override
+        current += timedelta(days=1)
+    
+    return result
+
+
+def apply_override_to_bar(hotel, check_date, base_bar):
+    """
+    Apply date override to BAR if one exists.
+    
+    Args:
+        hotel: Property instance
+        check_date: date object
+        base_bar: Decimal - Original BAR
+        
+    Returns:
+        tuple: (adjusted_bar, override_or_none, was_adjusted)
+    """
+    override = get_override_for_date(hotel, check_date)
+    
+    if override:
+        adjusted_bar = override.calculate_adjusted_bar(base_bar)
+        return adjusted_bar, override, True
+    
+    return base_bar, None, False

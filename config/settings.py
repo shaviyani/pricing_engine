@@ -90,3 +90,5 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Custom settings
 CURRENCY_SYMBOL = '$'
+
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 500000
