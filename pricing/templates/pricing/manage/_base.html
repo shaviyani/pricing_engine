@@ -1,0 +1,415 @@
+{% extends "pricing/base.html" %}
+{% load humanize %}
+
+{% block title %}{% block section_title %}Management{% endblock %} - {{ hotel.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Section Navigation */
+    .section-nav { display:flex; gap:8px; margin-bottom:24px; flex-wrap:wrap; }
+    .section-btn {
+        display:flex; align-items:center; gap:8px; padding:10px 18px;
+        font-size:14px; font-weight:500; color:#6b7280; background:white;
+        border:1px solid #e5e7eb; border-radius:8px; cursor:pointer;
+        transition:all 0.15s; text-decoration:none; position:relative;
+    }
+    .section-btn:hover { border-color:#93c5fd; color:#374151; background:#f8fafc; }
+    .section-btn.active { border-color:#2563eb; color:#2563eb; background:#eff6ff; font-weight:600; }
+    .section-btn .section-icon { font-size:16px; }
+    .section-btn .hotkey {
+        position:absolute; top:-6px; right:-6px;
+        width:18px; height:18px; border-radius:4px;
+        background:#e5e7eb; color:#6b7280; font-size:10px; font-weight:700;
+        display:flex; align-items:center; justify-content:center;
+        opacity:0; transition:opacity 0.15s;
+    }
+    .section-btn:hover .hotkey, .section-btn.active .hotkey { opacity:1; }
+
+    /* Tab Navigation */
+    .tab-nav { display:flex; gap:4px; border-bottom:2px solid #e5e7eb; margin-bottom:24px; overflow-x:auto; }
+    .tab-btn {
+        padding:12px 20px; font-size:14px; font-weight:500; color:#6b7280;
+        background:transparent; border:none; cursor:pointer; white-space:nowrap;
+        position:relative; transition:color 0.2s;
+    }
+    .tab-btn:hover { color:#374151; }
+    .tab-btn.active { color:#2563eb; }
+    .tab-btn.active::after {
+        content:''; position:absolute; bottom:-2px; left:0; right:0; height:2px; background:#2563eb;
+    }
+    .tab-content { display:none; }
+    .tab-content.active { display:block; }
+
+    /* Cards */
+    .mgmt-card { background:white; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden; }
+    .mgmt-card + .mgmt-card { margin-top:24px; }
+    .mgmt-card-header {
+        padding:16px 20px; border-bottom:1px solid #e5e7eb;
+        display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    }
+    .mgmt-card-title { font-size:16px; font-weight:600; color:#111827; }
+    .mgmt-card-body { padding:0; }
+    .mgmt-card-body-padded { padding:20px; }
+
+    /* Tables */
+    .mgmt-table { width:100%; border-collapse:collapse; font-size:14px; }
+    .mgmt-table th {
+        text-align:left; padding:12px 16px; background:#f9fafb; font-weight:600;
+        color:#374151; font-size:12px; text-transform:uppercase; letter-spacing:0.05em;
+        border-bottom:1px solid #e5e7eb;
+    }
+    .mgmt-table td { padding:12px 16px; border-bottom:1px solid #f3f4f6; color:#374151; }
+    .mgmt-table tr:hover td { background:#f9fafb; }
+    .mgmt-table tr:last-child td { border-bottom:none; }
+
+    /* Editable cells */
+    .editable-input {
+        width:100%; padding:6px 8px; border:1px solid transparent; border-radius:4px;
+        font-size:14px; background:transparent; transition:all 0.15s;
+    }
+    .editable-input:hover { border-color:#d1d5db; background:white; }
+    .editable-input:focus { outline:none; border-color:#2563eb; background:white; box-shadow:0 0 0 3px rgba(37,99,235,0.1); }
+    .editable-input.saving { background:#fef3c7; }
+    .editable-input.saved { background:#d1fae5; }
+    .editable-input.error { background:#fee2e2; border-color:#ef4444; }
+
+    .input-prefix, .input-suffix { display:flex; align-items:center; }
+    .input-prefix span { color:#6b7280; padding-right:2px; }
+    .input-suffix span { color:#6b7280; padding-left:2px; }
+
+    /* Buttons */
+    .btn {
+        display:inline-flex; align-items:center; justify-content:center; gap:6px;
+        padding:8px 16px; font-size:14px; font-weight:500; border-radius:6px;
+        cursor:pointer; transition:all 0.15s; border:none; text-decoration:none;
+    }
+    .btn-primary { background:#2563eb; color:white; }
+    .btn-primary:hover { background:#1d4ed8; }
+    .btn-secondary { background:#f3f4f6; color:#374151; }
+    .btn-secondary:hover { background:#e5e7eb; }
+    .btn-danger { background:#fee2e2; color:#dc2626; }
+    .btn-danger:hover { background:#fecaca; }
+    .btn-sm { padding:4px 10px; font-size:13px; }
+
+    /* Row actions */
+    .row-actions { display:flex; gap:4px; opacity:0; transition:opacity 0.15s; }
+    tr:hover .row-actions { opacity:1; }
+    .action-btn {
+        padding:4px 8px; background:transparent; border:none; color:#6b7280;
+        cursor:pointer; border-radius:4px; transition:all 0.15s;
+    }
+    .action-btn:hover { background:#f3f4f6; color:#374151; }
+    .action-btn.danger:hover { background:#fee2e2; color:#dc2626; }
+
+    /* Badges */
+    .badge { display:inline-flex; align-items:center; padding:2px 8px; font-size:12px; font-weight:500; border-radius:9999px; }
+    .badge-blue { background:#dbeafe; color:#1e40af; }
+    .badge-green { background:#d1fae5; color:#065f46; }
+    .badge-yellow { background:#fef3c7; color:#92400e; }
+    .badge-red { background:#fee2e2; color:#991b1b; }
+    .badge-gray { background:#f3f4f6; color:#4b5563; }
+
+    /* Toggle */
+    .toggle { position:relative; width:40px; height:22px; }
+    .toggle input { opacity:0; width:0; height:0; }
+    .toggle-slider { position:absolute; cursor:pointer; inset:0; background:#d1d5db; border-radius:11px; transition:all 0.2s; }
+    .toggle-slider::before {
+        content:''; position:absolute; height:18px; width:18px; left:2px; bottom:2px;
+        background:white; border-radius:50%; transition:all 0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.2);
+    }
+    .toggle input:checked + .toggle-slider { background:#2563eb; }
+    .toggle input:checked + .toggle-slider::before { transform:translateX(18px); }
+
+    /* Empty state */
+    .empty-state { padding:48px 24px; text-align:center; color:#6b7280; }
+
+    /* Alerts */
+    .alert { padding:12px 16px; border-radius:8px; font-size:14px; margin-bottom:16px; display:flex; align-items:center; gap:12px; }
+    .alert-warning { background:#fef3c7; color:#92400e; border:1px solid #fde68a; }
+    .alert-error { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
+    .alert-info { background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe; }
+
+    /* Stat cards */
+    .stat-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:16px; margin-bottom:24px; }
+    .stat-card { background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:16px; text-align:center; }
+    .stat-value { font-size:24px; font-weight:700; color:#111827; }
+    .stat-label { font-size:12px; color:#6b7280; margin-top:4px; }
+
+    /* Prop card */
+    .prop-card { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid #f3f4f6; transition:background 0.15s; }
+    .prop-card:hover { background:#f9fafb; }
+    .prop-card:last-child { border-bottom:none; }
+
+    /* Modal */
+    .modal-overlay {
+        position:fixed; inset:0; background:rgba(0,0,0,0.5);
+        display:flex; align-items:center; justify-content:center;
+        z-index:1000; opacity:0; visibility:hidden; transition:all 0.2s; padding:20px;
+    }
+    .modal-overlay.active { opacity:1; visibility:visible; }
+    .modal {
+        background:white; border-radius:12px; width:100%; max-width:500px; max-height:90vh;
+        overflow:hidden; transform:scale(0.95); transition:transform 0.2s;
+        display:flex; flex-direction:column;
+    }
+    .modal-overlay.active .modal { transform:scale(1); }
+    .modal-header { padding:20px 24px; border-bottom:1px solid #e5e7eb; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; }
+    .modal-title { font-size:18px; font-weight:600; color:#111827; }
+    .modal-close { padding:8px; background:transparent; border:none; color:#6b7280; cursor:pointer; border-radius:6px; }
+    .modal-close:hover { background:#f3f4f6; color:#374151; }
+    .modal-body { padding:24px; overflow-y:auto; flex:1; min-height:0; }
+    .modal-footer { padding:16px 24px; border-top:1px solid #e5e7eb; display:flex; justify-content:flex-end; gap:12px; flex-shrink:0; }
+    .modal > form { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+
+    /* Form */
+    .form-group { margin-bottom:20px; }
+    .form-group:last-child { margin-bottom:0; }
+    .form-label { display:block; font-size:14px; font-weight:500; color:#374151; margin-bottom:6px; }
+    .form-input, .form-select { width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; transition:all 0.15s; }
+    .form-input:focus, .form-select:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,0.1); }
+    .form-row { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+    .form-hint { font-size:12px; color:#6b7280; margin-top:4px; }
+
+    /* Toast */
+    .toast-container { position:fixed; bottom:24px; right:24px; z-index:2000; display:flex; flex-direction:column; gap:8px; }
+    .toast { padding:12px 16px; background:#1f2937; color:white; border-radius:8px; font-size:14px; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); animation:slideIn 0.3s ease; }
+    .toast.success { background:#059669; }
+    .toast.error { background:#dc2626; }
+    @keyframes slideIn { from { transform:translateX(100%); opacity:0; } to { transform:translateX(0); opacity:1; } }
+
+    {% block section_css %}{% endblock %}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="space-y-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">{% block page_heading %}Management{% endblock %}</h1>
+            <p class="text-gray-600 mt-1">{{ hotel.name }} · {{ organization.name }}</p>
+        </div>
+        <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop_code %}" class="btn btn-secondary">← Dashboard</a>
+    </div>
+
+    <!-- Section Navigation -->
+    <div class="section-nav">
+        <a href="{% url 'pricing:manage_landing' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'landing' %}active{% endif %}">
+            <span class="section-icon">⚙</span> Overview
+            <span class="hotkey">0</span>
+        </a>
+        <a href="{% url 'pricing:manage_organization' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'organization' %}active{% endif %}">
+            <span class="section-icon">🏢</span> Organization
+            <span class="hotkey">1</span>
+        </a>
+        <a href="{% url 'pricing:manage_property' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'property' %}active{% endif %}">
+            <span class="section-icon">🏨</span> Property
+            <span class="hotkey">2</span>
+        </a>
+        <a href="{% url 'pricing:manage_pricing' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'pricing' %}active{% endif %}">
+            <span class="section-icon">💰</span> Pricing
+            <span class="hotkey">3</span>
+        </a>
+        <a href="{% url 'pricing:manage_offers' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'offers' %}active{% endif %}">
+            <span class="section-icon">🏷</span> Offers
+            <span class="hotkey">4</span>
+        </a>
+        <a href="{% url 'pricing:manage_import' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'import' %}active{% endif %}">
+            <span class="section-icon">📥</span> Import
+            <span class="hotkey">5</span>
+        </a>
+        <a href="{% url 'pricing:manage_reports' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'reports' %}active{% endif %}">
+            <span class="section-icon">📊</span> Reports
+            <span class="hotkey">6</span>
+        </a>
+    </div>
+
+    <!-- Section Content -->
+    {% block section_content %}{% endblock %}
+
+</div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div id="deleteModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" style="max-width:400px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Confirm Delete</h3>
+            <button class="modal-close" onclick="closeModal('deleteModal')">×</button>
+        </div>
+        <div class="modal-body">
+            <p>Are you sure you want to delete <strong id="deleteItemName"></strong>?</p>
+            <p class="text-sm text-gray-500 mt-2">This action cannot be undone.</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('deleteModal')">Cancel</button>
+            <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+        </div>
+    </div>
+</div>
+
+{% block section_modals %}{% endblock %}
+
+<div class="toast-container" id="toastContainer"></div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API_BASE = '/org/{{ org_code }}/{{ prop_code }}';
+var SHARED_API_BASE = '/pricing';
+var ORG_API_BASE = '/org/{{ org_code }}';
+
+// CSRF
+function getCookie(name) {
+    var v = null;
+    if (document.cookie) {
+        document.cookie.split(';').forEach(function(c) {
+            c = c.trim();
+            if (c.substring(0, name.length + 1) === (name + '='))
+                v = decodeURIComponent(c.substring(name.length + 1));
+        });
+    }
+    return v;
+}
+
+// Toast
+function showToast(msg, type) {
+    type = type || 'success';
+    var t = document.createElement('div');
+    t.className = 'toast ' + type;
+    t.textContent = msg;
+    document.getElementById('toastContainer').appendChild(t);
+    setTimeout(function() { t.remove(); }, 3000);
+}
+
+// Modals
+function openModal(id) { document.getElementById(id).classList.add('active'); document.body.style.overflow = 'hidden'; }
+function closeModal(id) {
+    document.getElementById(id).classList.remove('active');
+    document.body.style.overflow = '';
+    var f = document.getElementById(id.replace('Modal', 'Form'));
+    if (f) f.reset();
+}
+function closeModalOnOverlay(e) {
+    if (e.target.classList.contains('modal-overlay')) { e.target.classList.remove('active'); document.body.style.overflow = ''; }
+}
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var tabId = this.dataset.tab;
+        var nav = this.closest('.tab-nav');
+        var container = nav.parentElement;
+        nav.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        container.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+        this.classList.add('active');
+        var el = document.getElementById('tab-' + tabId);
+        if (el) el.classList.add('active');
+    });
+});
+
+// API URL helper
+function getApiUrl(type, action, id) {
+    var propTypes = ['season', 'room', 'season-override'];
+    var base = propTypes.indexOf(type) >= 0 ? API_BASE : SHARED_API_BASE;
+    var map = { season:'seasons', room:'room-types', rateplan:'rate-plans', channel:'channels', modifier:'modifiers', 'season-override':'season-overrides' };
+    var ep = map[type] || type + 's';
+    if (action === 'create') return base + '/api/' + ep + '/create/';
+    if (action === 'update' || action === 'delete') return base + '/api/' + ep + '/' + id + '/' + action + '/';
+    if (action === 'toggle') return base + '/api/' + ep + '/' + id + '/toggle/';
+    return base + '/api/' + ep + '/';
+}
+
+// Inline update
+function updateField(input) {
+    var type = input.dataset.type, id = input.dataset.id, field = input.dataset.field;
+    var value = input.type === 'checkbox' ? input.checked : input.value;
+    input.classList.add('saving');
+    var d = {}; d[field] = value;
+    fetch(getApiUrl(type, 'update', id), {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
+        body:JSON.stringify(d)
+    }).then(function(r){return r.json();}).then(function(data){
+        input.classList.remove('saving');
+        if(data.success){input.classList.add('saved');setTimeout(function(){input.classList.remove('saved');},1000);}
+        else{input.classList.add('error');showToast(data.error||'Failed','error');setTimeout(function(){input.classList.remove('error');},2000);}
+    }).catch(function(){input.classList.remove('saving');input.classList.add('error');showToast('Network error','error');});
+}
+
+// Property update
+function updatePropertyField(input) {
+    var field = input.dataset.field; input.classList.add('saving');
+    var d = {}; d[field] = input.value;
+    fetch(API_BASE + '/api/property/update/', {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
+        body:JSON.stringify(d)
+    }).then(function(r){return r.json();}).then(function(data){
+        input.classList.remove('saving');
+        if(data.success){input.classList.add('saved');showToast('Updated');setTimeout(function(){input.classList.remove('saved');},1000);}
+        else{input.classList.add('error');showToast(data.error||'Failed','error');}
+    }).catch(function(){input.classList.remove('saving');showToast('Network error','error');});
+}
+
+function updatePropertyToggle(field, value) {
+    var d = {}; d[field] = value;
+    fetch(API_BASE + '/api/property/update/', {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
+        body:JSON.stringify(d)
+    }).then(function(r){return r.json();}).then(function(data){
+        if(data.success) showToast('Updated'); else showToast(data.error||'Failed','error');
+    });
+}
+
+// Submit form (create)
+function submitForm(event, type) {
+    event.preventDefault();
+    var d = {};
+    new FormData(event.target).forEach(function(v,k){d[k]=v;});
+    fetch(getApiUrl(type,'create'), {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
+        body:JSON.stringify(d)
+    }).then(function(r){return r.json();}).then(function(data){
+        if(data.success){showToast(data.message||'Created');closeModal(type+'Modal');setTimeout(function(){location.reload();},500);}
+        else showToast(data.error||'Failed','error');
+    }).catch(function(){showToast('Network error','error');});
+}
+
+// Delete
+var deleteType, deleteId;
+function deleteItem(type, id, name) {
+    deleteType=type; deleteId=id;
+    document.getElementById('deleteItemName').textContent=name;
+    document.getElementById('confirmDeleteBtn').onclick=confirmDelete;
+    openModal('deleteModal');
+}
+function confirmDelete() {
+    fetch(getApiUrl(deleteType,'delete',deleteId), {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')}
+    }).then(function(r){return r.json();}).then(function(data){
+        if(data.success){showToast(data.message||'Deleted');closeModal('deleteModal');var r=document.querySelector('tr[data-id="'+deleteId+'"]');if(r)r.remove();}
+        else showToast(data.error||'Failed','error');
+    });
+}
+
+// Hotkeys: 0-6 navigate sections
+var sectionLinks = document.querySelectorAll('.section-nav .section-btn');
+document.addEventListener('keydown', function(e) {
+    // Don't trigger when typing in inputs
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-overlay.active').forEach(function(m){m.classList.remove('active');});
+        document.body.style.overflow = '';
+        return;
+    }
+    var idx = parseInt(e.key);
+    if (!isNaN(idx) && idx >= 0 && idx <= 6 && sectionLinks[idx]) {
+        sectionLinks[idx].click();
+    }
+});
+
+{% block section_js %}{% endblock %}
+</script>
+{% endblock %}

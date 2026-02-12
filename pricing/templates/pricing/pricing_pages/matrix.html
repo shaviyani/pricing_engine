@@ -1,0 +1,654 @@
+{% extends "pricing/base.html" %}
+{% load humanize %}
+{% load pricing_filters %}
+
+{% block title %}Pricing Matrix - {{ hotel.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* KPI Cards */
+    .kpi-card { transition: transform 0.2s, box-shadow 0.2s; }
+    .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+    
+    /* Matrix Table */
+    .matrix-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .matrix-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        min-width: 800px;
+    }
+    
+    .matrix-table thead th {
+        background: #f9fafb;
+        padding: 12px 8px;
+        text-align: center;
+        font-weight: 600;
+        color: #374151;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 2px solid #e5e7eb;
+    }
+    
+    .matrix-table thead th.corner {
+        position: sticky;
+        left: 0;
+        z-index: 20;
+        background: #f9fafb;
+        text-align: left;
+        min-width: 240px;
+        padding-left: 16px;
+    }
+    
+    .season-header { min-width: 110px; }
+    .season-name { font-weight: 700; color: #111827; font-size: 12px; }
+    .season-dates { font-size: 10px; color: #6b7280; font-weight: 400; margin-top: 2px; }
+    .season-index { 
+        font-size: 10px; 
+        color: #3b82f6; 
+        font-weight: 600; 
+        margin-top: 2px;
+        background: #eff6ff;
+        padding: 2px 6px;
+        border-radius: 4px;
+        display: inline-block;
+    }
+    
+    .matrix-table tbody td {
+        padding: 10px 8px;
+        vertical-align: middle;
+        text-align: center;
+        border-bottom: 1px solid #f3f4f6;
+    }
+    
+    /* Channel Header Row (expandable) */
+    .channel-header-row td {
+        background: #ffffff !important;
+        color: #111827;
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+        border-bottom: 2px solid #e5e7eb !important;
+        border-top: 1px solid #e5e7eb;
+    }
+    .channel-header-row td.channel-name-cell {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #ffffff !important;
+        text-align: left;
+        padding-left: 16px;
+    }
+    .channel-header-row:hover td {
+        background: #f9fafb !important;
+    }
+    .channel-header-row:hover td.channel-name-cell {
+        background: #f9fafb !important;
+    }
+    
+    .channel-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .channel-badge {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        font-weight: 500;
+    }
+    .channel-badge.discount {
+        background: #dcfce7;
+        color: #166534;
+    }
+    .channel-badge.commission {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    
+    /* BAR Reference Row */
+    .bar-row td {
+        background: #f0fdf4 !important;
+        border-bottom: 1px solid #bbf7d0;
+    }
+    .bar-row td.row-label {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #dcfce7 !important;
+        text-align: left;
+        padding-left: 32px;
+        font-weight: 500;
+        color: #166534;
+        font-style: italic;
+    }
+    
+    /* Channel Base Rate Row */
+    .channel-base-row td {
+        background: #f8fafc;
+        font-weight: 600;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    .channel-base-row td.row-label {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #f1f5f9;
+        text-align: left;
+        padding-left: 32px;
+        font-weight: 600;
+        color: #1e293b;
+    }
+    
+    /* Modifier Rate Rows */
+    .modifier-row td {
+        background: #ffffff;
+    }
+    .modifier-row td.row-label {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #fafafa;
+        text-align: left;
+        padding-left: 40px;
+        font-weight: 500;
+        color: #4b5563;
+    }
+    .modifier-row:hover td {
+        background: #eff6ff !important;
+    }
+    .modifier-row:hover td.row-label {
+        background: #dbeafe !important;
+    }
+    
+    /* Stacked modifier row */
+    .modifier-row.stacked td {
+        background: #fefce8;
+    }
+    .modifier-row.stacked td.row-label {
+        background: #fef9c3;
+    }
+    .modifier-row.stacked:hover td {
+        background: #fef08a !important;
+    }
+    .modifier-row.stacked:hover td.row-label {
+        background: #fde047 !important;
+    }
+    
+    /* Dual rate display */
+    .rate-dual {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+    }
+    .rate-subtotal {
+        font-size: 14px;
+        font-weight: 700;
+        color: #111827;
+    }
+    .rate-final {
+        font-size: 10px;
+        color: #6b7280;
+        font-weight: 500;
+    }
+    
+    /* Discount badge in modifier row */
+    .discount-badge {
+        font-size: 10px;
+        color: #059669;
+        font-weight: 600;
+        margin-left: 4px;
+        background: #d1fae5;
+        padding: 1px 6px;
+        border-radius: 4px;
+    }
+    
+    /* Toggle icon */
+    .toggle-icon {
+        display: inline-block;
+        transition: transform 0.2s;
+        margin-right: 8px;
+        font-size: 10px;
+    }
+    .toggle-icon.collapsed {
+        transform: rotate(-90deg);
+    }
+    
+    /* Hidden rows */
+    .channel-details-hidden {
+        display: none;
+    }
+    
+    /* Filter select styling */
+    .filter-select {
+        padding: 10px 14px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 14px;
+        min-width: 180px;
+        background: white;
+        color: #374151;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .filter-select:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    .filter-select:hover {
+        border-color: #9ca3af;
+    }
+    
+    /* Print styles */
+    @media print {
+        .no-print { display: none !important; }
+        body { background: white; }
+        .matrix-table thead th.corner,
+        .channel-header-row td.channel-name-cell,
+        .channel-base-row td.row-label,
+        .modifier-row td.row-label,
+        .bar-row td.row-label { position: static; }
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .matrix-table { font-size: 11px; }
+        .rate-subtotal { font-size: 12px; }
+        .rate-final { font-size: 9px; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+<div class="space-y-6">
+    
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Pricing Matrix</h1>
+            <p class="text-gray-600 mt-1">{{ hotel.name }} • Rates by channel and modifier</p>
+        </div>
+        <div class="flex items-center gap-3 no-print">
+            <button onclick="expandAllChannels()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
+                Expand All
+            </button>
+            <button onclick="collapseAllChannels()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
+                Collapse All
+            </button>
+            <button onclick="window.print()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
+                🖨️ Print
+            </button>
+        </div>
+    </div>
+    
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="kpi-card bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Service Charge</p>
+            <p class="text-2xl font-bold mt-1">{{ hotel.service_charge_percent|default:"10" }}%</p>
+            <p class="text-xs opacity-75 mt-1">Added to subtotal</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Tax (GST)</p>
+            <p class="text-2xl font-bold mt-1">{{ hotel.tax_percent|default:"16" }}%</p>
+            <p class="text-xs opacity-75 mt-1">{% if hotel.tax_on_service_charge %}On subtotal + SC{% else %}On subtotal only{% endif %}</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Guests</p>
+            <p class="text-2xl font-bold mt-1">{{ pax }} pax</p>
+            <p class="text-xs opacity-75 mt-1">Per room</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Rate Plan</p>
+            <p class="text-2xl font-bold mt-1">${{ selected_rate_plan.meal_supplement|default:"0" }}</p>
+            <p class="text-xs opacity-75 mt-1">{{ selected_rate_plan.name|default:"BB" }} per pax</p>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+        <form method="get" class="flex flex-wrap gap-4 items-end">
+            <div class="flex flex-col gap-1">
+                <label for="roomFilter" class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Room Type</label>
+                <select id="roomFilter" name="room_type_id" class="filter-select" onchange="this.form.submit()">
+                    <option value="all" {% if show_all_rooms %}selected{% endif %}>All Rooms</option>
+                    {% for room in room_types %}
+                    <option value="{{ room.id }}" {% if not show_all_rooms and selected_room and room.id == selected_room.id %}selected{% endif %}>
+                        {{ room.name }} (${{ room.base_rate }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label for="ratePlanFilter" class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Rate Plan</label>
+                <select id="ratePlanFilter" name="rate_plan_id" class="filter-select" onchange="this.form.submit()">
+                    {% for plan in rate_plans %}
+                    <option value="{{ plan.id }}" {% if selected_rate_plan and plan.id == selected_rate_plan.id %}selected{% endif %}>
+                        {{ plan.name }} (${{ plan.meal_supplement }}/pax)
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label for="paxFilter" class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Guests</label>
+                <select id="paxFilter" name="pax" class="filter-select" onchange="this.form.submit()">
+                    <option value="1" {% if pax == 1 %}selected{% endif %}>1 Guest</option>
+                    <option value="2" {% if pax == 2 %}selected{% endif %}>2 Guests</option>
+                    <option value="3" {% if pax == 3 %}selected{% endif %}>3 Guests</option>
+                    <option value="4" {% if pax == 4 %}selected{% endif %}>4 Guests</option>
+                </select>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Legend -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+        <div class="flex flex-wrap gap-6 text-sm text-gray-600">
+            <div class="flex items-center gap-2">
+                <span class="font-bold text-gray-900">$86</span>
+                <span>= Subtotal (before SC+Tax)</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-gray-500 text-xs">$110</span>
+                <span>= Final Rate (with SC+Tax)</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="w-4 h-4 rounded border-2 border-gray-300 bg-white"></div>
+                <span>Channel (click to expand)</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="w-4 h-4 rounded bg-yellow-200 border border-yellow-400"></div>
+                <span>Stacked Modifier</span>
+            </div>
+        </div>
+    </div>
+    
+    {% if has_data %}
+    
+    {% if show_all_rooms and comparison_data %}
+    <!-- All Rooms Comparison Table -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+        <div class="px-5 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-white">
+            <h3 class="text-base font-bold text-gray-800">Room Type Comparison</h3>
+            <p class="text-xs text-gray-500 mt-1">Side-by-side rates across all room types × seasons. Effective Index = Season Index × Room Modifier.</p>
+        </div>
+        <div class="matrix-container">
+            <table class="matrix-table" style="font-size:13px;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; min-width:180px; position:sticky; left:0; z-index:20; background:#f9fafb;">Room Type</th>
+                        <th style="text-align:right; min-width:80px;">Base Rate</th>
+                        <th style="text-align:right; min-width:70px;">Premium</th>
+                        <th style="text-align:center; min-width:70px;">Target Occ</th>
+                        {% for season in seasons %}
+                        <th style="text-align:center; min-width:150px;">
+                            <div style="font-weight:700; font-size:12px;">{{ season.name }}</div>
+                            <div style="font-size:10px; color:#6b7280;">Index: ×{{ season.season_index }}</div>
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in comparison_data %}
+                    <tr style="border-bottom:1px solid #f3f4f6;">
+                        <td style="text-align:left; padding:10px 12px; position:sticky; left:0; background:white; z-index:10;">
+                            <div style="font-weight:600; color:#111827;">{{ row.room.name }}</div>
+                            {% if row.description %}<div style="font-size:11px; color:#9ca3af;">{{ row.description }}</div>{% endif %}
+                        </td>
+                        <td style="text-align:right; font-weight:600; color:#111827;">${{ row.effective_rate|floatformat:0 }}</td>
+                        <td style="text-align:right;">
+                            {% if row.premium_percent > 0 %}
+                            <span style="color:#059669; font-weight:500;">+{{ row.premium_percent|floatformat:0 }}%</span>
+                            {% else %}
+                            <span style="color:#6b7280;">Base</span>
+                            {% endif %}
+                        </td>
+                        <td style="text-align:center;">
+                            <span style="background:#eff6ff; color:#2563eb; padding:2px 8px; border-radius:12px; font-size:12px; font-weight:500;">{{ row.target_occupancy|floatformat:0 }}%</span>
+                        </td>
+                        {% for season in seasons %}
+                        {% with sdata=row.seasons|get_item:season.id %}
+                        <td style="text-align:center; padding:8px 6px;">
+                            <div style="font-size:11px; color:#6b7280; margin-bottom:2px;">
+                                ×{{ sdata.rt_modifier|floatformat:2 }} → <strong style="color:{% if sdata.effective_index > 1.2 %}#059669{% elif sdata.effective_index < 0.8 %}#dc2626{% else %}#374151{% endif %};">{{ sdata.effective_index|floatformat:2 }}</strong>
+                            </div>
+                            {% for ch_id, ch_data in sdata.channels.items %}
+                            <div style="font-weight:600; font-size:14px; color:#111827;">${{ ch_data.channel_base_rate|floatformat:0 }}</div>
+                            {% endfor %}
+                        </td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                    <!-- Blended ADR row -->
+                    <tr style="border-top:2px solid #e5e7eb; background:#f9fafb;">
+                        <td style="text-align:left; padding:10px 12px; font-weight:700; color:#374151; position:sticky; left:0; background:#f9fafb; z-index:10;">Blended ADR</td>
+                        <td colspan="3" style="text-align:center; color:#6b7280; font-size:12px;">Weighted by room count</td>
+                        {% for season in seasons %}
+                        <td style="text-align:center; font-weight:700; font-size:14px; color:#2563eb;">
+                            {% with adr=blended_adr|get_item:season.id %}
+                            ${{ adr|floatformat:0 }}
+                            {% endwith %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Matrix Table -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="matrix-container">
+            <table class="matrix-table" id="pricingMatrix">
+                <thead>
+                    <tr>
+                        <th class="corner">Channel / Modifier</th>
+                        {% for season in seasons %}
+                        <th class="season-header">
+                            <div class="season-name">{{ season.name }}</div>
+                            <div class="season-dates">{{ season.start_date|date:"M d" }} - {{ season.end_date|date:"M d" }}</div>
+                            <div class="season-index">×{{ season.season_index }}</div>
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if show_all_rooms %}
+                    {% for room in room_types %}
+                    {% with room_matrix=matrix|get_item:room.id %}
+                    <tr>
+                        <td colspan="{{ seasons|length|add:1 }}" class="bg-gray-100 text-left px-4 py-3 font-bold text-gray-800 text-base border-b-2 border-gray-300">
+                            🏨 {{ room.name }}
+                            <span class="font-normal text-gray-500 text-sm ml-2">
+                                Base: ${{ room.get_effective_base_rate|floatformat:0 }}
+                                {% if room.get_premium_percent > 0 %}
+                                <span style="color:#059669; font-size:12px;">(+{{ room.get_premium_percent|floatformat:0 }}%)</span>
+                                {% endif %}
+                                · {{ room.number_of_rooms }} rooms
+                                · Target: {{ room.target_occupancy|floatformat:0 }}% occ
+                            </span>
+                            {% if room.description %}<span class="font-normal text-gray-400 text-xs ml-2">{{ room.description }}</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% for channel in channels %}
+                    {% with channel_data=room_matrix|get_item:channel.id %}
+                    {% with channel_mods=channel_modifiers|get_item:channel.id %}
+                    <tr class="channel-header-row" onclick="toggleChannel('room{{ room.id }}-channel{{ channel.id }}')">
+                        <td class="channel-name-cell">
+                            <span class="toggle-icon collapsed" id="toggle-room{{ room.id }}-channel{{ channel.id }}">▼</span>
+                            <span class="channel-info">
+                                {{ channel.name }}
+                                {% if channel.base_discount_percent > 0 %}<span class="channel-badge discount">-{{ channel.base_discount_percent }}%</span>{% endif %}
+                                {% if channel.commission_percent > 0 %}<span class="channel-badge commission">{{ channel.commission_percent }}% comm</span>{% endif %}
+                            </span>
+                        </td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal" >${{ cell.channel_base_subtotal|floatformat:0 }}</span><span class="rate-final" >${{ cell.channel_base_rate|floatformat:0 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    <tr class="bar-row room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">📊 BAR (Reference)</td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal" style="color:#166534;">${{ cell.bar_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.bar_rate|floatformat:2 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    <tr class="channel-base-row room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">Channel Base Rate</td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal">${{ cell.channel_base_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.channel_base_rate|floatformat:2 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    {% for modifier in channel_mods %}
+                    <tr class="modifier-row {% if modifier.is_stacked %}stacked{% endif %} room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">
+                            {% if modifier.modifier_type == 'member' %}🎯{% elif modifier.modifier_type == 'mobile' %}📱{% elif modifier.modifier_type == 'promo' %}📧{% elif modifier.modifier_type == 'last_minute' %}⚡{% elif modifier.modifier_type == 'early_bird' %}🐦{% elif modifier.modifier_type == 'corporate' %}🏢{% else %}📋{% endif %}
+                            {{ modifier.name }}
+                            {% if modifier.discount_percent > 0 %}<span class="discount-badge">-{{ modifier.discount_percent }}%</span>{% endif %}
+                        </td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        {% with mod_rates=cell.modifier_rates %}
+                        <td>{% for mod_rate in mod_rates %}{% if mod_rate.modifier_id == modifier.id %}<div class="rate-dual"><span class="rate-subtotal">${{ mod_rate.subtotal|floatformat:2 }}</span><span class="rate-final">${{ mod_rate.final_rate|floatformat:2 }}</span></div>{% endif %}{% endfor %}</td>
+                        {% endwith %}
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    {% empty %}
+                    <tr class="modifier-row room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label" style="color:#9ca3af;font-style:italic;">No modifiers configured</td>
+                        {% for season in seasons %}<td style="color:#9ca3af;">—</td>{% endfor %}
+                    </tr>
+                    {% endfor %}
+                    {% endwith %}
+                    {% endwith %}
+                    {% endfor %}
+                    {% endwith %}
+                    {% endfor %}
+                    {% else %}
+                    {% for channel in channels %}
+                    {% with channel_data=matrix|get_item:channel.id %}
+                    {% with channel_mods=channel_modifiers|get_item:channel.id %}
+                    <tr class="channel-header-row" onclick="toggleChannel('channel{{ channel.id }}')">
+                        <td class="channel-name-cell">
+                            <span class="toggle-icon collapsed" id="toggle-channel{{ channel.id }}">▼</span>
+                            <span class="channel-info">
+                                {{ channel.name }}
+                                {% if channel.base_discount_percent > 0 %}<span class="channel-badge discount">-{{ channel.base_discount_percent }}%</span>{% endif %}
+                                {% if channel.commission_percent > 0 %}<span class="channel-badge commission">{{ channel.commission_percent }}% comm</span>{% endif %}
+                            </span>
+                        </td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal" >${{ cell.channel_base_subtotal|floatformat:0 }}</span><span class="rate-final" >${{ cell.channel_base_rate|floatformat:0 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    <tr class="bar-row channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">📊 BAR (Reference)</td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal" style="color:#166534;">${{ cell.bar_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.bar_rate|floatformat:2 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    <tr class="channel-base-row channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">Channel Base Rate</td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal">${{ cell.channel_base_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.channel_base_rate|floatformat:2 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    {% for modifier in channel_mods %}
+                    <tr class="modifier-row {% if modifier.is_stacked %}stacked{% endif %} channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">
+                            {% if modifier.modifier_type == 'member' %}🎯{% elif modifier.modifier_type == 'mobile' %}📱{% elif modifier.modifier_type == 'promo' %}📧{% elif modifier.modifier_type == 'last_minute' %}⚡{% elif modifier.modifier_type == 'early_bird' %}🐦{% elif modifier.modifier_type == 'corporate' %}🏢{% else %}📋{% endif %}
+                            {{ modifier.name }}
+                            {% if modifier.discount_percent > 0 %}<span class="discount-badge">-{{ modifier.discount_percent }}%</span>{% endif %}
+                        </td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        {% with mod_rates=cell.modifier_rates %}
+                        <td>{% for mod_rate in mod_rates %}{% if mod_rate.modifier_id == modifier.id %}<div class="rate-dual"><span class="rate-subtotal">${{ mod_rate.subtotal|floatformat:2 }}</span><span class="rate-final">${{ mod_rate.final_rate|floatformat:2 }}</span></div>{% endif %}{% endfor %}</td>
+                        {% endwith %}
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    {% empty %}
+                    <tr class="modifier-row channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label" style="color:#9ca3af;font-style:italic;">No modifiers configured</td>
+                        {% for season in seasons %}<td style="color:#9ca3af;">—</td>{% endfor %}
+                    </tr>
+                    {% endfor %}
+                    {% endwith %}
+                    {% endwith %}
+                    {% endfor %}
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+        <div class="text-gray-400 text-6xl mb-4">📊</div>
+        <h2 class="text-xl font-semibold text-gray-700 mb-2">No Data Available</h2>
+        <p class="text-gray-500 mb-6">Please add room types, seasons, and channels first.</p>
+        <a href="{% url 'pricing:dashboard' org_code=org_code prop_code=prop_code %}" class="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">⚙️ Configure Pricing</a>
+    </div>
+    {% endif %}
+    
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h3 class="font-semibold text-gray-900 mb-3">Rate Calculation Formula</h3>
+        <div class="text-sm text-gray-600 space-y-2">
+            <p><span class="font-medium text-gray-800">BAR</span> = Room Base × Season Index + (Meal Supplement × Guests)</p>
+            <p><span class="font-medium text-gray-800">Channel Base</span> = BAR − Channel Discount %</p>
+            <p><span class="font-medium text-gray-800">Modifier Rate</span> = Channel Base − Modifier Discount %</p>
+            <p><span class="font-medium text-gray-800">Final Rate</span> = Subtotal + Service Charge + Tax</p>
+        </div>
+    </div>
+    
+    <div class="text-center text-sm text-gray-500 py-4">
+        <p>{{ hotel.name }} • Pricing Matrix</p>
+    </div>
+    
+</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleChannel(channelKey) {
+    var rows = document.querySelectorAll('.' + channelKey + '-details');
+    var icon = document.getElementById('toggle-' + channelKey);
+    rows.forEach(function(row) { row.classList.toggle('channel-details-hidden'); });
+    if (icon) { icon.classList.toggle('collapsed'); }
+}
+
+function expandAllChannels() {
+    document.querySelectorAll('.channel-details-hidden').forEach(function(row) { row.classList.remove('channel-details-hidden'); });
+    document.querySelectorAll('.toggle-icon').forEach(function(icon) { icon.classList.remove('collapsed'); });
+}
+
+function collapseAllChannels() {
+    document.querySelectorAll('[class*="-details"]').forEach(function(row) { row.classList.add('channel-details-hidden'); });
+    document.querySelectorAll('.toggle-icon').forEach(function(icon) { icon.classList.add('collapsed'); });
+}
+</script>
+{% endblock %}

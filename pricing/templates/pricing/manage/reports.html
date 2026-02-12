@@ -1,0 +1,40 @@
+{% extends "pricing/manage/_base.html" %}
+
+{% block section_title %}Reports{% endblock %}
+{% block page_heading %}Reports{% endblock %}
+
+{% block section_content %}
+<div class="mgmt-card">
+    <div class="mgmt-card-header"><h3 class="mgmt-card-title">Export Reports</h3></div>
+    <div class="mgmt-card-body-padded">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(250px,1fr)); gap:16px;">
+            <div style="border:1px solid #e5e7eb; border-radius:8px; padding:20px;">
+                <h4 class="font-semibold text-gray-800">Pricing Matrix PDF</h4>
+                <p class="text-sm text-gray-500 mt-2">Full pricing matrix with all seasons, rooms, and channel rates.</p>
+                <a href="{% url 'pricing:pricing_matrix_pdf' org_code=org.code prop_code=prop_code %}" class="btn btn-secondary btn-sm mt-4" target="_blank">Download PDF</a>
+            </div>
+            <div style="border:1px solid #e5e7eb; border-radius:8px; padding:20px;">
+                <h4 class="font-semibold text-gray-800">Channel Rate Card</h4>
+                <p class="text-sm text-gray-500 mt-2">Per-channel rate card with room types across seasons.</p>
+                <a href="{% url 'pricing:pricing_matrix_channel' org_code=org.code prop_code=prop_code %}" class="btn btn-secondary btn-sm mt-4" target="_blank">View Channel Matrix</a>
+            </div>
+            <div style="border:1px solid #e5e7eb; border-radius:8px; padding:20px;">
+                <h4 class="font-semibold text-gray-800">Booking Analysis</h4>
+                <p class="text-sm text-gray-500 mt-2">Revenue, channel mix, and booking trends.</p>
+                <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop_code %}" class="btn btn-secondary btn-sm mt-4">Open Dashboard</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mgmt-card">
+    <div class="mgmt-card-body">
+        <div class="empty-state">
+            <p style="font-size:32px; margin-bottom:8px;">⭐</p>
+            <p class="font-semibold text-gray-700">Reviews Analysis — Coming Soon</p>
+            <p class="text-sm text-gray-500 mt-2" style="max-width:400px; margin:8px auto 0;">Import and analyze guest reviews. Track scores, identify pricing-review correlations.</p>
+            <p class="text-xs text-gray-400 mt-3">89 Booking.com reviews analyzed · Avg: 9.51/10 · Longer stays = higher scores</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends 'pricing/base.html' %}
+
+{% block title %}Select Organization - Pricing Engine{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto py-10 px-4">
+    <div class="text-center mb-10">
+        <h1 class="text-3xl font-bold text-gray-800">Pricing Engine</h1>
+        <p class="text-gray-500 mt-2">Select an organization to manage</p>
+    </div>
+
+    <div class="grid gap-5">
+        {% for org in organizations %}
+        <a href="{% url 'pricing:org_dashboard' org_code=org.code %}"
+           class="block bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg hover:border-blue-300 transition-all">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800">{{ org.name }}</h2>
+                    <p class="text-sm text-gray-500 mt-1">
+                        {{ org.properties.count }} propert{{ org.properties.count|pluralize:"y,ies" }}
+                    </p>
+                    <div class="flex flex-wrap gap-2 mt-3">
+                        {% for prop in org.properties.all %}
+                        <span class="inline-block bg-gray-100 text-gray-600 text-xs px-3 py-1 rounded-full">
+                            {{ prop.name }}
+                        </span>
+                        {% endfor %}
+                    </div>
+                </div>
+                <span class="text-blue-500 text-2xl ml-4">→</span>
+            </div>
+        </a>
+        {% empty %}
+        <div class="text-center py-16 bg-white rounded-xl border border-gray-200">
+            <p class="text-gray-400 text-lg">No organizations found</p>
+            <p class="text-gray-400 text-sm mt-2">Create one in the Django admin to get started</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

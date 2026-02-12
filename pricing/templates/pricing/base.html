@@ -82,12 +82,13 @@
                             class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
                             Booking Analysis
                         </a>
-                        <a href="{% url 'pricing_management' org_code=org_code prop_code=prop_code %}">
-    Pricing Management
-</a>
                         <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}"
                             class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
                             Pickup
+                        </a>
+                        <a href="{% url 'pricing:pricing_management' org_code=org.code prop_code=prop.code %}"
+                            class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition border-l border-gray-200 ml-1 pl-3">
+                            ⚙ Management
                         </a>
                         {% elif org %}
                         <!-- Organization-level navigation -->

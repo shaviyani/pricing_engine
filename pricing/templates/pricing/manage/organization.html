@@ -1,0 +1,125 @@
+{% extends "pricing/manage/_base.html" %}
+
+{% block section_title %}Organization{% endblock %}
+{% block page_heading %}Organization{% endblock %}
+
+{% block section_content %}
+<!-- Org Details -->
+<div class="mgmt-card">
+    <div class="mgmt-card-header">
+        <h3 class="mgmt-card-title">Organization Details</h3>
+    </div>
+    <div class="mgmt-card-body-padded">
+        <div class="form-row" style="margin-bottom:16px;">
+            <div class="form-group">
+                <label class="form-label">Organization Name</label>
+                <input type="text" class="form-input" value="{{ organization.name }}" data-field="name" data-type="org" onchange="updateOrgField(this)">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Code</label>
+                <input type="text" class="form-input" value="{{ organization.code }}" disabled style="background:#f3f4f6;">
+                <p class="form-hint">Used in URLs, cannot be changed</p>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Default Currency</label>
+                <input type="text" class="form-input" value="{{ organization.default_currency }}" data-field="default_currency" data-type="org" onchange="updateOrgField(this)">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Currency Symbol</label>
+                <input type="text" class="form-input" value="{{ organization.currency_symbol }}" data-field="currency_symbol" data-type="org" onchange="updateOrgField(this)">
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Properties List -->
+<div class="mgmt-card">
+    <div class="mgmt-card-header">
+        <h3 class="mgmt-card-title">Properties ({{ org_properties|length }})</h3>
+        <button class="btn btn-primary btn-sm" onclick="openModal('propertyModal')">+ Add Property</button>
+    </div>
+    <div class="mgmt-card-body">
+        {% for p in org_properties %}
+        <div class="prop-card">
+            <div>
+                <div class="font-semibold text-gray-900">{{ p.name }}</div>
+                <div class="text-sm text-gray-500 mt-1">
+                    {{ p.code }} · {{ p.location }} · {{ p.total_rooms }} rooms · {{ p.room_type_count }} room types · {{ p.season_count }} seasons · Base: ${{ p.reference_base_rate }}
+                </div>
+            </div>
+            <a href="{% url 'pricing:manage_property' org_code=org.code prop_code=p.code %}" class="btn btn-secondary btn-sm">Manage</a>
+        </div>
+        {% empty %}
+        <div class="empty-state"><p>No properties yet.</p></div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block section_modals %}
+<!-- Property Modal -->
+<div id="propertyModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Add Property</h3>
+            <button class="modal-close" onclick="closeModal('propertyModal')">×</button>
+        </div>
+        <form id="propertyForm" onsubmit="submitPropertyForm(event)">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Property Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g., Biosphere Beach">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Code (URL slug)</label>
+                        <input type="text" name="code" class="form-input" required placeholder="e.g., biosphere-beach">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Location</label>
+                        <input type="text" name="location" class="form-input" placeholder="e.g., Dharavandhoo">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Reference Base Rate ($)</label>
+                    <input type="number" name="reference_base_rate" class="form-input" step="0.01" value="100.00">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('propertyModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Property</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block section_js %}
+function updateOrgField(input) {
+    var field = input.dataset.field; input.classList.add('saving');
+    var d = {}; d[field] = input.value;
+    fetch(ORG_API_BASE + '/api/organization/update/', {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
+        body:JSON.stringify(d)
+    }).then(function(r){return r.json();}).then(function(data){
+        input.classList.remove('saving');
+        if(data.success){input.classList.add('saved');showToast('Updated');setTimeout(function(){input.classList.remove('saved');},1000);}
+        else{input.classList.add('error');showToast(data.error||'Failed','error');}
+    }).catch(function(){input.classList.remove('saving');showToast('Network error','error');});
+}
+
+function submitPropertyForm(event) {
+    event.preventDefault();
+    var d = {};
+    new FormData(event.target).forEach(function(v,k){d[k]=v;});
+    fetch(ORG_API_BASE + '/api/properties/create/', {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
+        body:JSON.stringify(d)
+    }).then(function(r){return r.json();}).then(function(data){
+        if(data.success){showToast('Property created');closeModal('propertyModal');setTimeout(function(){location.reload();},500);}
+        else showToast(data.error||'Failed','error');
+    });
+}
+{% endblock %}

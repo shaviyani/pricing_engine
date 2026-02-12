@@ -1,0 +1,48 @@
+{% extends "pricing/manage/_base.html" %}
+
+{% block section_title %}Offers & Overrides{% endblock %}
+{% block page_heading %}Offers & Overrides{% endblock %}
+
+{% block section_content %}
+<div class="mgmt-card">
+    <div class="mgmt-card-header">
+        <div>
+            <h3 class="mgmt-card-title">Date Rate Overrides</h3>
+            <p class="text-sm text-gray-500 mt-1">Override calculated rates for specific dates</p>
+        </div>
+        <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop_code %}" class="btn btn-primary btn-sm">Open Override Calendar</a>
+    </div>
+    <div class="mgmt-card-body">
+        {% if active_overrides %}
+        <table class="mgmt-table">
+            <thead><tr><th>Name</th><th>Type</th><th>Periods</th><th>Status</th></tr></thead>
+            <tbody>
+                {% for ov in active_overrides %}
+                <tr>
+                    <td class="font-semibold">{{ ov.name }}</td>
+                    <td><span class="badge badge-blue">{{ ov.get_override_type_display }}</span></td>
+                    <td>{{ ov.periods.count }} period{{ ov.periods.count|pluralize }}</td>
+                    <td><span class="badge badge-green">Active</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <p>No active date rate overrides.</p>
+            <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop_code %}" class="btn btn-primary mt-4">Open Override Calendar</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="mgmt-card">
+    <div class="mgmt-card-body">
+        <div class="empty-state">
+            <p style="font-size:32px; margin-bottom:8px;">🏷</p>
+            <p class="font-semibold text-gray-700">Offers Module — Coming Soon</p>
+            <p class="text-sm text-gray-500 mt-2" style="max-width:400px; margin:8px auto 0;">Create promotional offers with booking windows, stay date restrictions, minimum nights, and channel-specific pricing.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

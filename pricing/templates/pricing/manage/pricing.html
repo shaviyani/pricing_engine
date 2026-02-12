@@ -1,0 +1,478 @@
+{% extends "pricing/manage/_base.html" %}
+
+{% block section_title %}Pricing{% endblock %}
+{% block page_heading %}Pricing Configuration{% endblock %}
+
+{% block section_content %}
+<div class="tab-nav" role="tablist">
+    <button class="tab-btn active" data-tab="rateplans">Rate Plans</button>
+    <button class="tab-btn" data-tab="channels">Channels</button>
+    <button class="tab-btn" data-tab="modifiers">Rate Modifiers</button>
+    <button class="tab-btn" data-tab="rt-season-mods">Room Season Modifiers</button>
+</div>
+
+    <div id="tab-rateplans" class="tab-content">
+        <div class="mgmt-card">
+            <div class="mgmt-card-header">
+                <div>
+                    <h3 class="mgmt-card-title">Rate Plans (Shared)</h3>
+                    <p class="text-sm text-gray-500 mt-1">Meal supplements per person</p>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="openModal('ratePlanModal')">+ Add Rate Plan</button>
+            </div>
+            <div class="mgmt-card-body">
+                {% if rate_plans %}
+                <table class="mgmt-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Meal Supplement (per person)</th>
+                            <th>Cost for 2 pax</th>
+                            <th style="width: 60px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for plan in rate_plans %}
+                        <tr data-id="{{ plan.id }}">
+                            <td><input type="text" class="editable-input" value="{{ plan.name }}" data-field="name" data-id="{{ plan.id }}" data-type="rateplan" onchange="updateField(this)"></td>
+                            <td><div class="input-prefix"><span>$</span><input type="number" step="0.01" class="editable-input" style="width:80px;" value="{{ plan.meal_supplement }}" data-field="meal_supplement" data-id="{{ plan.id }}" data-type="rateplan" onchange="updateField(this)"></div></td>
+                            <td><span class="text-gray-600">${{ plan.meal_supplement|add:plan.meal_supplement }}</span></td>
+                            <td><div class="row-actions"><button class="action-btn danger" onclick="deleteItem('rateplan', {{ plan.id }}, '{{ plan.name }}')"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></div></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state">
+                    <p>No rate plans defined yet.</p>
+                    <button class="btn btn-primary mt-4" onclick="openModal('ratePlanModal')">Add Your First Rate Plan</button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+
+    <div id="tab-channels" class="tab-content">
+        <div class="mgmt-card">
+            <div class="mgmt-card-header">
+                <div>
+                    <h3 class="mgmt-card-title">Channels (Shared)</h3>
+                    <p class="text-sm text-gray-500 mt-1">Distribution channels with discounts and commissions</p>
+                </div>
+                <div class="flex gap-2">
+                    <button class="btn btn-secondary btn-sm" onclick="normalizeDistribution()">Normalize to 100%</button>
+                    <button class="btn btn-primary btn-sm" onclick="openModal('channelModal')">+ Add Channel</button>
+                </div>
+            </div>
+            <div class="mgmt-card-body">
+                {% if not distribution_valid %}
+                <div class="alert {% if distribution_total == 0 %}alert-warning{% else %}alert-error{% endif %} mx-4 mt-4">
+                    <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                    <span>{{ distribution_message }}</span>
+                </div>
+                {% endif %}
+                
+                {% if channels %}
+                <table class="mgmt-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">Order</th>
+                            <th>Name</th>
+                            <th>Base Discount</th>
+                            <th>Commission</th>
+                            <th>Distribution</th>
+                            <th>Modifiers</th>
+                            <th style="width: 60px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="channelsTableBody">
+                        {% for channel in channels %}
+                        <tr data-id="{{ channel.id }}">
+                            <td><input type="number" class="editable-input" style="width:50px;" value="{{ channel.sort_order }}" data-field="sort_order" data-id="{{ channel.id }}" data-type="channel" onchange="updateField(this)"></td>
+                            <td><input type="text" class="editable-input" value="{{ channel.name }}" data-field="name" data-id="{{ channel.id }}" data-type="channel" onchange="updateField(this)"></td>
+                            <td><div class="input-suffix"><input type="number" step="0.01" class="editable-input" style="width:70px;" value="{{ channel.base_discount_percent }}" data-field="base_discount_percent" data-id="{{ channel.id }}" data-type="channel" onchange="updateField(this)"><span>%</span></div></td>
+                            <td><div class="input-suffix"><input type="number" step="0.01" class="editable-input" style="width:70px;" value="{{ channel.commission_percent }}" data-field="commission_percent" data-id="{{ channel.id }}" data-type="channel" onchange="updateField(this)"><span>%</span></div></td>
+                            <td><div class="input-suffix"><input type="number" step="0.1" class="editable-input" style="width:70px;" value="{{ channel.distribution_share_percent }}" data-field="distribution_share_percent" data-id="{{ channel.id }}" data-type="channel" onchange="updateField(this)"><span>%</span></div></td>
+                            <td><span class="badge badge-blue">{{ channel.rate_modifiers.count }}</span></td>
+                            <td><div class="row-actions"><button class="action-btn danger" onclick="deleteItem('channel', {{ channel.id }}, '{{ channel.name }}')"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></div></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state">
+                    <p>No channels defined yet.</p>
+                    <button class="btn btn-primary mt-4" onclick="openModal('channelModal')">Add Your First Channel</button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+
+    <div id="tab-modifiers" class="tab-content">
+        <div class="mgmt-card">
+            <div class="mgmt-card-header">
+                <div>
+                    <h3 class="mgmt-card-title">Rate Modifiers (Shared)</h3>
+                    <p class="text-sm text-gray-500 mt-1">Additional discounts per channel (Genius, Mobile, etc.)</p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <label class="text-sm text-gray-600">Filter:</label>
+                        <select id="modifierChannelFilter" class="form-input" style="width:150px;" onchange="filterModifiersByChannel(this.value)">
+                            <option value="">All Channels</option>
+                            {% for channel in channels %}
+                            <option value="{{ channel.id }}">{{ channel.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="openModal('stackedDiscountModal')">+ Stacked Discount</button>
+                    <button class="btn btn-primary btn-sm" onclick="openModal('modifierModal')">+ Add Modifier</button>
+                </div>
+            </div>
+            <div class="mgmt-card-body">
+                {% if rate_modifiers %}
+                <table class="mgmt-table" id="modifiersTable">
+                    <thead>
+                        <tr>
+                            <th>Channel</th>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Discount</th>
+                            <th>Stackable</th>
+                            <th>Total from BAR</th>
+                            <th>Active</th>
+                            <th style="width: 60px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for modifier in rate_modifiers %}
+                        <tr data-id="{{ modifier.id }}" data-channel-id="{{ modifier.channel.id }}" data-channel-base-discount="{{ modifier.channel.base_discount_percent }}">
+                            <td><span class="badge badge-gray">{{ modifier.channel.name }}</span></td>
+                            <td><input type="text" class="editable-input" value="{{ modifier.name }}" data-field="name" data-id="{{ modifier.id }}" data-type="modifier" onchange="updateField(this)"></td>
+                            <td>
+                                <select class="editable-input" style="width:130px;" data-field="modifier_type" data-id="{{ modifier.id }}" data-type="modifier" onchange="updateField(this)">
+                                    <option value="standard" {% if modifier.modifier_type == 'standard' %}selected{% endif %}>Standard</option>
+                                    <option value="member" {% if modifier.modifier_type == 'member' %}selected{% endif %}>Member/Loyalty</option>
+                                    <option value="mobile" {% if modifier.modifier_type == 'mobile' %}selected{% endif %}>Mobile App</option>
+                                    <option value="promo" {% if modifier.modifier_type == 'promo' %}selected{% endif %}>Promotional</option>
+                                    <option value="corporate" {% if modifier.modifier_type == 'corporate' %}selected{% endif %}>Corporate</option>
+                                    <option value="last_minute" {% if modifier.modifier_type == 'last_minute' %}selected{% endif %}>Last Minute</option>
+                                    <option value="early_bird" {% if modifier.modifier_type == 'early_bird' %}selected{% endif %}>Early Bird</option>
+                                </select>
+                            </td>
+                            <td><div class="input-suffix"><input type="number" step="0.01" class="editable-input" style="width:70px;" value="{{ modifier.discount_percent }}" data-field="discount_percent" data-id="{{ modifier.id }}" data-type="modifier" onchange="updateField(this); updateTotalFromBAR(this);"><span>%</span></div></td>
+                            <td>
+                                <label class="toggle">
+                                    <input type="checkbox" {% if modifier.stackable %}checked{% endif %} data-field="stackable" data-id="{{ modifier.id }}" data-type="modifier" onchange="updateField(this)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </td>
+                            <td><span class="total-from-bar font-semibold {% if modifier.total_discount_from_bar > 20 %}text-red-600{% elif modifier.total_discount_from_bar > 10 %}text-yellow-600{% else %}text-green-600{% endif %}">-{{ modifier.total_discount_from_bar }}%</span></td>
+                            <td>
+                                <label class="toggle">
+                                    <input type="checkbox" {% if modifier.active %}checked{% endif %} onchange="toggleModifier({{ modifier.id }})">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </td>
+                            <td><div class="row-actions"><button class="action-btn danger" onclick="deleteItem('modifier', {{ modifier.id }}, '{{ modifier.name }}')"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></div></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state">
+                    <p>No rate modifiers defined yet.</p>
+                    <button class="btn btn-primary mt-4" onclick="openModal('modifierModal')">Add Your First Modifier</button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+<div id="tab-rt-season-mods" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Room Type Season Modifiers</h3>
+            <div style="display:flex; gap:8px;">
+                <button class="btn btn-sm" style="background:#f3f4f6; color:#374151; border:1px solid #d1d5db;" onclick="resetAllRTSeasonMods()">Reset All to 1.00</button>
+                <button class="btn btn-primary btn-sm" onclick="saveAllRTSeasonMods()">Save All</button>
+            </div>
+        </div>
+        <p style="color:#6b7280; font-size:13px; margin-bottom:16px;">
+            Adjust how each room type responds to seasonal pricing. A modifier of 1.00 means the room follows the base season index. 
+            Values &gt; 1.00 amplify seasonality (higher peaks, higher lows). Values &lt; 1.00 dampen it.
+            <br><strong>Effective Index = Season Index × Room Modifier</strong>
+        </p>
+        <div class="mgmt-table-container">
+            <table class="mgmt-table" id="rtSeasonModTable">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; min-width:160px;">Room Type</th>
+                        <th style="text-align:right; min-width:80px;">Base Rate</th>
+                        <th style="text-align:right; min-width:70px;">Target Occ%</th>
+                        <!-- Season columns injected by JS -->
+                    </tr>
+                </thead>
+                <tbody id="rtSeasonModBody">
+                    <tr><td colspan="3" style="text-align:center; color:#9ca3af; padding:24px;">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block section_modals %}
+<!-- Rate Plan Modal -->
+<div id="ratePlanModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Add Rate Plan</h3>
+            <button class="modal-close" onclick="closeModal('ratePlanModal')">Ã—</button>
+        </div>
+        <form id="ratePlanForm" onsubmit="submitForm(event, 'rateplan')">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Rate Plan Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g., Full Board">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Meal Supplement (per person)</label>
+                    <input type="number" name="meal_supplement" class="form-input" step="0.01" value="0" required>
+                    <p class="form-hint">Cost per person per night (e.g., $12 for breakfast + dinner)</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('ratePlanModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Rate Plan</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Channel Modal -->
+<div id="channelModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Add Channel</h3>
+            <button class="modal-close" onclick="closeModal('channelModal')">Ã—</button>
+        </div>
+        <form id="channelForm" onsubmit="submitForm(event, 'channel')">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Channel Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g., Booking.com">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Base Discount %</label>
+                        <input type="number" name="base_discount_percent" class="form-input" step="0.01" value="0">
+                        <p class="form-hint">Discount from BAR</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Commission %</label>
+                        <input type="number" name="commission_percent" class="form-input" step="0.01" value="0">
+                        <p class="form-hint">Channel takes this %</p>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Distribution Share %</label>
+                    <input type="number" name="distribution_share_percent" class="form-input" step="0.1" value="0">
+                    <p class="form-hint">Expected % of bookings from this channel</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('channelModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Channel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modifier Modal -->
+<div id="modifierModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Add Rate Modifier</h3>
+            <button class="modal-close" onclick="closeModal('modifierModal')">Ã—</button>
+        </div>
+        <form id="modifierForm" onsubmit="submitForm(event, 'modifier')">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Channel</label>
+                    <select name="channel_id" class="form-select" required>
+                        <option value="">Select Channel...</option>
+                        {% for channel in channels %}
+                        <option value="{{ channel.id }}">{{ channel.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Modifier Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g., Genius Level 2">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Type</label>
+                        <select name="modifier_type" class="form-select">
+                            <option value="standard">Standard Rate</option>
+                            <option value="member">Member/Loyalty</option>
+                            <option value="mobile">Mobile App</option>
+                            <option value="promo">Promotional</option>
+                            <option value="corporate">Corporate</option>
+                            <option value="last_minute">Last Minute</option>
+                            <option value="early_bird">Early Bird</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Discount %</label>
+                        <input type="number" name="discount_percent" class="form-input" step="0.01" value="0">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description (optional)</label>
+                    <input type="text" name="description" class="form-input" placeholder="e.g., For Genius Level 2 members">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modifierModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Modifier</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Stacked Discount Modal -->
+<div id="stackedDiscountModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Create Stacked Discount</h3>
+            <button class="modal-close" onclick="closeModal('stackedDiscountModal')">×</button>
+        </div>
+        <form id="stackedDiscountForm" onsubmit="createStackedDiscount(event)">
+            <div class="modal-body">
+                <p class="text-sm text-gray-600 mb-4">Combine multiple stackable modifiers (e.g., Mobile + Genius) into a single rate modifier.</p>
+                
+                <div class="form-group">
+                    <label class="form-label">Channel</label>
+                    <select id="stackedChannel" name="channel_id" class="form-select" required onchange="loadStackableModifiers(this.value)">
+                        <option value="">Select Channel...</option>
+                        {% for channel in channels %}
+                        <option value="{{ channel.id }}">{{ channel.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Select Modifiers to Stack</label>
+                    <div id="stackableModifiersList" class="border border-gray-200 rounded-lg p-3 min-h-[100px] bg-gray-50">
+                        <p class="text-sm text-gray-500">Select a channel first...</p>
+                    </div>
+                    <p class="form-hint">Only modifiers marked as "stackable" can be combined</p>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Combined Discount Preview</label>
+                    <div id="stackedDiscountPreview" class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Total Stacked Discount:</span>
+                            <span id="stackedDiscountTotal" class="text-lg font-bold text-blue-600">0%</span>
+                        </div>
+                        <div id="stackedDiscountBreakdown" class="text-xs text-gray-500 mt-1"></div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">New Modifier Name</label>
+                    <input type="text" id="stackedModifierName" name="name" class="form-input" required placeholder="e.g., Mobile + Genius">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('stackedDiscountModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Stacked Modifier</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+
+{% endblock %}
+
+{% block section_js %}
+function toggleModifier(id) {
+    fetch(getApiUrl('modifier','toggle',id), {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')}
+    }).then(function(r){return r.json();}).then(function(d){showToast(d.success?d.message:(d.error||'Failed'),d.success?'success':'error');});
+}
+function normalizeDistribution() {
+    fetch(SHARED_API_BASE + '/api/channels/normalize-distribution/', {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')}
+    }).then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);setTimeout(function(){location.reload();},500);} else showToast(d.error||'Failed','error');
+    });
+}
+function filterModifiersByChannel(channelId) {
+    document.querySelectorAll('#modifiersTable tbody tr').forEach(function(row){
+        row.style.display = (!channelId || row.getAttribute('data-channel-id') === channelId) ? '' : 'none';
+    });
+}
+function updateTotalFromBAR(input) {
+    var row = input.closest('tr');
+    var total = (parseFloat(row.getAttribute('data-channel-base-discount'))||0) + (parseFloat(input.value)||0);
+    var s = row.querySelector('.total-from-bar');
+    if(s){s.textContent='-'+total.toFixed(2)+'%';s.classList.remove('text-red-600','text-yellow-600','text-green-600');
+    s.classList.add(total>20?'text-red-600':total>10?'text-yellow-600':'text-green-600');}
+}
+
+// Stacked discount functions
+var stackableModifiersData=[], selectedStackModifiers=[];
+function loadStackableModifiers(channelId) {
+    var c=document.getElementById('stackableModifiersList');
+    if(!channelId){c.innerHTML='<p class="text-sm text-gray-500">Select a channel first...</p>';selectedStackModifiers=[];updateStackedDiscountPreview();return;}
+    var rows=document.querySelectorAll('#modifiersTable tbody tr[data-channel-id="'+channelId+'"]');
+    stackableModifiersData=[];
+    rows.forEach(function(r){var cb=r.querySelector('input[data-field="stackable"]');if(cb&&cb.checked){
+        stackableModifiersData.push({id:r.getAttribute('data-id'),name:(r.querySelector('input[data-field="name"]')||{}).value||'',discount:parseFloat((r.querySelector('input[data-field="discount_percent"]')||{}).value)||0});
+    }});
+    if(!stackableModifiersData.length){c.innerHTML='<p class="text-sm text-gray-500">No stackable modifiers for this channel.</p>';return;}
+    c.innerHTML=stackableModifiersData.map(function(m){return '<label class="flex items-center gap-2 p-2 hover:bg-gray-100 rounded cursor-pointer"><input type="checkbox" class="stack-modifier-checkbox" value="'+m.id+'" data-discount="'+m.discount+'" data-name="'+m.name+'" onchange="updateStackSelection()"><span class="text-sm">'+m.name+'</span><span class="text-xs text-gray-500 ml-auto">-'+m.discount+'%</span></label>';}).join('');
+    selectedStackModifiers=[];updateStackedDiscountPreview();
+}
+function updateStackSelection(){selectedStackModifiers=[];var names=[];document.querySelectorAll('.stack-modifier-checkbox:checked').forEach(function(cb){selectedStackModifiers.push({id:cb.value,name:cb.getAttribute('data-name'),discount:parseFloat(cb.getAttribute('data-discount'))||0});names.push(cb.getAttribute('data-name'));});document.getElementById('stackedModifierName').value=names.join(' + ');updateStackedDiscountPreview();}
+function updateStackedDiscountPreview(){var t=0,p=[];selectedStackModifiers.forEach(function(m){t+=m.discount;p.push(m.name+': -'+m.discount+'%');});document.getElementById('stackedDiscountTotal').textContent='-'+t.toFixed(2)+'%';document.getElementById('stackedDiscountBreakdown').textContent=p.join(' + ')||'Select modifiers above';}
+function createStackedDiscount(event){event.preventDefault();var ch=document.getElementById('stackedChannel').value,n=document.getElementById('stackedModifierName').value.trim();if(!ch){showToast('Select a channel','error');return;}if(selectedStackModifiers.length<2){showToast('Select at least 2','error');return;}var t=0,ids=[];selectedStackModifiers.forEach(function(m){t+=m.discount;ids.push(m.id);});
+fetch(getApiUrl('modifier','create'),{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({channel_id:ch,name:n,discount_percent:t,modifier_type:'promo',description:'Stacked: '+selectedStackModifiers.map(function(m){return m.name;}).join(' + '),is_stacked:true,stacked_from:ids})}).then(function(r){return r.json();}).then(function(d){if(d.success){showToast('Created');closeModal('stackedDiscountModal');setTimeout(function(){location.reload();},500);}else showToast(d.error||'Failed','error');});}
+
+// RT Season Modifiers
+var rtSeasonModData=null;
+function loadRTSeasonMods(){
+    fetch(API_BASE+'/api/room-type-season-modifiers/',{headers:{'X-Requested-With':'XMLHttpRequest'}})
+    .then(function(r){return r.json();}).then(function(data){
+        if(!data.success){showToast('Failed','error');return;}rtSeasonModData=data;renderRTSeasonModGrid(data);
+    }).catch(function(){showToast('Network error','error');});
+}
+function renderRTSeasonModGrid(data){
+    var seasons=data.seasons,grid=data.grid,thead=document.querySelector('#rtSeasonModTable thead tr');
+    while(thead.children.length>3)thead.removeChild(thead.lastChild);
+    seasons.forEach(function(s){var th=document.createElement('th');th.style.textAlign='center';th.style.minWidth='130px';th.innerHTML='<div style="font-weight:600;">'+s.name+'</div><div style="font-size:11px;color:#6b7280;">Index: '+s.index.toFixed(2)+'</div>';thead.appendChild(th);});
+    var tbody=document.getElementById('rtSeasonModBody');tbody.innerHTML='';
+    grid.forEach(function(room){var tr=document.createElement('tr');
+    var td1=document.createElement('td');td1.style.fontWeight='600';td1.innerHTML=room.room_type_name+'<div style="font-size:11px;color:#6b7280;font-weight:400;">$'+room.effective_rate.toFixed(0)+(room.premium_percent>0?' (+'+room.premium_percent.toFixed(0)+'%)':'')+'</div>';tr.appendChild(td1);
+    var td2=document.createElement('td');td2.style.textAlign='right';td2.textContent='$'+room.effective_rate.toFixed(0);tr.appendChild(td2);
+    var td3=document.createElement('td');td3.style.textAlign='right';td3.textContent=room.target_occupancy.toFixed(0)+'%';tr.appendChild(td3);
+    seasons.forEach(function(season){var td=document.createElement('td');td.style.textAlign='center';td.style.padding='6px 4px';var md=room.seasons[season.id]||{modifier:1.0,effective_index:season.index};
+    var inp=document.createElement('input');inp.type='number';inp.step='0.01';inp.min='0.01';inp.max='5.00';inp.value=md.modifier.toFixed(2);inp.style.cssText='width:70px;text-align:center;padding:4px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;';inp.dataset.roomTypeId=room.room_type_id;inp.dataset.seasonId=season.id;inp.className='rt-season-mod-input';
+    inp.addEventListener('input',function(){var e=(season.index*(parseFloat(this.value)||1.0)).toFixed(2);var b=this.parentElement.querySelector('.eff-idx');b.textContent='\u2192 '+e;var ev=parseFloat(e);b.style.color=ev>1.2?'#059669':ev<0.8?'#dc2626':'#6b7280';});
+    td.appendChild(inp);var sp=document.createElement('div');sp.className='eff-idx';sp.style.cssText='font-size:11px;margin-top:2px;font-weight:500;';sp.style.color=md.effective_index>1.2?'#059669':md.effective_index<0.8?'#dc2626':'#6b7280';sp.textContent='\u2192 '+md.effective_index.toFixed(2);td.appendChild(sp);tr.appendChild(td);});
+    tbody.appendChild(tr);});
+}
+function saveAllRTSeasonMods(){var u=[];document.querySelectorAll('.rt-season-mod-input').forEach(function(i){var v=parseFloat(i.value);if(isNaN(v)||v<0.01)v=1.00;u.push({room_type_id:parseInt(i.dataset.roomTypeId),season_id:parseInt(i.dataset.seasonId),modifier:v.toFixed(2)});});
+fetch(API_BASE+'/api/room-type-season-modifiers/bulk-update/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken'),'X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({updates:u})}).then(function(r){return r.json();}).then(function(d){if(d.success){showToast(d.message||'Saved');loadRTSeasonMods();}else showToast(d.error||'Failed','error');});}
+function resetAllRTSeasonMods(){document.querySelectorAll('.rt-season-mod-input').forEach(function(i){i.value='1.00';i.dispatchEvent(new Event('input'));});}
+
+// Auto-load RT mods on tab click
+document.querySelectorAll('.tab-btn').forEach(function(btn){btn.addEventListener('click',function(){if(this.dataset.tab==='rt-season-mods'&&!rtSeasonModData)loadRTSeasonMods();});});
+{% endblock %}

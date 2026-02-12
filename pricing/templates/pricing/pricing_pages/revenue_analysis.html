@@ -1,0 +1,261 @@
+{% extends 'pricing/base.html' %}
+
+{% block title %}Revenue Analysis - Pricing Engine{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">Revenue Analysis</h1>
+            <p class="text-gray-600 mt-1">Projected monthly and seasonal revenue breakdown</p>
+        </div>
+        <div class="flex space-x-2">
+            <a href="{% url 'pricing:adr_analysis' %}" 
+               class="inline-flex items-center px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition">
+                ADR Analysis
+            </a>
+            <a href="{% url 'pricing:home' %}" 
+               class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                </svg>
+                Back to Home
+            </a>
+        </div>
+    </div>
+
+    {% if not has_data %}
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+        <h3 class="mt-2 text-lg font-medium text-gray-900">No Data Available</h3>
+        <p class="mt-1 text-sm text-gray-500">Load sample data to see revenue analysis.</p>
+    </div>
+    {% else %}
+
+    <!-- Configuration -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                </svg>
+                <div class="text-sm text-blue-900">
+                    <strong>Property Inventory:</strong> {{ total_rooms }} Total Rooms
+                    <span class="ml-2 text-xs">
+                        ({% for room_info in rooms_by_type %}{{ room_info.name }}: {{ room_info.count }}{% if not forloop.last %}, {% endif %}{% endfor %})
+                    </span>
+                </div>
+            </div>
+            <a href="{% url 'admin:pricing_roomtype_changelist' %}" 
+               class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded">
+                Manage Inventory
+            </a>
+        </div>
+    </div>
+
+    <!-- Annual Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div class="bg-gradient-to-br from-green-500 to-green-600 rounded-lg shadow-lg p-6 text-white">
+            <div class="text-sm font-medium opacity-90">Annual Revenue</div>
+            <div class="text-4xl font-bold mt-2">${{ total_annual_revenue|floatformat:0 }}</div>
+            <div class="text-sm opacity-75 mt-1">Total projected</div>
+        </div>
+        <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-lg p-6 text-white">
+            <div class="text-sm font-medium opacity-90">Room Nights Sold</div>
+            <div class="text-4xl font-bold mt-2">{{ total_annual_room_nights|floatformat:0 }}</div>
+            <div class="text-sm opacity-75 mt-1">Occupied nights</div>
+        </div>
+        <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
+            <div class="text-sm font-medium opacity-90">Annual ADR</div>
+            <div class="text-4xl font-bold mt-2">${{ annual_adr }}</div>
+            <div class="text-sm opacity-75 mt-1">Average per night</div>
+        </div>
+        <div class="bg-gradient-to-br from-amber-500 to-amber-600 rounded-lg shadow-lg p-6 text-white">
+            <div class="text-sm font-medium opacity-90">Occupancy</div>
+            <div class="text-4xl font-bold mt-2">{{ kpis.annual_occupancy }}%</div>
+            <div class="text-sm opacity-75 mt-1">Annual average</div>
+        </div>
+    </div>
+
+    <!-- Monthly Revenue Chart -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+            <h2 class="text-xl font-bold text-gray-900">Monthly Revenue Breakdown</h2>
+            <p class="text-sm text-gray-600 mt-1">Projected revenue by month</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Month</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Days</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">ADR</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Occupancy</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Room Nights</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Monthly Revenue</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Revenue/Day</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for month in monthly_data %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="font-medium text-gray-900">{{ month.month }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center text-sm text-gray-700">{{ month.days }}</td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-gray-900">${{ month.adr|floatformat:2 }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-blue-600">{{ month.occupancy|floatformat:1 }}%</div>
+                        </td>
+                        <td class="px-4 py-4 text-center text-sm text-gray-700">{{ month.room_nights }}</td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="text-lg font-bold text-green-600">${{ month.revenue|floatformat:0 }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center text-sm text-gray-700">${{ month.revenue_per_day|floatformat:0 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="bg-gray-50 font-bold">
+                    <tr>
+                        <td class="px-6 py-4 text-gray-900">ANNUAL TOTAL</td>
+                        <td class="px-4 py-4 text-center text-gray-900">365</td>
+                        <td class="px-4 py-4 text-center text-gray-900">${{ annual_adr }}</td>
+                        <td class="px-4 py-4 text-center text-blue-700">{{ kpis.annual_occupancy }}%</td>
+                        <td class="px-4 py-4 text-center text-gray-900">{{ total_annual_room_nights }}</td>
+                        <td class="px-4 py-4 text-center text-green-700">${{ total_annual_revenue|floatformat:0 }}</td>
+                        <td class="px-4 py-4 text-center text-gray-900">${{ kpis.average_daily_revenue|floatformat:0 }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- Seasonal Revenue Breakdown -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+            <h2 class="text-xl font-bold text-gray-900">Seasonal Revenue Breakdown</h2>
+            <p class="text-sm text-gray-600 mt-1">Revenue by pricing season</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Season</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Duration</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">ADR</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Occupancy</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">RevPAR</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Room Nights</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Revenue</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">% of Total</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for data in seasonal_data %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4">
+                            <div class="font-medium text-gray-900">{{ data.season.name }}</div>
+                            <div class="text-xs text-gray-500">{{ data.season.start_date|date:"M d" }} - {{ data.season.end_date|date:"M d" }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center text-sm text-gray-700">{{ data.days }} days</td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-gray-900">${{ data.adr }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-blue-600">{{ data.occupancy }}%</div>
+                        </td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-purple-600">${{ data.revpar|floatformat:2 }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center text-sm text-gray-700">{{ data.occupied_room_nights|floatformat:0 }}</td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="text-lg font-bold text-green-600">${{ data.revenue|floatformat:0 }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-amber-600">
+                                {{ data.revenue|floatformat:0|add:0 }}
+                                {% widthratio data.revenue total_annual_revenue 100 as percentage %}
+                                {{ percentage }}%
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Room Type Contribution -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+            <h2 class="text-xl font-bold text-gray-900">Revenue by Room Type</h2>
+            <p class="text-sm text-gray-600 mt-1">Estimated contribution by room category</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Room Type</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Inventory</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Room Nights</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">ADR</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Revenue</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">% of Total</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Visual</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for contrib in room_contribution %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4">
+                            <div class="font-medium text-gray-900">{{ contrib.room.name }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-blue-600">{{ contrib.room_count }} rooms</div>
+                        </td>
+                        <td class="px-4 py-4 text-center text-sm text-gray-700">{{ contrib.room_nights }}</td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-gray-900">${{ contrib.adr }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="text-lg font-bold text-green-600">${{ contrib.revenue|floatformat:0 }}</div>
+                        </td>
+                        <td class="px-4 py-4 text-center">
+                            <div class="font-semibold text-blue-600">{{ contrib.percentage }}%</div>
+                        </td>
+                        <td class="px-4 py-4">
+                            <div class="w-full bg-gray-200 rounded-full h-3">
+                                <div class="bg-blue-600 h-3 rounded-full" style="width: {{ contrib.percentage }}%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- KPIs Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Revenue Per Available Room</h3>
+            <p class="text-3xl font-bold text-gray-900">${{ kpis.revenue_per_available_room }}</p>
+            <p class="text-sm text-gray-500 mt-1">Annual RevPAR</p>
+        </div>
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Average Daily Revenue</h3>
+            <p class="text-3xl font-bold text-gray-900">${{ kpis.average_daily_revenue }}</p>
+            <p class="text-sm text-gray-500 mt-1">Property-wide per day</p>
+        </div>
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Total Available Rooms</h3>
+            <p class="text-3xl font-bold text-gray-900">{{ kpis.total_available_rooms|floatformat:0 }}</p>
+            <p class="text-sm text-gray-500 mt-1">Annual room nights</p>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}

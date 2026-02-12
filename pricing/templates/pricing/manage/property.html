@@ -1,0 +1,321 @@
+{% extends "pricing/manage/_base.html" %}
+
+{% block section_title %}Property{% endblock %}
+{% block page_heading %}Property Settings{% endblock %}
+
+{% block section_content %}
+<div class="tab-nav" role="tablist">
+    <button class="tab-btn active" data-tab="prop-settings">Settings</button>
+    <button class="tab-btn" data-tab="seasons">Seasons</button>
+    <button class="tab-btn" data-tab="rooms">Room Types</button>
+</div>
+
+<!-- Tab: Property Settings -->
+<div id="tab-prop-settings" class="tab-content active">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header"><h3 class="mgmt-card-title">{{ hotel.name }}</h3></div>
+        <div class="mgmt-card-body-padded">
+            <div class="form-row" style="margin-bottom:16px;">
+                <div class="form-group">
+                    <label class="form-label">Property Name</label>
+                    <input type="text" class="form-input" value="{{ hotel.name }}" data-field="name" data-type="property" onchange="updatePropertyField(this)">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Code</label>
+                    <input type="text" class="form-input" value="{{ hotel.code }}" disabled style="background:#f3f4f6;">
+                </div>
+            </div>
+            <div class="form-row" style="margin-bottom:16px;">
+                <div class="form-group">
+                    <label class="form-label">Location</label>
+                    <input type="text" class="form-input" value="{{ hotel.location }}" data-field="location" data-type="property" onchange="updatePropertyField(this)">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Reference Base Rate</label>
+                    <div class="input-prefix">
+                        <span>$</span>
+                        <input type="number" step="0.01" class="form-input" style="width:150px;" value="{{ hotel.reference_base_rate }}" data-field="reference_base_rate" data-type="property" onchange="updatePropertyField(this)">
+                    </div>
+                </div>
+            </div>
+            <div class="form-row" style="margin-bottom:16px;">
+                <div class="form-group">
+                    <label class="form-label">Service Charge %</label>
+                    <div class="input-suffix">
+                        <input type="number" step="0.01" class="form-input" style="width:120px;" value="{{ hotel.service_charge_percent }}" data-field="service_charge_percent" data-type="property" onchange="updatePropertyField(this)">
+                        <span>%</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Tax (GST/TGST) %</label>
+                    <div class="input-suffix">
+                        <input type="number" step="0.01" class="form-input" style="width:120px;" value="{{ hotel.tax_percent }}" data-field="tax_percent" data-type="property" onchange="updatePropertyField(this)">
+                        <span>%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Tax on Service Charge</label>
+                    <label class="toggle">
+                        <input type="checkbox" {% if hotel.tax_on_service_charge %}checked{% endif %} onchange="updatePropertyToggle('tax_on_service_charge', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Max Discount Warning</label>
+                    <div class="input-suffix">
+                        <input type="number" step="0.01" class="form-input" style="width:120px;" value="{{ hotel.max_discount_warning }}" data-field="max_discount_warning" data-type="property" onchange="updatePropertyField(this)">
+                        <span>%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+    <div id="tab-seasons" class="tab-content active">
+        <div class="mgmt-card">
+            <div class="mgmt-card-header">
+                <h3 class="mgmt-card-title">Seasons (Property-Specific)</h3>
+                <button class="btn btn-primary btn-sm" onclick="openModal('seasonModal')">+ Add Season</button>
+            </div>
+            <div class="mgmt-card-body">
+                {% if seasons %}
+                <table class="mgmt-table" id="seasonsTable">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Start Date</th>
+                            <th>End Date</th>
+                            <th>Index</th>
+                            <th>Exp. Occ.</th>
+                            <th style="width: 60px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for season in seasons %}
+                        <tr data-id="{{ season.id }}">
+                            <td><input type="text" class="editable-input" value="{{ season.name }}" data-field="name" data-id="{{ season.id }}" data-type="season" onchange="updateField(this)"></td>
+                            <td><input type="date" class="editable-input" value="{{ season.start_date|date:'Y-m-d' }}" data-field="start_date" data-id="{{ season.id }}" data-type="season" onchange="updateField(this)"></td>
+                            <td><input type="date" class="editable-input" value="{{ season.end_date|date:'Y-m-d' }}" data-field="end_date" data-id="{{ season.id }}" data-type="season" onchange="updateField(this)"></td>
+                            <td><div class="input-suffix"><input type="number" step="0.01" class="editable-input" style="width:70px;" value="{{ season.season_index }}" data-field="season_index" data-id="{{ season.id }}" data-type="season" onchange="updateField(this)"><span>Ã—</span></div></td>
+                            <td><div class="input-suffix"><input type="number" step="1" class="editable-input" style="width:60px;" value="{{ season.expected_occupancy }}" data-field="expected_occupancy" data-id="{{ season.id }}" data-type="season" onchange="updateField(this)"><span>%</span></div></td>
+                            <td><div class="row-actions"><button class="action-btn danger" onclick="deleteItem('season', {{ season.id }}, '{{ season.name }}')"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></div></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state">
+                    <p>No seasons defined yet.</p>
+                    <button class="btn btn-primary mt-4" onclick="openModal('seasonModal')">Add Your First Season</button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+
+    <div id="tab-rooms" class="tab-content">
+        <div class="mgmt-card">
+            <div class="mgmt-card-header">
+                <div>
+                    <h3 class="mgmt-card-title">Room Types (Property-Specific)</h3>
+                    <p class="text-sm text-gray-500 mt-1">
+                        Reference Base Rate: 
+                        <span class="inline-flex items-center">
+                            <span class="text-gray-500">$</span>
+                            <input type="number" step="0.01" min="0" 
+                                   class="editable-input ml-1" 
+                                   style="width:80px;" 
+                                   value="{{ hotel.reference_base_rate }}" 
+                                   data-field="reference_base_rate" 
+                                   data-id="{{ hotel.id }}" 
+                                   data-type="property" 
+                                   onchange="updatePropertyField(this)">
+                        </span>
+                    </p>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="openModal('roomModal')">+ Add Room Type</button>
+            </div>
+            <div class="mgmt-card-body">
+                {% if room_types %}
+                <table class="mgmt-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Method</th>
+                            <th>Index/Adj</th>
+                            <th>Effective Rate</th>
+                            <th>Rooms</th>
+                            <th style="width: 60px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for room in room_types %}
+                        <tr data-id="{{ room.id }}" data-room-index="{{ room.room_index }}" data-room-adjustment="{{ room.room_adjustment }}" data-base-rate="{{ room.base_rate }}">
+                            <td><input type="text" class="editable-input" value="{{ room.name }}" data-field="name" data-id="{{ room.id }}" data-type="room" onchange="updateField(this)"></td>
+                            <td>
+                                <select class="editable-input room-method-select" style="width:130px;" data-field="pricing_method" data-id="{{ room.id }}" data-type="room" onchange="updateField(this); updateRoomInputDisplay(this);">
+                                    <option value="index" {% if room.pricing_method == 'index' %}selected{% endif %}>Index (×)</option>
+                                    <option value="adjustment" {% if room.pricing_method == 'adjustment' %}selected{% endif %}>Adjustment (+$)</option>
+                                    <option value="direct" {% if room.pricing_method == 'direct' %}selected{% endif %}>Direct Rate</option>
+                                </select>
+                            </td>
+                            <td class="room-value-cell">
+                                <div class="input-suffix room-input-index" {% if room.pricing_method != 'index' %}style="display:none;"{% endif %}>
+                                    <input type="number" step="0.01" class="editable-input" style="width:70px;" value="{{ room.room_index }}" data-field="room_index" data-id="{{ room.id }}" data-type="room" onchange="updateField(this); updateEffectiveRate(this);">
+                                    <span>×</span>
+                                </div>
+                                <div class="input-prefix room-input-adjustment" {% if room.pricing_method != 'adjustment' %}style="display:none;"{% endif %}>
+                                    <span>+$</span>
+                                    <input type="number" step="0.01" class="editable-input" style="width:70px;" value="{{ room.room_adjustment }}" data-field="room_adjustment" data-id="{{ room.id }}" data-type="room" onchange="updateField(this); updateEffectiveRate(this);">
+                                </div>
+                                <div class="input-prefix room-input-direct" {% if room.pricing_method != 'direct' %}style="display:none;"{% endif %}>
+                                    <span>$</span>
+                                    <input type="number" step="0.01" class="editable-input" style="width:80px;" value="{{ room.base_rate }}" data-field="base_rate" data-id="{{ room.id }}" data-type="room" onchange="updateField(this); updateEffectiveRate(this);">
+                                </div>
+                            </td>
+                            <td><span class="font-semibold text-gray-900 effective-rate" data-room-id="{{ room.id }}">${{ room.get_effective_base_rate }}</span></td>
+                            <td><input type="number" class="editable-input" style="width:60px;" value="{{ room.number_of_rooms }}" data-field="number_of_rooms" data-id="{{ room.id }}" data-type="room" onchange="updateField(this)"></td>
+                            <td><div class="row-actions"><button class="action-btn danger" onclick="deleteItem('room', {{ room.id }}, '{{ room.name }}')"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></div></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state">
+                    <p>No room types defined yet.</p>
+                    <button class="btn btn-primary mt-4" onclick="openModal('roomModal')">Add Your First Room Type</button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+
+{% endblock %}
+
+{% block section_modals %}
+<!-- Season Modal -->
+<div id="seasonModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Add Season</h3>
+            <button class="modal-close" onclick="closeModal('seasonModal')">Ã—</button>
+        </div>
+        <form id="seasonForm" onsubmit="submitForm(event, 'season')">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Season Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g., High Season">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Start Date</label>
+                        <input type="date" name="start_date" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">End Date</label>
+                        <input type="date" name="end_date" class="form-input" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Season Index</label>
+                        <input type="number" name="season_index" class="form-input" step="0.01" value="1.00" required>
+                        <p class="form-hint">Multiplier for base rates (e.g., 1.30 = 30% increase)</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Expected Occupancy %</label>
+                        <input type="number" name="expected_occupancy" class="form-input" step="1" value="70" required>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('seasonModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Season</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Room Type Modal -->
+<div id="roomModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Add Room Type</h3>
+            <button class="modal-close" onclick="closeModal('roomModal')">Ã—</button>
+        </div>
+        <form id="roomForm" onsubmit="submitForm(event, 'room')">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Room Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g., Deluxe Suite">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Pricing Method</label>
+                    <select name="pricing_method" class="form-select" onchange="toggleRoomPricingFields(this.value)">
+                        <option value="index">Index Multiplier (Ã—)</option>
+                        <option value="adjustment">Fixed Adjustment (+$)</option>
+                        <option value="direct">Direct Base Rate</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" id="roomIndexField">
+                        <label class="form-label">Room Index</label>
+                        <input type="number" name="room_index" class="form-input" step="0.01" value="1.00">
+                        <p class="form-hint">e.g., 1.50 = 50% above reference rate</p>
+                    </div>
+                    <div class="form-group" id="roomAdjustmentField" style="display:none;">
+                        <label class="form-label">Adjustment ($)</label>
+                        <input type="number" name="room_adjustment" class="form-input" step="0.01" value="0">
+                    </div>
+                    <div class="form-group" id="roomBaseRateField" style="display:none;">
+                        <label class="form-label">Base Rate ($)</label>
+                        <input type="number" name="base_rate" class="form-input" step="0.01" value="{{ hotel.reference_base_rate }}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Number of Rooms</label>
+                        <input type="number" name="number_of_rooms" class="form-input" value="10" min="1">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('roomModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Room Type</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+
+{% endblock %}
+
+{% block section_js %}
+function getReferenceBaseRate() {
+    var i = document.querySelector('input[data-field="reference_base_rate"]');
+    return i ? parseFloat(i.value) || 0 : 0;
+}
+function updateRoomInputDisplay(sel) {
+    var row = sel.closest('tr'), m = sel.value;
+    row.querySelector('.room-input-index').style.display = m === 'index' ? '' : 'none';
+    row.querySelector('.room-input-adjustment').style.display = m === 'adjustment' ? '' : 'none';
+    row.querySelector('.room-input-direct').style.display = m === 'direct' ? '' : 'none';
+    updateEffectiveRateForRow(row);
+}
+function updateEffectiveRateForRow(row) {
+    var ref = getReferenceBaseRate(), m = row.querySelector('select[data-field="pricing_method"]').value, r = 0;
+    if (m === 'index') r = ref * (parseFloat(row.querySelector('input[data-field="room_index"]').value) || 1);
+    else if (m === 'adjustment') r = ref + (parseFloat(row.querySelector('input[data-field="room_adjustment"]').value) || 0);
+    else if (m === 'direct') r = parseFloat(row.querySelector('input[data-field="base_rate"]').value) || 0;
+    var s = row.querySelector('.effective-rate'); if (s) s.textContent = '$' + r.toFixed(2);
+}
+function updateEffectiveRate(input) { updateEffectiveRateForRow(input.closest('tr')); }
+function toggleRoomPricingFields(m) {
+    document.getElementById('roomIndexField').style.display = m === 'index' ? 'block' : 'none';
+    document.getElementById('roomAdjustmentField').style.display = m === 'adjustment' ? 'block' : 'none';
+    document.getElementById('roomBaseRateField').style.display = m === 'direct' ? 'block' : 'none';
+}
+{% endblock %}

@@ -23,6 +23,7 @@ import os
 from .models import (
     Organization, Property,
     Season, RoomType, RatePlan, Channel, RateModifier, SeasonModifierOverride,
+    RoomTypeSeasonModifier,
     BookingSource, Guest, Reservation, FileImport,
     DailyPickupSnapshot, MonthlyPickupSnapshot, PickupCurve, OccupancyForecast,
     DateRateOverride, DateRateOverridePeriod, ModifierTemplate, ModifierRule, PropertyModifier
@@ -218,16 +219,16 @@ class RoomTypeAdmin(admin.ModelAdmin):
     list_display = [
         'name', 'hotel', 'pricing_method', 'number_of_rooms',
         'base_rate', 'room_index', 'room_adjustment', 
-        'sort_order', 'effective_rate_display'
+        'sort_order', 'effective_rate_display', 'premium_display', 'target_occupancy'
     ]
-    list_editable = ['pricing_method', 'number_of_rooms', 'base_rate', 'room_index', 'room_adjustment', 'sort_order']
+    list_editable = ['pricing_method', 'number_of_rooms', 'base_rate', 'room_index', 'room_adjustment', 'sort_order', 'target_occupancy']
     list_filter = ['hotel', 'hotel__organization', 'pricing_method']
     search_fields = ['name', 'hotel__name']
     ordering = ['hotel', 'sort_order', 'name']
     
     fieldsets = (
         (None, {
-            'fields': ('hotel', 'name', 'number_of_rooms', 'sort_order')
+            'fields': ('hotel', 'name', 'number_of_rooms', 'sort_order', 'description', 'target_occupancy')
         }),
         ('Pricing Configuration', {
             'fields': ('pricing_method', 'base_rate', 'room_index', 'room_adjustment'),
@@ -245,6 +246,14 @@ class RoomTypeAdmin(admin.ModelAdmin):
         rate = obj.get_effective_base_rate()
         return f"${rate:.2f}"
     effective_rate_display.short_description = 'Effective Rate'
+    
+    def premium_display(self, obj):
+        """Show premium % vs reference rate."""
+        prem = obj.get_premium_percent()
+        if prem > 0:
+            return f"+{prem:.0f}%"
+        return "Base"
+    premium_display.short_description = 'Premium %'
 
 
 # =============================================================================
@@ -371,6 +380,21 @@ class SeasonModifierOverrideAdmin(admin.ModelAdmin):
         count = queryset.update(is_customized=True)
         self.message_user(request, f"Marked {count} entries as customized.")
     mark_as_customized.short_description = "Mark as customized"
+
+
+@admin.register(RoomTypeSeasonModifier)
+class RoomTypeSeasonModifierAdmin(admin.ModelAdmin):
+    """Admin for room type season modifiers."""
+    list_display = ['room_type', 'season', 'modifier', 'effective_index_display', 'notes']
+    list_editable = ['modifier', 'notes']
+    list_filter = ['room_type__hotel', 'season', 'room_type']
+    ordering = ['room_type__hotel', 'season__start_date', 'room_type__sort_order']
+    
+    def effective_index_display(self, obj):
+        """Show the effective index (season_index × modifier)."""
+        eff = obj.get_effective_index()
+        return f"×{eff}"
+    effective_index_display.short_description = "Effective Index"
 
 
 # =============================================================================

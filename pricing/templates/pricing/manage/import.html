@@ -1,0 +1,95 @@
+{% extends "pricing/manage/_base.html" %}
+
+{% block section_title %}Data Import{% endblock %}
+{% block page_heading %}Data Import{% endblock %}
+
+{% block section_content %}
+<div class="tab-nav" role="tablist">
+    <button class="tab-btn active" data-tab="import-upload">Upload</button>
+    <button class="tab-btn" data-tab="import-history">Import History</button>
+    <button class="tab-btn" data-tab="import-sources">Booking Sources</button>
+</div>
+
+<div id="tab-import-upload" class="tab-content active">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header"><h3 class="mgmt-card-title">Import Reservation Data</h3></div>
+        <div class="mgmt-card-body-padded">
+            {% if import_stats.total_imports %}
+            <div class="stat-grid">
+                <div class="stat-card"><div class="stat-value">{{ import_stats.total_imports }}</div><div class="stat-label">Total Imports</div></div>
+                <div class="stat-card"><div class="stat-value">{{ import_stats.total_rows|default:"0" }}</div><div class="stat-label">Rows Processed</div></div>
+                <div class="stat-card"><div class="stat-value">{{ import_stats.total_created|default:"0" }}</div><div class="stat-label">Created</div></div>
+                <div class="stat-card"><div class="stat-value">{{ import_stats.total_updated|default:"0" }}</div><div class="stat-label">Updated</div></div>
+            </div>
+            {% endif %}
+            <div style="border:2px dashed #d1d5db; border-radius:12px; padding:40px; text-align:center; background:#f9fafb;">
+                <p style="font-size:32px; margin-bottom:8px;">📤</p>
+                <p class="font-semibold text-gray-700">Upload CSV/Excel File</p>
+                <p class="text-sm text-gray-500 mt-2">PMS export file (.csv, .xlsx, .xls)</p>
+                <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" style="display:none;">
+                <button class="btn btn-primary mt-4" onclick="document.getElementById('importFileInput').click()">Select File</button>
+            </div>
+            <div class="alert alert-info" style="margin-top:16px;">
+                <span>You can also import via <a href="{% url 'admin:index' %}pricing/fileimport/" class="underline font-medium">Django Admin → File Imports</a></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="tab-import-history" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header"><h3 class="mgmt-card-title">Import History</h3></div>
+        <div class="mgmt-card-body">
+            {% if file_imports %}
+            <table class="mgmt-table">
+                <thead><tr><th>File</th><th>Status</th><th>Rows</th><th>Created</th><th>Updated</th><th>Date Range</th><th>Imported</th></tr></thead>
+                <tbody>
+                    {% for imp in file_imports %}
+                    <tr>
+                        <td class="font-medium">{{ imp.filename }}</td>
+                        <td><span class="badge {% if imp.status == 'completed' %}badge-green{% elif imp.status == 'failed' %}badge-red{% else %}badge-yellow{% endif %}">{{ imp.status }}</span></td>
+                        <td>{{ imp.rows_total }}</td>
+                        <td class="text-green-600">+{{ imp.rows_created }}</td>
+                        <td class="text-blue-600">~{{ imp.rows_updated }}</td>
+                        <td class="text-sm text-gray-500">{% if imp.date_range_start %}{{ imp.date_range_start|date:"M j" }} – {{ imp.date_range_end|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td class="text-sm text-gray-500">{{ imp.created_at|timesince }} ago</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state"><p>No imports yet for this property.</p></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div id="tab-import-sources" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Booking Source Mapping</h3>
+            <p class="text-sm text-gray-500">Maps PMS booking sources to pricing channels</p>
+        </div>
+        <div class="mgmt-card-body">
+            {% if booking_sources %}
+            <table class="mgmt-table">
+                <thead><tr><th>Source Name</th><th>Maps to Channel</th><th>Direct?</th><th>Import Values</th><th>Active</th></tr></thead>
+                <tbody>
+                    {% for src in booking_sources %}
+                    <tr>
+                        <td class="font-medium">{{ src.name }}</td>
+                        <td>{% if src.channel %}<span class="badge badge-blue">{{ src.channel.name }}</span>{% else %}<span class="text-gray-400">—</span>{% endif %}</td>
+                        <td>{% if src.is_direct %}<span class="badge badge-green">Direct</span>{% else %}<span class="badge badge-gray">OTA</span>{% endif %}</td>
+                        <td class="text-sm text-gray-500">{{ src.import_values|truncatechars:50 }}</td>
+                        <td>{% if src.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-red">Inactive</span>{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state"><p>No booking sources configured. Run <code>python manage.py setup_booking_sources</code></p></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
