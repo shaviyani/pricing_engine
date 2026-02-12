@@ -31,6 +31,7 @@ from .views import (
     BookingAnalysisDashboardView,
     PickupDashboardView,
     MonthDetailAPIView,
+    DateRateOverrideCalendarView,
     
     # AJAX endpoints
     parity_data_ajax,
@@ -39,6 +40,11 @@ from .views import (
     pickup_summary_ajax,
     update_room,
     update_season,
+    date_rate_detail_ajax,
+    calendar_rates_ajax,
+    
+
+    
 )
 
 app_name = 'pricing'
@@ -121,8 +127,20 @@ urlpatterns = [
     path(
     '<str:org_code>/<str:prop_code>/api/month-detail/',
     MonthDetailAPIView.as_view(),
-    name='month_detail_api'
-),
+    name='month_detail_api'),
+    
+    
+     # Date Rate Override Calendar
+     path('org/<slug:org_code>/<slug:prop_code>/override-calendar/', DateRateOverrideCalendarView.as_view(), name='override_calendar'),
+
+    
+    # AJAX endpoint for date details
+    path('<slug:org_code>/<slug:prop_code>/api/date-rate-detail/', date_rate_detail_ajax, name='date_rate_detail_ajax'),
+
+     path('<slug:org_code>/<slug:prop_code>/api/calendar-rates/', 
+     calendar_rates_ajax, 
+     name='calendar_rates_ajax'),
+     
 ]
 
 

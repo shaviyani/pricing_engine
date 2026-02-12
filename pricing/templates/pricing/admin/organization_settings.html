@@ -1,0 +1,873 @@
+{% extends "pricing/base.html" %}
+{% load humanize %}
+
+{% block title %}Organization Settings - {{ organization.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* KPI Cards */
+    .kpi-card { transition: transform 0.2s, box-shadow 0.2s; }
+    .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+    
+    /* Cards */
+    .settings-card {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    
+    .settings-card-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+    }
+    
+    .settings-card-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #111827;
+    }
+    
+    .settings-card-body {
+        padding: 20px;
+    }
+    
+    /* Form styling */
+    .form-group {
+        margin-bottom: 16px;
+    }
+    
+    .form-group:last-child {
+        margin-bottom: 0;
+    }
+    
+    .form-label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: #374151;
+        margin-bottom: 6px;
+    }
+    
+    .form-input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 14px;
+        color: #111827;
+        transition: all 0.15s;
+    }
+    
+    .form-input:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    
+    .form-input:disabled {
+        background: #f9fafb;
+        color: #6b7280;
+    }
+    
+    .form-hint {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 4px;
+    }
+    
+    .form-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+    }
+    
+    /* Toggle switch */
+    .toggle-switch {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+    }
+    
+    .toggle-switch input {
+        position: absolute;
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    
+    .toggle-slider {
+        width: 44px;
+        height: 24px;
+        background: #d1d5db;
+        border-radius: 12px;
+        transition: all 0.2s;
+        position: relative;
+    }
+    
+    .toggle-slider::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 20px;
+        height: 20px;
+        background: white;
+        border-radius: 50%;
+        transition: transform 0.2s;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    
+    .toggle-switch input:checked + .toggle-slider {
+        background: #3b82f6;
+    }
+    
+    .toggle-switch input:checked + .toggle-slider::after {
+        transform: translateX(20px);
+    }
+    
+    .toggle-label {
+        margin-left: 10px;
+        font-size: 14px;
+        color: #374151;
+    }
+    
+    /* Buttons */
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 10px 16px;
+        font-size: 14px;
+        font-weight: 500;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s;
+        border: none;
+    }
+    
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    
+    .btn-secondary { background: #f3f4f6; color: #374151; }
+    .btn-secondary:hover { background: #e5e7eb; }
+    
+    .btn-danger { background: #fee2e2; color: #dc2626; }
+    .btn-danger:hover { background: #fecaca; }
+    
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+    
+    /* Property cards */
+    .property-card {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        overflow: hidden;
+        transition: all 0.2s;
+    }
+    
+    .property-card:hover {
+        border-color: #3b82f6;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+    }
+    
+    .property-card-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #f3f4f6;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .property-name {
+        font-size: 16px;
+        font-weight: 600;
+        color: #111827;
+    }
+    
+    .property-code {
+        font-size: 12px;
+        color: #6b7280;
+        background: #f3f4f6;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-family: monospace;
+    }
+    
+    .property-card-body {
+        padding: 16px 20px;
+    }
+    
+    .property-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+    
+    .property-stat {
+        text-align: center;
+        padding: 8px;
+        background: #f9fafb;
+        border-radius: 6px;
+    }
+    
+    .property-stat-value {
+        font-size: 18px;
+        font-weight: 700;
+        color: #111827;
+    }
+    
+    .property-stat-label {
+        font-size: 11px;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    .property-card-actions {
+        display: flex;
+        gap: 8px;
+        padding: 12px 20px;
+        background: #f9fafb;
+        border-top: 1px solid #f3f4f6;
+    }
+    
+    /* Modal */
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 100;
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.2s;
+    }
+    
+    .modal-overlay.active {
+        opacity: 1;
+        visibility: visible;
+    }
+    
+    .modal {
+        background: white;
+        border-radius: 16px;
+        width: 100%;
+        max-width: 500px;
+        max-height: 90vh;
+        overflow: hidden;
+        transform: translateY(20px);
+        transition: transform 0.2s;
+    }
+    
+    .modal-overlay.active .modal {
+        transform: translateY(0);
+    }
+    
+    .modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .modal-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #111827;
+    }
+    
+    .modal-close {
+        background: none;
+        border: none;
+        font-size: 24px;
+        color: #6b7280;
+        cursor: pointer;
+        padding: 4px;
+        line-height: 1;
+    }
+    
+    .modal-close:hover { color: #111827; }
+    
+    .modal-body {
+        padding: 24px;
+        overflow-y: auto;
+        max-height: calc(90vh - 140px);
+    }
+    
+    .modal-footer {
+        padding: 16px 24px;
+        border-top: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+    }
+    
+    /* Toast notifications */
+    .toast {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 200;
+        transform: translateY(100px);
+        opacity: 0;
+        transition: all 0.3s;
+    }
+    
+    .toast.show {
+        transform: translateY(0);
+        opacity: 1;
+    }
+    
+    .toast.success { background: #059669; color: white; }
+    .toast.error { background: #dc2626; color: white; }
+    
+    /* Save indicator */
+    .save-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: #6b7280;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+    
+    .save-indicator.saving { opacity: 1; color: #f59e0b; }
+    .save-indicator.saved { opacity: 1; color: #059669; }
+    
+    @media print { .no-print { display: none !important; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+<div class="space-y-6">
+    
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Organization Settings</h1>
+            <p class="text-gray-600 mt-1">Manage {{ organization.name }} and its properties</p>
+        </div>
+        <div class="flex items-center gap-3 no-print">
+            <span id="saveIndicator" class="save-indicator">
+                <span class="saving-text">💾 Saving...</span>
+                <span class="saved-text" style="display:none;">✓ Saved</span>
+            </span>
+        </div>
+    </div>
+    
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="kpi-card bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Organization</p>
+            <p class="text-xl font-bold mt-1">{{ organization.name }}</p>
+            <p class="text-xs opacity-75 mt-1">{{ organization.code }}</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Properties</p>
+            <p class="text-2xl font-bold mt-1">{{ property_count }}</p>
+            <p class="text-xs opacity-75 mt-1">Active hotels</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Total Rooms</p>
+            <p class="text-2xl font-bold mt-1">{{ total_rooms }}</p>
+            <p class="text-xs opacity-75 mt-1">Across all properties</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Currency</p>
+            <p class="text-2xl font-bold mt-1">{{ organization.currency_symbol }} {{ organization.default_currency }}</p>
+            <p class="text-xs opacity-75 mt-1">Default currency</p>
+        </div>
+    </div>
+    
+    <!-- Organization Details -->
+    <div class="settings-card">
+        <div class="settings-card-header">
+            <h2 class="settings-card-title">🏢 Organization Details</h2>
+        </div>
+        <div class="settings-card-body">
+            <form id="orgForm" onsubmit="return false;">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Organization Name</label>
+                        <input type="text" name="name" class="form-input" value="{{ organization.name }}" 
+                               onchange="saveOrganization()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Code (URL slug)</label>
+                        <input type="text" name="code" class="form-input" value="{{ organization.code }}" disabled>
+                        <p class="form-hint">Cannot be changed after creation</p>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Default Currency</label>
+                        <select name="default_currency" class="form-input" onchange="saveOrganization()">
+                            <option value="USD" {% if organization.default_currency == 'USD' %}selected{% endif %}>USD - US Dollar</option>
+                            <option value="EUR" {% if organization.default_currency == 'EUR' %}selected{% endif %}>EUR - Euro</option>
+                            <option value="GBP" {% if organization.default_currency == 'GBP' %}selected{% endif %}>GBP - British Pound</option>
+                            <option value="MVR" {% if organization.default_currency == 'MVR' %}selected{% endif %}>MVR - Maldivian Rufiyaa</option>
+                            <option value="AED" {% if organization.default_currency == 'AED' %}selected{% endif %}>AED - UAE Dirham</option>
+                            <option value="SGD" {% if organization.default_currency == 'SGD' %}selected{% endif %}>SGD - Singapore Dollar</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Currency Symbol</label>
+                        <input type="text" name="currency_symbol" class="form-input" value="{{ organization.currency_symbol }}" 
+                               maxlength="5" style="width: 80px;" onchange="saveOrganization()">
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Properties Section -->
+    <div class="settings-card">
+        <div class="settings-card-header">
+            <h2 class="settings-card-title">🏨 Properties</h2>
+            <button class="btn btn-primary btn-sm" onclick="openAddPropertyModal()">
+                + Add Property
+            </button>
+        </div>
+        <div class="settings-card-body">
+            {% if properties %}
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {% for prop in properties %}
+                <div class="property-card" id="property-{{ prop.id }}">
+                    <div class="property-card-header">
+                        <div>
+                            <div class="property-name">{{ prop.name }}</div>
+                            <div class="text-sm text-gray-500 mt-1">{{ prop.location|default:"No location set" }}</div>
+                        </div>
+                        <span class="property-code">{{ prop.code }}</span>
+                    </div>
+                    <div class="property-card-body">
+                        <div class="property-stats">
+                            <div class="property-stat">
+                                <div class="property-stat-value">{{ prop.total_rooms }}</div>
+                                <div class="property-stat-label">Rooms</div>
+                            </div>
+                            <div class="property-stat">
+                                <div class="property-stat-value">{{ prop.room_type_count }}</div>
+                                <div class="property-stat-label">Room Types</div>
+                            </div>
+                            <div class="property-stat">
+                                <div class="property-stat-value">{{ prop.season_count }}</div>
+                                <div class="property-stat-label">Seasons</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Inline settings -->
+                        <div class="space-y-3 text-sm">
+                            <div class="flex items-center justify-between py-2 border-b border-gray-100">
+                                <span class="text-gray-600">Reference Base Rate</span>
+                                <span class="font-medium">${{ prop.reference_base_rate }}</span>
+                            </div>
+                            <div class="flex items-center justify-between py-2 border-b border-gray-100">
+                                <span class="text-gray-600">Service Charge</span>
+                                <span class="font-medium">{{ prop.service_charge_percent }}%</span>
+                            </div>
+                            <div class="flex items-center justify-between py-2 border-b border-gray-100">
+                                <span class="text-gray-600">Tax (GST)</span>
+                                <span class="font-medium">{{ prop.tax_percent }}%</span>
+                            </div>
+                            <div class="flex items-center justify-between py-2">
+                                <span class="text-gray-600">Tax on Service Charge</span>
+                                <span class="font-medium">{% if prop.tax_on_service_charge %}Yes{% else %}No{% endif %}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="property-card-actions">
+                        <button class="btn btn-secondary btn-sm flex-1" onclick="openEditPropertyModal({{ prop.id }}, '{{ prop.name }}', '{{ prop.code }}', '{{ prop.location }}', '{{ prop.reference_base_rate }}', '{{ prop.currency_symbol }}', '{{ prop.service_charge_percent }}', '{{ prop.tax_percent }}', {{ prop.tax_on_service_charge|yesno:'true,false' }})">
+                            ✏️ Edit Settings
+                        </button>
+                        <a href="{% url 'pricing:pricing_management' org_code=organization.code prop_code=prop.code %}" class="btn btn-secondary btn-sm flex-1">
+                            ⚙️ Pricing Config
+                        </a>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-12">
+                <div class="text-gray-400 text-5xl mb-4">🏨</div>
+                <h3 class="text-lg font-medium text-gray-700 mb-2">No Properties Yet</h3>
+                <p class="text-gray-500 mb-4">Add your first property to get started.</p>
+                <button class="btn btn-primary" onclick="openAddPropertyModal()">+ Add Property</button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+</div>
+</div>
+
+<!-- Add Property Modal -->
+<div id="addPropertyModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Add New Property</h3>
+            <button class="modal-close" onclick="closeModal('addPropertyModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="addPropertyForm">
+                <div class="form-group">
+                    <label class="form-label">Property Name *</label>
+                    <input type="text" name="name" class="form-input" placeholder="e.g., Biosphere Inn" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Code (URL slug)</label>
+                    <input type="text" name="code" class="form-input" placeholder="e.g., biosphere-inn">
+                    <p class="form-hint">Leave blank to auto-generate from name</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Location</label>
+                    <input type="text" name="location" class="form-input" placeholder="e.g., Maldives, Kaafu Atoll">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Reference Base Rate</label>
+                        <input type="number" name="reference_base_rate" class="form-input" value="100" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Currency Symbol</label>
+                        <input type="text" name="currency_symbol" class="form-input" value="$" maxlength="5">
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('addPropertyModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="createProperty()">Create Property</button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Property Modal -->
+<div id="editPropertyModal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Edit Property Settings</h3>
+            <button class="modal-close" onclick="closeModal('editPropertyModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="editPropertyForm">
+                <input type="hidden" name="property_id" id="editPropertyId">
+                <input type="hidden" name="property_code" id="editPropertyCode">
+                
+                <div class="form-group">
+                    <label class="form-label">Property Name</label>
+                    <input type="text" name="name" id="editPropertyName" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Location</label>
+                    <input type="text" name="location" id="editPropertyLocation" class="form-input">
+                </div>
+                
+                <hr class="my-4 border-gray-200">
+                <h4 class="font-medium text-gray-900 mb-3">Pricing Settings</h4>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Reference Base Rate</label>
+                        <input type="number" name="reference_base_rate" id="editPropertyBaseRate" class="form-input" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Currency Symbol</label>
+                        <input type="text" name="currency_symbol" id="editPropertyCurrency" class="form-input" maxlength="5">
+                    </div>
+                </div>
+                
+                <hr class="my-4 border-gray-200">
+                <h4 class="font-medium text-gray-900 mb-3">Tax & Service Charge</h4>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Service Charge %</label>
+                        <input type="number" name="service_charge_percent" id="editPropertyServiceCharge" class="form-input" step="0.01" min="0" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Tax (GST) %</label>
+                        <input type="number" name="tax_percent" id="editPropertyTax" class="form-input" step="0.01" min="0" max="100">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="toggle-switch">
+                        <input type="checkbox" name="tax_on_service_charge" id="editPropertyTaxOnSC">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">Apply tax on service charge</span>
+                    </label>
+                    <p class="form-hint mt-2">When enabled, tax is calculated on (subtotal + service charge)</p>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-danger btn-sm" onclick="deleteProperty()" style="margin-right: auto;">
+                🗑️ Delete
+            </button>
+            <button class="btn btn-secondary" onclick="closeModal('editPropertyModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveProperty()">Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast notification -->
+<div id="toast" class="toast"></div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var orgCode = '{{ organization.code }}';
+var csrfToken = '{{ csrf_token }}';
+
+// =============================================================================
+// MODAL FUNCTIONS
+// =============================================================================
+
+function openModal(modalId) {
+    document.getElementById(modalId).classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+function openAddPropertyModal() {
+    document.getElementById('addPropertyForm').reset();
+    openModal('addPropertyModal');
+}
+
+function openEditPropertyModal(id, name, code, location, baseRate, currency, serviceCharge, tax, taxOnSC) {
+    document.getElementById('editPropertyId').value = id;
+    document.getElementById('editPropertyCode').value = code;
+    document.getElementById('editPropertyName').value = name;
+    document.getElementById('editPropertyLocation').value = location || '';
+    document.getElementById('editPropertyBaseRate').value = baseRate;
+    document.getElementById('editPropertyCurrency').value = currency;
+    document.getElementById('editPropertyServiceCharge').value = serviceCharge;
+    document.getElementById('editPropertyTax').value = tax;
+    document.getElementById('editPropertyTaxOnSC').checked = taxOnSC;
+    openModal('editPropertyModal');
+}
+
+// =============================================================================
+// TOAST NOTIFICATIONS
+// =============================================================================
+
+function showToast(message, type) {
+    var toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = 'toast ' + type + ' show';
+    
+    setTimeout(function() {
+        toast.classList.remove('show');
+    }, 3000);
+}
+
+function showSaving() {
+    var indicator = document.getElementById('saveIndicator');
+    indicator.classList.remove('saved');
+    indicator.classList.add('saving');
+    indicator.querySelector('.saving-text').style.display = '';
+    indicator.querySelector('.saved-text').style.display = 'none';
+}
+
+function showSaved() {
+    var indicator = document.getElementById('saveIndicator');
+    indicator.classList.remove('saving');
+    indicator.classList.add('saved');
+    indicator.querySelector('.saving-text').style.display = 'none';
+    indicator.querySelector('.saved-text').style.display = '';
+    
+    setTimeout(function() {
+        indicator.classList.remove('saved');
+    }, 2000);
+}
+
+// =============================================================================
+// ORGANIZATION API
+// =============================================================================
+
+function saveOrganization() {
+    var form = document.getElementById('orgForm');
+    var data = {
+        name: form.querySelector('[name="name"]').value,
+        default_currency: form.querySelector('[name="default_currency"]').value,
+        currency_symbol: form.querySelector('[name="currency_symbol"]').value
+    };
+    
+    showSaving();
+    
+    fetch('/' + orgCode + '/api/organization/update/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(data)
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(result) {
+        if (result.success) {
+            showSaved();
+        } else {
+            showToast(result.error || 'Error saving', 'error');
+        }
+    })
+    .catch(function(error) {
+        showToast('Error: ' + error.message, 'error');
+    });
+}
+
+// =============================================================================
+// PROPERTY API
+// =============================================================================
+
+function createProperty() {
+    var form = document.getElementById('addPropertyForm');
+    var data = {
+        name: form.querySelector('[name="name"]').value,
+        code: form.querySelector('[name="code"]').value,
+        location: form.querySelector('[name="location"]').value,
+        reference_base_rate: form.querySelector('[name="reference_base_rate"]').value,
+        currency_symbol: form.querySelector('[name="currency_symbol"]').value
+    };
+    
+    if (!data.name.trim()) {
+        showToast('Property name is required', 'error');
+        return;
+    }
+    
+    fetch('/' + orgCode + '/api/properties/create/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(data)
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(result) {
+        if (result.success) {
+            showToast('Property created successfully', 'success');
+            closeModal('addPropertyModal');
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(result.error || 'Error creating property', 'error');
+        }
+    })
+    .catch(function(error) {
+        showToast('Error: ' + error.message, 'error');
+    });
+}
+
+function saveProperty() {
+    var form = document.getElementById('editPropertyForm');
+    var propCode = document.getElementById('editPropertyCode').value;
+    
+    var data = {
+        name: form.querySelector('[name="name"]').value,
+        location: form.querySelector('[name="location"]').value,
+        reference_base_rate: form.querySelector('[name="reference_base_rate"]').value,
+        currency_symbol: form.querySelector('[name="currency_symbol"]').value,
+        service_charge_percent: form.querySelector('[name="service_charge_percent"]').value,
+        tax_percent: form.querySelector('[name="tax_percent"]').value,
+        tax_on_service_charge: form.querySelector('[name="tax_on_service_charge"]').checked
+    };
+    
+    fetch('/' + orgCode + '/' + propCode + '/api/property/update/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(data)
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(result) {
+        if (result.success) {
+            showToast('Property updated successfully', 'success');
+            closeModal('editPropertyModal');
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(result.error || 'Error updating property', 'error');
+        }
+    })
+    .catch(function(error) {
+        showToast('Error: ' + error.message, 'error');
+    });
+}
+
+function deleteProperty() {
+    var propId = document.getElementById('editPropertyId').value;
+    var propName = document.getElementById('editPropertyName').value;
+    
+    if (!confirm('Are you sure you want to delete "' + propName + '"? This action cannot be undone.')) {
+        return;
+    }
+    
+    fetch('/' + orgCode + '/api/properties/' + propId + '/delete/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        }
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(result) {
+        if (result.success) {
+            showToast('Property deleted', 'success');
+            closeModal('editPropertyModal');
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(result.error || 'Error deleting property', 'error');
+        }
+    })
+    .catch(function(error) {
+        showToast('Error: ' + error.message, 'error');
+    });
+}
+
+// Close modal on escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-overlay.active').forEach(function(modal) {
+            modal.classList.remove('active');
+        });
+        document.body.style.overflow = '';
+    }
+});
+
+// Close modal on backdrop click
+document.querySelectorAll('.modal-overlay').forEach(function(overlay) {
+    overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) {
+            overlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+    });
+});
+</script>
+{% endblock %}

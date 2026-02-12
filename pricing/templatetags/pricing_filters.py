@@ -63,3 +63,33 @@ def get_item(dictionary, key):
     if dictionary is None:
         return None
     return dictionary.get(key)
+
+
+@register.filter
+def get_nested(dictionary, keys):
+    '''
+    Get nested value from dictionary using dot notation or multiple arguments.
+    
+    Usage in template:
+        {{ matrix|get_nested:channel.id:season.id:'room_rate' }}
+    '''
+    if dictionary is None:
+        return None
+    
+    # Handle multiple keys passed as separate arguments
+    if isinstance(keys, str) and ':' in keys:
+        keys = keys.split(':')
+    elif not isinstance(keys, (list, tuple)):
+        keys = [keys]
+    
+    result = dictionary
+    for key in keys:
+        if result is None:
+            return None
+        try:
+            # Try integer key first
+            result = result.get(int(key), result.get(key))
+        except (ValueError, TypeError):
+            result = result.get(key)
+    
+    return result

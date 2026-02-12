@@ -29,12 +29,17 @@
                 </svg>
             </a>
             <a href="{% url 'pricing:pickup_dashboard' %}">Pickup Analysis</a>
+            <a href="{% url 'pricing:override_calendar' org_code=org_code prop_code=prop_code %}" 
+   class="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+    Rate Calendar
+</a>
 
             <a href="{% url 'pricing:booking_analysis_dashboard' %}">Booking Analysis</a>
             <a href="{% url 'admin:index' %}" 
                class="inline-flex items-center px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition">
                 Manage Data
             </a>
+
         </div>
     </div>
 

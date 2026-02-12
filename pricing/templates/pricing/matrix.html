@@ -1,540 +1,572 @@
-{% extends 'pricing/base.html' %}
-{% load pricing_filters %}
+{% extends "pricing/base.html" %}
 {% load humanize %}
+{% load pricing_filters %}
 
-{% block title %}Pricing Matrix{% endblock %}
+{% block title %}Pricing Matrix - {{ hotel.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* KPI Cards */
+    .kpi-card { transition: transform 0.2s, box-shadow 0.2s; }
+    .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+    
+    /* Matrix Table */
+    .matrix-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .matrix-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        min-width: 800px;
+    }
+    
+    .matrix-table thead th {
+        background: #f9fafb;
+        padding: 12px 8px;
+        text-align: center;
+        font-weight: 600;
+        color: #374151;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 2px solid #e5e7eb;
+    }
+    
+    .matrix-table thead th.corner {
+        position: sticky;
+        left: 0;
+        z-index: 20;
+        background: #f9fafb;
+        text-align: left;
+        min-width: 240px;
+        padding-left: 16px;
+    }
+    
+    .season-header { min-width: 110px; }
+    .season-name { font-weight: 700; color: #111827; font-size: 12px; }
+    .season-dates { font-size: 10px; color: #6b7280; font-weight: 400; margin-top: 2px; }
+    .season-index { 
+        font-size: 10px; 
+        color: #3b82f6; 
+        font-weight: 600; 
+        margin-top: 2px;
+        background: #eff6ff;
+        padding: 2px 6px;
+        border-radius: 4px;
+        display: inline-block;
+    }
+    
+    .matrix-table tbody td {
+        padding: 10px 8px;
+        vertical-align: middle;
+        text-align: center;
+        border-bottom: 1px solid #f3f4f6;
+    }
+    
+    /* Channel Header Row (expandable) */
+    .channel-header-row td {
+        background: #ffffff !important;
+        color: #111827;
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+        border-bottom: 2px solid #e5e7eb !important;
+        border-top: 1px solid #e5e7eb;
+    }
+    .channel-header-row td.channel-name-cell {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #ffffff !important;
+        text-align: left;
+        padding-left: 16px;
+    }
+    .channel-header-row:hover td {
+        background: #f9fafb !important;
+    }
+    .channel-header-row:hover td.channel-name-cell {
+        background: #f9fafb !important;
+    }
+    
+    .channel-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .channel-badge {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        font-weight: 500;
+    }
+    .channel-badge.discount {
+        background: #dcfce7;
+        color: #166534;
+    }
+    .channel-badge.commission {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    
+    /* BAR Reference Row */
+    .bar-row td {
+        background: #f0fdf4 !important;
+        border-bottom: 1px solid #bbf7d0;
+    }
+    .bar-row td.row-label {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #dcfce7 !important;
+        text-align: left;
+        padding-left: 32px;
+        font-weight: 500;
+        color: #166534;
+        font-style: italic;
+    }
+    
+    /* Channel Base Rate Row */
+    .channel-base-row td {
+        background: #f8fafc;
+        font-weight: 600;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    .channel-base-row td.row-label {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #f1f5f9;
+        text-align: left;
+        padding-left: 32px;
+        font-weight: 600;
+        color: #1e293b;
+    }
+    
+    /* Modifier Rate Rows */
+    .modifier-row td {
+        background: #ffffff;
+    }
+    .modifier-row td.row-label {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #fafafa;
+        text-align: left;
+        padding-left: 40px;
+        font-weight: 500;
+        color: #4b5563;
+    }
+    .modifier-row:hover td {
+        background: #eff6ff !important;
+    }
+    .modifier-row:hover td.row-label {
+        background: #dbeafe !important;
+    }
+    
+    /* Stacked modifier row */
+    .modifier-row.stacked td {
+        background: #fefce8;
+    }
+    .modifier-row.stacked td.row-label {
+        background: #fef9c3;
+    }
+    .modifier-row.stacked:hover td {
+        background: #fef08a !important;
+    }
+    .modifier-row.stacked:hover td.row-label {
+        background: #fde047 !important;
+    }
+    
+    /* Dual rate display */
+    .rate-dual {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+    }
+    .rate-subtotal {
+        font-size: 14px;
+        font-weight: 700;
+        color: #111827;
+    }
+    .rate-final {
+        font-size: 10px;
+        color: #6b7280;
+        font-weight: 500;
+    }
+    
+    /* Discount badge in modifier row */
+    .discount-badge {
+        font-size: 10px;
+        color: #059669;
+        font-weight: 600;
+        margin-left: 4px;
+        background: #d1fae5;
+        padding: 1px 6px;
+        border-radius: 4px;
+    }
+    
+    /* Toggle icon */
+    .toggle-icon {
+        display: inline-block;
+        transition: transform 0.2s;
+        margin-right: 8px;
+        font-size: 10px;
+    }
+    .toggle-icon.collapsed {
+        transform: rotate(-90deg);
+    }
+    
+    /* Hidden rows */
+    .channel-details-hidden {
+        display: none;
+    }
+    
+    /* Filter select styling */
+    .filter-select {
+        padding: 10px 14px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 14px;
+        min-width: 180px;
+        background: white;
+        color: #374151;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .filter-select:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    .filter-select:hover {
+        border-color: #9ca3af;
+    }
+    
+    /* Print styles */
+    @media print {
+        .no-print { display: none !important; }
+        body { background: white; }
+        .matrix-table thead th.corner,
+        .channel-header-row td.channel-name-cell,
+        .channel-base-row td.row-label,
+        .modifier-row td.row-label,
+        .bar-row td.row-label { position: static; }
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .matrix-table { font-size: 11px; }
+        .rate-subtotal { font-size: 12px; }
+        .rate-final { font-size: 9px; }
+    }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
 <div class="space-y-6">
+    
     <!-- Header -->
-<div class="flex items-center justify-between">
-    <div>
-        <h1 class="text-3xl font-bold text-gray-900">Pricing Matrix</h1>
-        <p class="text-gray-600 mt-1">Room-centric view with B&B Standard rates</p>
-    </div>
-    <div class="flex space-x-2">
-        <!-- View Toggle -->
-        <div class="inline-flex rounded-lg border border-gray-200 bg-white p-1">
-            <span class="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md">
-                By Room
-            </span>
-            <a href="{% url 'pricing:pricing_matrix_channel' org_code=org.code prop_code=property.code %}" 
-               class="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 rounded-md">
-                By Channel
-            </a>
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Pricing Matrix</h1>
+            <p class="text-gray-600 mt-1">{{ hotel.name }} • Rates by channel and modifier</p>
         </div>
-        <!-- PDF Export Button -->
-        <a href="{% url 'pricing:pricing_matrix_pdf' org_code=org.code prop_code=property.code %}" 
-           class="inline-flex items-center px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition">
-            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                      d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-            </svg>
-            Export PDF
-        </a>
-        <!-- Back to Dashboard -->
-        <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=property.code %}" 
-           class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">
-            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-            </svg>
-            Back to Dashboard
-        </a>
+        <div class="flex items-center gap-3 no-print">
+            <button onclick="expandAllChannels()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
+                Expand All
+            </button>
+            <button onclick="collapseAllChannels()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
+                Collapse All
+            </button>
+            <button onclick="window.print()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
+                🖨️ Print
+            </button>
+        </div>
     </div>
-</div>
-
-    <!-- Pricing Matrix Table -->
-    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200">
-                <!-- Table Header - Seasons -->
-                <thead class="bg-gray-50">
+    
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="kpi-card bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Service Charge</p>
+            <p class="text-2xl font-bold mt-1">{{ hotel.service_charge_percent|default:"10" }}%</p>
+            <p class="text-xs opacity-75 mt-1">Added to subtotal</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Tax (GST)</p>
+            <p class="text-2xl font-bold mt-1">{{ hotel.tax_percent|default:"16" }}%</p>
+            <p class="text-xs opacity-75 mt-1">{% if hotel.tax_on_service_charge %}On subtotal + SC{% else %}On subtotal only{% endif %}</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Guests</p>
+            <p class="text-2xl font-bold mt-1">{{ pax }} pax</p>
+            <p class="text-xs opacity-75 mt-1">Per room</p>
+        </div>
+        <div class="kpi-card bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-5 text-white shadow-lg">
+            <p class="text-sm font-medium opacity-90">Rate Plan</p>
+            <p class="text-2xl font-bold mt-1">${{ selected_rate_plan.meal_supplement|default:"0" }}</p>
+            <p class="text-xs opacity-75 mt-1">{{ selected_rate_plan.name|default:"BB" }} per pax</p>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+        <form method="get" class="flex flex-wrap gap-4 items-end">
+            <div class="flex flex-col gap-1">
+                <label for="roomFilter" class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Room Type</label>
+                <select id="roomFilter" name="room_type_id" class="filter-select" onchange="this.form.submit()">
+                    <option value="all" {% if show_all_rooms %}selected{% endif %}>All Rooms</option>
+                    {% for room in room_types %}
+                    <option value="{{ room.id }}" {% if not show_all_rooms and selected_room and room.id == selected_room.id %}selected{% endif %}>
+                        {{ room.name }} (${{ room.base_rate }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label for="ratePlanFilter" class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Rate Plan</label>
+                <select id="ratePlanFilter" name="rate_plan_id" class="filter-select" onchange="this.form.submit()">
+                    {% for plan in rate_plans %}
+                    <option value="{{ plan.id }}" {% if selected_rate_plan and plan.id == selected_rate_plan.id %}selected{% endif %}>
+                        {{ plan.name }} (${{ plan.meal_supplement }}/pax)
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label for="paxFilter" class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Guests</label>
+                <select id="paxFilter" name="pax" class="filter-select" onchange="this.form.submit()">
+                    <option value="1" {% if pax == 1 %}selected{% endif %}>1 Guest</option>
+                    <option value="2" {% if pax == 2 %}selected{% endif %}>2 Guests</option>
+                    <option value="3" {% if pax == 3 %}selected{% endif %}>3 Guests</option>
+                    <option value="4" {% if pax == 4 %}selected{% endif %}>4 Guests</option>
+                </select>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Legend -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+        <div class="flex flex-wrap gap-6 text-sm text-gray-600">
+            <div class="flex items-center gap-2">
+                <span class="font-bold text-gray-900">$86</span>
+                <span>= Subtotal (before SC+Tax)</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-gray-500 text-xs">$110</span>
+                <span>= Final Rate (with SC+Tax)</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="w-4 h-4 rounded border-2 border-gray-300 bg-white"></div>
+                <span>Channel (click to expand)</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="w-4 h-4 rounded bg-yellow-200 border border-yellow-400"></div>
+                <span>Stacked Modifier</span>
+            </div>
+        </div>
+    </div>
+    
+    {% if has_data %}
+    <!-- Matrix Table -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="matrix-container">
+            <table class="matrix-table" id="pricingMatrix">
+                <thead>
                     <tr>
-                        <th scope="col" class="sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-72 border-r border-gray-300">
-                            Room / Channel
-                        </th>
+                        <th class="corner">Channel / Modifier</th>
                         {% for season in seasons %}
-                        <th scope="col" class="px-4 py-3 text-center text-xs font-medium border-r border-gray-200 min-w-32">
-                            <div class="font-semibold text-gray-900 hover:text-blue-600 transition cursor-pointer"
-                                 onclick="openSeasonModal({{ season.id }}, '{{ season.name }}', '{{ season.start_date|date:"Y-m-d" }}', '{{ season.end_date|date:"Y-m-d" }}', '{{ season.season_index }}', '{{ season.expected_occupancy }}')">
-                                {{ season.name }}
-                            </div>
-                            <div class="text-xs text-gray-500 font-normal mt-0.5">{{ season.start_date|date:"M d" }} - {{ season.end_date|date:"M d" }}</div>
-                            <div class="text-xs text-blue-600 mt-0.5">×{{ season.season_index }}</div>
+                        <th class="season-header">
+                            <div class="season-name">{{ season.name }}</div>
+                            <div class="season-dates">{{ season.start_date|date:"M d" }} - {{ season.end_date|date:"M d" }}</div>
+                            <div class="season-index">×{{ season.season_index }}</div>
                         </th>
                         {% endfor %}
                     </tr>
                 </thead>
-                
-                <tbody class="bg-white divide-y divide-gray-200">
-                    {% for room_id, room_data in matrix.items %}
-                    {% with room=room_data.room %}
-                    
-                    <!-- ========================================================= -->
-                    <!-- ROOM HEADER ROW -->
-                    <!-- ========================================================= -->
-                    <tr class="bg-gradient-to-r from-blue-100 to-blue-200 border-t-2 border-blue-300 cursor-pointer hover:from-blue-150 hover:to-blue-250 transition"
-                        onclick="toggleSection('room-{{ room.id }}')">
-                        <td class="sticky left-0 z-10 bg-gradient-to-r from-blue-100 to-blue-200 px-4 py-3 border-r border-gray-300">
-                            <div class="flex items-center space-x-2">
-                                <svg class="w-5 h-5 text-blue-600 transform transition-transform duration-200" 
-                                     id="chevron-room-{{ room.id }}"
-                                     viewBox="0 0 24 24">
-                                    <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
-                                </svg>
-                                <div>
-                                    <div class="font-bold text-gray-900 text-base hover:text-blue-600 transition"
-                                         onclick="event.stopPropagation(); openRoomModal({{ room.id }}, '{{ room.name }}', '{{ room.base_rate }}', '{{ room.room_index }}', '{{ room.room_adjustment }}', '{{ room.pricing_method }}', {{ room.number_of_rooms }}, {{ room.sort_order }})">
-                                        {{ room.name }}
-                                    </div>
-                                    <div class="text-xs text-gray-600">
-                                        {{ room.number_of_rooms }} rooms • Base: ${{ room.base_rate|floatformat:2|intcomma }}
-                                    </div>
-                                </div>
-                            </div>
+                <tbody>
+                    {% if show_all_rooms %}
+                    {% for room in room_types %}
+                    {% with room_matrix=matrix|get_item:room.id %}
+                    <tr>
+                        <td colspan="{{ seasons|length|add:1 }}" class="bg-gray-100 text-left px-4 py-3 font-bold text-gray-800 text-base border-b-2 border-gray-300">
+                            🏨 {{ room.name }}
+                            <span class="font-normal text-gray-500 text-sm ml-2">Base: ${{ room.base_rate }}</span>
+                        </td>
+                    </tr>
+                    {% for channel in channels %}
+                    {% with channel_data=room_matrix|get_item:channel.id %}
+                    {% with channel_mods=channel_modifiers|get_item:channel.id %}
+                    <tr class="channel-header-row" onclick="toggleChannel('room{{ room.id }}-channel{{ channel.id }}')">
+                        <td class="channel-name-cell">
+                            <span class="toggle-icon collapsed" id="toggle-room{{ room.id }}-channel{{ channel.id }}">▼</span>
+                            <span class="channel-info">
+                                {{ channel.name }}
+                                {% if channel.base_discount_percent > 0 %}<span class="channel-badge discount">-{{ channel.base_discount_percent }}%</span>{% endif %}
+                                {% if channel.commission_percent > 0 %}<span class="channel-badge commission">{{ channel.commission_percent }}% comm</span>{% endif %}
+                            </span>
                         </td>
                         {% for season in seasons %}
-                        <td class="px-4 py-3 text-center border-r border-gray-200">
-                            <!-- Empty for room header -->
-                        </td>
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal" >${{ cell.channel_base_subtotal|floatformat:0 }}</span><span class="rate-final" >${{ cell.channel_base_rate|floatformat:0 }}</span></div></td>
+                        {% endwith %}
                         {% endfor %}
                     </tr>
-                    
-                    <!-- ========================================================= -->
-                    <!-- CHANNEL ROWS (Collapsible under Room) -->
-                    <!-- ========================================================= -->
-                    {% for channel_id, channel_data in room_data.channels.items %}
-                    {% with channel=channel_data.channel %}
-                    
-                    <!-- Channel Summary Row - Shows B&B Standard Rate -->
-                    <tr class="section-room-{{ room.id }} bg-gray-50 cursor-pointer hover:bg-gray-100 transition"
-                        onclick="toggleSection('room-{{ room.id }}-channel-{{ channel.id }}')">
-                        <td class="sticky left-0 z-10 bg-gray-50 hover:bg-gray-100 px-4 py-2 border-r border-gray-300">
-                            <div class="flex items-center space-x-2 pl-6">
-                                <svg class="w-4 h-4 text-gray-500 transform transition-transform duration-200 -rotate-90" 
-                                     id="chevron-room-{{ room.id }}-channel-{{ channel.id }}"
-                                     viewBox="0 0 24 24">
-                                    <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
-                                </svg>
-                                <div>
-                                    <div class="font-semibold text-gray-800">{{ channel.name }}</div>
-                                    <div class="text-xs text-gray-500">
-                                        {% if channel.base_discount_percent > 0 %}
-                                        <span class="text-green-600">-{{ channel.base_discount_percent }}%</span>
-                                        {% endif %}
-                                        {% if channel.commission_percent > 0 %}
-                                        <span class="text-amber-600 ml-1">{{ channel.commission_percent }}% comm</span>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                            </div>
-                        </td>
+                    <tr class="bar-row room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">📊 BAR (Reference)</td>
                         {% for season in seasons %}
-                        <td class="px-4 py-2 text-center border-r border-gray-200">
-                            {% with rate=channel_data.summary_rates|get_item:season.id %}
-                            {% if rate %}
-                            <div class="font-semibold text-gray-900">${{ rate|floatformat:2|intcomma }}</div>
-                            <div class="text-xs text-gray-500">B&B Std</div>
-                            {% else %}
-                            <span class="text-gray-400">—</span>
-                            {% endif %}
-                            {% endwith %}
-                        </td>
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal" style="color:#166534;">${{ cell.bar_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.bar_rate|floatformat:2 }}</span></div></td>
+                        {% endwith %}
                         {% endfor %}
                     </tr>
-                    
-                    <!-- ========================================================= -->
-                    <!-- CHANNEL BREAKDOWN (Collapsible - Rate Plans & Modifiers) -->
-                    <!-- ========================================================= -->
-                    {% for rate_plan_id, rp_data in channel_data.rate_plans.items %}
-                    {% with rate_plan=rp_data.rate_plan %}
-                    
-                    <!-- Rate Plan Header -->
-                    <tr class="section-room-{{ room.id }}-channel-{{ channel.id }} hidden bg-blue-50 border-t border-blue-100">
-                        <td class="sticky left-0 z-10 bg-blue-50 px-4 py-2 border-r border-gray-300">
-                            <div class="pl-12 font-medium text-gray-800">
-                                {{ rate_plan.name }}
-                                {% if rate_plan.meal_supplement > 0 %}
-                                <span class="text-xs text-gray-500 font-normal">(+${{ rate_plan.meal_supplement|floatformat:2 }}/person)</span>
-                                {% endif %}
-                            </div>
-                        </td>
+                    <tr class="channel-base-row room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">Channel Base Rate</td>
                         {% for season in seasons %}
-                        <td class="px-3 py-2 text-center border-r border-gray-200">
-                            <!-- Empty for rate plan header -->
-                        </td>
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal">${{ cell.channel_base_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.channel_base_rate|floatformat:2 }}</span></div></td>
+                        {% endwith %}
                         {% endfor %}
                     </tr>
-                    
-                    <!-- BAR Row -->
-                    <tr class="section-room-{{ room.id }}-channel-{{ channel.id }} hidden bg-white">
-                        <td class="sticky left-0 z-10 bg-white px-4 py-1.5 border-r border-gray-300">
-                            <div class="pl-16 text-xs text-gray-600 font-medium">BAR</div>
+                    {% for modifier in channel_mods %}
+                    <tr class="modifier-row {% if modifier.is_stacked %}stacked{% endif %} room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">
+                            {% if modifier.modifier_type == 'member' %}🎯{% elif modifier.modifier_type == 'mobile' %}📱{% elif modifier.modifier_type == 'promo' %}📧{% elif modifier.modifier_type == 'last_minute' %}⚡{% elif modifier.modifier_type == 'early_bird' %}🐦{% elif modifier.modifier_type == 'corporate' %}🏢{% else %}📋{% endif %}
+                            {{ modifier.name }}
+                            {% if modifier.discount_percent > 0 %}<span class="discount-badge">-{{ modifier.discount_percent }}%</span>{% endif %}
                         </td>
                         {% for season in seasons %}
-                        <td class="px-3 py-1.5 text-center text-sm text-gray-700 border-r border-gray-200">
-                            {% with bar=rp_data.bar_rates|get_item:season.id %}
-                            {% if bar %}${{ bar|floatformat:2|intcomma }}{% else %}—{% endif %}
-                            {% endwith %}
-                        </td>
+                        {% with cell=channel_data|get_item:season.id %}
+                        {% with mod_rates=cell.modifier_rates %}
+                        <td>{% for mod_rate in mod_rates %}{% if mod_rate.modifier_id == modifier.id %}<div class="rate-dual"><span class="rate-subtotal">${{ mod_rate.subtotal|floatformat:2 }}</span><span class="rate-final">${{ mod_rate.final_rate|floatformat:2 }}</span></div>{% endif %}{% endfor %}</td>
+                        {% endwith %}
+                        {% endwith %}
                         {% endfor %}
                     </tr>
-                    
-                    <!-- Modifier Rows -->
-                    {% for mod_data in rp_data.modifiers %}
-                    <tr class="section-room-{{ room.id }}-channel-{{ channel.id }} hidden bg-white hover:bg-gray-50 transition">
-                        <td class="sticky left-0 z-10 bg-white hover:bg-gray-50 px-4 py-1.5 border-r border-gray-300">
-                            <div class="pl-16 flex items-center space-x-2">
-                                <span class="text-sm">
-                                    {% if mod_data.modifier.modifier_type == 'member' %}🎯
-                                    {% elif mod_data.modifier.modifier_type == 'mobile' %}📱
-                                    {% elif mod_data.modifier.modifier_type == 'promo' %}📧
-                                    {% elif mod_data.modifier.modifier_type == 'last_minute' %}⚡
-                                    {% elif mod_data.modifier.modifier_type == 'early_bird' %}🐦
-                                    {% elif mod_data.modifier.modifier_type == 'corporate' %}🏢
-                                    {% else %}•{% endif %}
-                                </span>
-                                <div class="text-xs">
-                                    <span class="text-gray-700">{{ mod_data.modifier.name }}</span>
-                                    {% if mod_data.modifier.discount_percent > 0 %}
-                                    <span class="text-green-600 ml-1">-{{ mod_data.modifier.discount_percent }}%</span>
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </td>
-                        {% for season in seasons %}
-                        <td class="px-3 py-1.5 text-center relative tooltip-trigger border-r border-gray-200">
-                            {% with season_rates=mod_data.seasons|get_item:season.id %}
-                            {% if season_rates %}
-                            <div class="text-sm font-medium text-gray-900">${{ season_rates.rate|floatformat:2|intcomma }}</div>
-                            {% if channel.commission_percent > 0 %}
-                            <div class="text-xs text-gray-500">Net: ${{ season_rates.breakdown.net_revenue|floatformat:2|intcomma }}</div>
-                            {% endif %}
-                            
-                            <!-- Tooltip -->
-                            <div class="tooltip absolute z-20 w-56 bg-gray-900 text-white text-xs rounded-lg shadow-lg p-3 left-1/2 transform -translate-x-1/2 top-full mt-1">
-                                <div class="font-semibold mb-1">{{ mod_data.modifier.name }}</div>
-                                <div class="text-xs text-gray-400 mb-2">{{ room.name }} • {{ rate_plan.name }}</div>
-                                <div class="space-y-0.5">
-                                    <div class="flex justify-between"><span>Base:</span><span>${{ season_rates.breakdown.base_rate|floatformat:2 }}</span></div>
-                                    <div class="flex justify-between"><span>× Season:</span><span>${{ season_rates.breakdown.seasonal_rate|floatformat:2 }}</span></div>
-                                    {% if season_rates.breakdown.meal_cost > 0 %}
-                                    <div class="flex justify-between"><span>+ Meals:</span><span>${{ season_rates.breakdown.meal_cost|floatformat:2 }}</span></div>
-                                    {% endif %}
-                                    <div class="flex justify-between border-t border-gray-700 pt-1 font-semibold"><span>BAR:</span><span>${{ season_rates.breakdown.bar_rate|floatformat:2 }}</span></div>
-                                    {% if season_rates.breakdown.total_discount_percent > 0 %}
-                                    <div class="flex justify-between"><span>- Discount:</span><span>-{{ season_rates.breakdown.total_discount_percent }}%</span></div>
-                                    {% endif %}
-                                    <div class="flex justify-between border-t border-gray-700 pt-1 font-bold text-green-300"><span>Guest Pays:</span><span>${{ season_rates.breakdown.final_rate|floatformat:2 }}</span></div>
-                                    {% if channel.commission_percent > 0 %}
-                                    <div class="flex justify-between pt-1 border-t border-gray-700"><span>- Commission:</span><span class="text-red-300">-${{ season_rates.breakdown.commission_amount|floatformat:2 }}</span></div>
-                                    <div class="flex justify-between font-bold text-blue-300"><span>You Receive:</span><span>${{ season_rates.breakdown.net_revenue|floatformat:2 }}</span></div>
-                                    {% endif %}
-                                </div>
-                            </div>
-                            {% else %}
-                            <span class="text-gray-400">—</span>
-                            {% endif %}
-                            {% endwith %}
-                        </td>
-                        {% endfor %}
+                    {% empty %}
+                    <tr class="modifier-row room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label" style="color:#9ca3af;font-style:italic;">No modifiers configured</td>
+                        {% for season in seasons %}<td style="color:#9ca3af;">—</td>{% endfor %}
                     </tr>
                     {% endfor %}
-                    
+                    {% endwith %}
                     {% endwith %}
                     {% endfor %}
-                    
                     {% endwith %}
                     {% endfor %}
-                    
+                    {% else %}
+                    {% for channel in channels %}
+                    {% with channel_data=matrix|get_item:channel.id %}
+                    {% with channel_mods=channel_modifiers|get_item:channel.id %}
+                    <tr class="channel-header-row" onclick="toggleChannel('channel{{ channel.id }}')">
+                        <td class="channel-name-cell">
+                            <span class="toggle-icon collapsed" id="toggle-channel{{ channel.id }}">▼</span>
+                            <span class="channel-info">
+                                {{ channel.name }}
+                                {% if channel.base_discount_percent > 0 %}<span class="channel-badge discount">-{{ channel.base_discount_percent }}%</span>{% endif %}
+                                {% if channel.commission_percent > 0 %}<span class="channel-badge commission">{{ channel.commission_percent }}% comm</span>{% endif %}
+                            </span>
+                        </td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal" >${{ cell.channel_base_subtotal|floatformat:0 }}</span><span class="rate-final" >${{ cell.channel_base_rate|floatformat:0 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    <tr class="bar-row channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">📊 BAR (Reference)</td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal" style="color:#166534;">${{ cell.bar_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.bar_rate|floatformat:2 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    <tr class="channel-base-row channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">Channel Base Rate</td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        <td><div class="rate-dual"><span class="rate-subtotal">${{ cell.channel_base_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.channel_base_rate|floatformat:2 }}</span></div></td>
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    {% for modifier in channel_mods %}
+                    <tr class="modifier-row {% if modifier.is_stacked %}stacked{% endif %} channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label">
+                            {% if modifier.modifier_type == 'member' %}🎯{% elif modifier.modifier_type == 'mobile' %}📱{% elif modifier.modifier_type == 'promo' %}📧{% elif modifier.modifier_type == 'last_minute' %}⚡{% elif modifier.modifier_type == 'early_bird' %}🐦{% elif modifier.modifier_type == 'corporate' %}🏢{% else %}📋{% endif %}
+                            {{ modifier.name }}
+                            {% if modifier.discount_percent > 0 %}<span class="discount-badge">-{{ modifier.discount_percent }}%</span>{% endif %}
+                        </td>
+                        {% for season in seasons %}
+                        {% with cell=channel_data|get_item:season.id %}
+                        {% with mod_rates=cell.modifier_rates %}
+                        <td>{% for mod_rate in mod_rates %}{% if mod_rate.modifier_id == modifier.id %}<div class="rate-dual"><span class="rate-subtotal">${{ mod_rate.subtotal|floatformat:2 }}</span><span class="rate-final">${{ mod_rate.final_rate|floatformat:2 }}</span></div>{% endif %}{% endfor %}</td>
+                        {% endwith %}
+                        {% endwith %}
+                        {% endfor %}
+                    </tr>
+                    {% empty %}
+                    <tr class="modifier-row channel{{ channel.id }}-details channel-details-hidden">
+                        <td class="row-label" style="color:#9ca3af;font-style:italic;">No modifiers configured</td>
+                        {% for season in seasons %}<td style="color:#9ca3af;">—</td>{% endfor %}
+                    </tr>
+                    {% endfor %}
+                    {% endwith %}
                     {% endwith %}
                     {% endfor %}
+                    {% endif %}
                 </tbody>
             </table>
         </div>
     </div>
-
-    <!-- Legend -->
-    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-        <h3 class="text-sm font-semibold text-gray-900 mb-2">Legend</h3>
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-            <div><span class="font-semibold">B&B Std:</span> Bed & Breakfast Standard rate</div>
-            <div><span class="font-semibold">BAR:</span> Best Available Rate</div>
-            <div><span class="font-semibold">Net:</span> Your revenue after commission</div>
-            <div><span class="font-semibold">Hover:</span> See full breakdown</div>
-        </div>
+    {% else %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+        <div class="text-gray-400 text-6xl mb-4">📊</div>
+        <h2 class="text-xl font-semibold text-gray-700 mb-2">No Data Available</h2>
+        <p class="text-gray-500 mb-6">Please add room types, seasons, and channels first.</p>
+        <a href="{% url 'pricing:dashboard' org_code=org_code prop_code=prop_code %}" class="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">⚙️ Configure Pricing</a>
     </div>
-
-    <!-- Room Edit Modal -->
-    <div id="roomModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50">
-        <div class="relative top-5 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-lg bg-white">
-            <div class="flex items-center justify-between pb-3 border-b">
-                <h3 class="text-xl font-semibold text-gray-900">Edit Room</h3>
-                <button onclick="closeRoomModal()" class="text-gray-400 hover:text-gray-600 transition">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                    </svg>
-                </button>
-            </div>
-            <form id="roomForm" class="mt-4">
-                <input type="hidden" id="room_id" name="room_id">
-                <div class="space-y-4">
-                    <div>
-                        <label for="room_name" class="block text-sm font-medium text-gray-700 mb-1">Room Name *</label>
-                        <input type="text" id="room_name" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label for="pricing_method" class="block text-sm font-medium text-gray-700 mb-1">Pricing Method *</label>
-                        <select id="pricing_method" name="pricing_method" required onchange="updatePricingFields()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="direct">Direct Base Rate</option>
-                            <option value="index">Index Multiplier</option>
-                            <option value="adjustment">Fixed Adjustment</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label for="base_rate" class="block text-sm font-medium text-gray-700 mb-1">Base Rate ($) *</label>
-                        <input type="number" id="base_rate" name="base_rate" step="0.01" min="0" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div id="room_index_field">
-                        <label for="room_index" class="block text-sm font-medium text-gray-700 mb-1">Room Index</label>
-                        <input type="number" id="room_index" name="room_index" step="0.01" min="0" value="1.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div id="room_adjustment_field">
-                        <label for="room_adjustment" class="block text-sm font-medium text-gray-700 mb-1">Room Adjustment ($)</label>
-                        <input type="number" id="room_adjustment" name="room_adjustment" step="0.01" value="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label for="number_of_rooms" class="block text-sm font-medium text-gray-700 mb-1">Number of Rooms *</label>
-                        <input type="number" id="number_of_rooms" name="number_of_rooms" min="1" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label for="sort_order" class="block text-sm font-medium text-gray-700 mb-1">Sort Order</label>
-                        <input type="number" id="sort_order" name="sort_order" min="0" value="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                </div>
-                <div class="flex items-center justify-end space-x-3 pt-4 mt-4 border-t">
-                    <button type="button" onclick="closeRoomModal()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">Cancel</button>
-                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">Save Changes</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Season Edit Modal -->
-    <div id="seasonModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50">
-        <div class="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-lg bg-white">
-            <div class="flex items-center justify-between pb-3 border-b">
-                <h3 class="text-xl font-semibold text-gray-900">Edit Season</h3>
-                <button onclick="closeSeasonModal()" class="text-gray-400 hover:text-gray-600 transition">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                    </svg>
-                </button>
-            </div>
-            <form id="seasonForm" class="mt-4">
-                <input type="hidden" id="season_id" name="season_id">
-                <div class="space-y-4">
-                    <div>
-                        <label for="season_name" class="block text-sm font-medium text-gray-700 mb-1">Season Name *</label>
-                        <input type="text" id="season_name" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label for="start_date" class="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
-                            <input type="date" id="start_date" name="start_date" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        </div>
-                        <div>
-                            <label for="end_date" class="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
-                            <input type="date" id="end_date" name="end_date" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        </div>
-                    </div>
-                    <div>
-                        <label for="season_index" class="block text-sm font-medium text-gray-700 mb-1">Season Index *</label>
-                        <input type="number" id="season_index" name="season_index" step="0.01" min="0" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label for="expected_occupancy" class="block text-sm font-medium text-gray-700 mb-1">Expected Occupancy (%) *</label>
-                        <input type="number" id="expected_occupancy" name="expected_occupancy" step="0.01" min="0" max="100" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                </div>
-                <div class="flex items-center justify-end space-x-3 pt-4 mt-4 border-t">
-                    <button type="button" onclick="closeSeasonModal()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition">Cancel</button>
-                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">Save Changes</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-</div>
-</div>
-{% endblock %}
-
-{% block extra_css %}
-<style>
-    .sticky { position: sticky; }
-    .tooltip { display: none; pointer-events: none; }
-    .tooltip-trigger:hover .tooltip { display: block; }
+    {% endif %}
     
-    /* Compact table spacing */
-    table th, table td {
-        padding: 0.5rem 0.75rem;
-    }
-</style>
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h3 class="font-semibold text-gray-900 mb-3">Rate Calculation Formula</h3>
+        <div class="text-sm text-gray-600 space-y-2">
+            <p><span class="font-medium text-gray-800">BAR</span> = Room Base × Season Index + (Meal Supplement × Guests)</p>
+            <p><span class="font-medium text-gray-800">Channel Base</span> = BAR − Channel Discount %</p>
+            <p><span class="font-medium text-gray-800">Modifier Rate</span> = Channel Base − Modifier Discount %</p>
+            <p><span class="font-medium text-gray-800">Final Rate</span> = Subtotal + Service Charge + Tax</p>
+        </div>
+    </div>
+    
+    <div class="text-center text-sm text-gray-500 py-4">
+        <p>{{ hotel.name }} • Pricing Matrix</p>
+    </div>
+    
+</div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-// Toggle section visibility
-function toggleSection(sectionId) {
-    var sections = document.querySelectorAll('.section-' + sectionId);
-    var chevron = document.getElementById('chevron-' + sectionId);
-    var isHidden = sections.length > 0 && sections[0].classList.contains('hidden');
-    
-    sections.forEach(function(section) {
-        if (isHidden) {
-            section.classList.remove('hidden');
-        } else {
-            section.classList.add('hidden');
-        }
-    });
-    
-    if (chevron) {
-        if (isHidden) {
-            chevron.style.transform = 'rotate(0deg)';
-        } else {
-            chevron.style.transform = 'rotate(-90deg)';
-        }
-    }
+function toggleChannel(channelKey) {
+    var rows = document.querySelectorAll('.' + channelKey + '-details');
+    var icon = document.getElementById('toggle-' + channelKey);
+    rows.forEach(function(row) { row.classList.toggle('channel-details-hidden'); });
+    if (icon) { icon.classList.toggle('collapsed'); }
 }
 
-// Room modal functions
-function openRoomModal(roomId, name, baseRate, roomIndex, roomAdjustment, pricingMethod, numberOfRooms, sortOrder) {
-    document.getElementById('room_id').value = roomId;
-    document.getElementById('room_name').value = name;
-    document.getElementById('base_rate').value = baseRate;
-    document.getElementById('room_index').value = roomIndex;
-    document.getElementById('room_adjustment').value = roomAdjustment;
-    document.getElementById('pricing_method').value = pricingMethod;
-    document.getElementById('number_of_rooms').value = numberOfRooms;
-    document.getElementById('sort_order').value = sortOrder;
-    updatePricingFields();
-    document.getElementById('roomModal').classList.remove('hidden');
+function expandAllChannels() {
+    document.querySelectorAll('.channel-details-hidden').forEach(function(row) { row.classList.remove('channel-details-hidden'); });
+    document.querySelectorAll('.toggle-icon').forEach(function(icon) { icon.classList.remove('collapsed'); });
 }
 
-function closeRoomModal() {
-    document.getElementById('roomModal').classList.add('hidden');
-    document.getElementById('roomForm').reset();
+function collapseAllChannels() {
+    document.querySelectorAll('[class*="-details"]').forEach(function(row) { row.classList.add('channel-details-hidden'); });
+    document.querySelectorAll('.toggle-icon').forEach(function(icon) { icon.classList.add('collapsed'); });
 }
-
-// Season modal functions
-function openSeasonModal(seasonId, name, startDate, endDate, seasonIndex, expectedOccupancy) {
-    document.getElementById('season_id').value = seasonId;
-    document.getElementById('season_name').value = name;
-    document.getElementById('start_date').value = startDate;
-    document.getElementById('end_date').value = endDate;
-    document.getElementById('season_index').value = seasonIndex;
-    document.getElementById('expected_occupancy').value = expectedOccupancy;
-    document.getElementById('seasonModal').classList.remove('hidden');
-}
-
-function closeSeasonModal() {
-    document.getElementById('seasonModal').classList.add('hidden');
-    document.getElementById('seasonForm').reset();
-}
-
-// Update pricing fields visibility
-function updatePricingFields() {
-    var method = document.getElementById('pricing_method').value;
-    var indexField = document.getElementById('room_index_field');
-    var adjustmentField = document.getElementById('room_adjustment_field');
-    
-    if (method === 'direct') {
-        indexField.classList.add('hidden');
-        adjustmentField.classList.add('hidden');
-    } else if (method === 'index') {
-        indexField.classList.remove('hidden');
-        adjustmentField.classList.add('hidden');
-    } else if (method === 'adjustment') {
-        indexField.classList.add('hidden');
-        adjustmentField.classList.remove('hidden');
-    }
-}
-
-// Form submissions
-document.getElementById('roomForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    var formData = new FormData(this);
-    var roomId = formData.get('room_id');
-    var url = "{% url 'pricing:update_room' org_code=org.code prop_code=prop.code room_id=0 %}".replace('/0/', '/' + roomId + '/');
-    
-    fetch(url, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': getCookie('csrftoken') },
-        body: formData
-    })
-    .then(function(response) { return response.json(); })
-    .then(function(data) {
-        if (data.success) {
-            closeRoomModal();
-            window.location.reload();
-        } else {
-            alert('Error: ' + data.message);
-        }
-    })
-    .catch(function(error) {
-        alert('Error saving room.');
-    });
-});
-
-document.getElementById('seasonForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    var formData = new FormData(this);
-    var seasonId = formData.get('season_id');
-    var url = "{% url 'pricing:update_season' org_code=org.code prop_code=prop.code season_id=0 %}".replace('/0/', '/' + seasonId + '/');
-    
-    fetch(url, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': getCookie('csrftoken') },
-        body: formData
-    })
-    .then(function(response) { return response.json(); })
-    .then(function(data) {
-        if (data.success) {
-            closeSeasonModal();
-            window.location.reload();
-        } else {
-            alert('Error: ' + data.message);
-        }
-    })
-    .catch(function(error) {
-        alert('Error saving season.');
-    });
-});
-
-// Get CSRF token
-function getCookie(name) {
-    var cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        var cookies = document.cookie.split(';');
-        for (var i = 0; i < cookies.length; i++) {
-            var cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
-            }
-        }
-    }
-    return cookieValue;
-}
-
-// Close modals on outside click
-document.getElementById('roomModal').addEventListener('click', function(e) {
-    if (e.target === this) closeRoomModal();
-});
-document.getElementById('seasonModal').addEventListener('click', function(e) {
-    if (e.target === this) closeSeasonModal();
-});
 </script>
 {% endblock %}

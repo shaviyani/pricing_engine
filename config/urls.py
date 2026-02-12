@@ -12,4 +12,5 @@ admin.site.index_title = "Welcome to the Pricing Manager"
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('pricing.urls')),
+    path('', include('pricing.management_urls')),
 ]
