@@ -66,9 +66,9 @@ class ManageLandingView(ManageBaseMixin, TemplateView):
         hotel = context.get('hotel')
         org = context.get('organization')
         
-        context['rate_plan_count'] = RatePlan.objects.count()
-        context['channel_count'] = Channel.objects.count()
-        context['modifier_count'] = RateModifier.objects.count()
+        context['rate_plan_count'] = RatePlan.objects.filter(hotel=hotel).count() if hotel else 0
+        context['channel_count'] = Channel.objects.filter(hotel=hotel).count() if hotel else 0
+        context['modifier_count'] = RateModifier.objects.filter(channel__hotel=hotel).count() if hotel else 0
         context['property_count'] = org.properties.filter(is_active=True).count() if org else 0
         context['override_count'] = DateRateOverride.objects.filter(hotel=hotel, active=True).count() if hotel else 0
         context['import_count'] = FileImport.objects.filter(hotel=hotel).count() if hotel else 0
@@ -117,27 +117,41 @@ class ManagePricingView(ManageBaseMixin, TemplateView):
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        from pricing.models import RatePlan, Channel, RateModifier, SeasonModifierOverride
-        
-        hotel = context.get('hotel')
-        
-        context['rate_plans'] = RatePlan.objects.all().order_by('sort_order')
-        context['channels'] = Channel.objects.all().prefetch_related('rate_modifiers').order_by('sort_order')
-        context['rate_modifiers'] = RateModifier.objects.select_related('channel').order_by(
-            'channel__sort_order', 'sort_order'
+        from pricing.models import (
+            RatePlan, Channel, RateModifier, SeasonModifierOverride,
+            PricingMatrixVersion
         )
         
-        is_valid, total, message = Channel.validate_total_distribution()
+        hotel = context.get('hotel')
+        version = PricingMatrixVersion.get_published(hotel) if hotel else None
+        context['pricing_version'] = version
+        
+        vf = {'hotel': hotel}
+        if version:
+            vf['version'] = version
+        
+        context['rate_plans'] = RatePlan.objects.filter(**vf).order_by('sort_order')
+        context['channels'] = Channel.objects.filter(**vf).prefetch_related('rate_modifiers').order_by('sort_order')
+        context['rate_modifiers'] = RateModifier.objects.filter(
+            channel__hotel=hotel
+        ).select_related('channel').order_by('channel__sort_order', 'sort_order')
+        if version:
+            context['rate_modifiers'] = context['rate_modifiers'].filter(version=version)
+        
+        is_valid, total, message = Channel.validate_total_distribution(hotel=hotel, version=version)
         context['distribution_valid'] = is_valid
         context['distribution_total'] = total
         context['distribution_message'] = message
         
         if hotel:
-            context['season_overrides'] = SeasonModifierOverride.objects.filter(
+            qs = SeasonModifierOverride.objects.filter(
                 season__hotel=hotel
             ).select_related('modifier', 'modifier__channel', 'season').order_by(
                 'season__start_date', 'modifier__channel__sort_order', 'modifier__sort_order'
             )
+            if version:
+                qs = qs.filter(modifier__version=version)
+            context['season_overrides'] = qs
         
         return context
 
@@ -167,9 +181,9 @@ class ManageImportView(ManageBaseMixin, TemplateView):
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        from pricing.models import FileImport, BookingSource
+        from pricing.models import FileImport, BookingSource, Reservation
         from django.db.models import Count, Sum
-        
+
         hotel = context.get('hotel')
         if hotel:
             context['file_imports'] = FileImport.objects.filter(hotel=hotel).order_by('-created_at')[:20]
@@ -180,7 +194,8 @@ class ManageImportView(ManageBaseMixin, TemplateView):
                 total_created=Sum('rows_created'),
                 total_updated=Sum('rows_updated'),
             )
-        
+            context['reservation_count'] = Reservation.objects.filter(hotel=hotel).count()
+
         return context
 
 
@@ -188,6 +203,188 @@ class ManageReportsView(ManageBaseMixin, TemplateView):
     """Reports: PDF exports, review analysis (future)."""
     template_name = 'pricing/manage/reports.html'
     active_section = 'reports'
+
+
+class ManageVersionDetailView(ManageBaseMixin, TemplateView):
+    """Detail view for a single pricing matrix version. Editable for drafts."""
+    template_name = 'pricing/manage/version_detail.html'
+    active_section = 'pricing'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from pricing.models import (
+            PricingMatrixVersion, Season, RoomType, RatePlan, Channel,
+            RateModifier, DynamicPricingRule, RoomTypeSeasonModifier,
+        )
+        from pricing.services.version_service import PricingVersionService
+        from decimal import Decimal
+
+        hotel = context.get('hotel')
+        version_id = self.kwargs.get('version_id')
+        version = get_object_or_404(
+            PricingMatrixVersion, pk=version_id, hotel=hotel
+        )
+
+        svc = PricingVersionService(hotel)
+        summary = svc.get_version_summary(version)
+        is_editable = version.status == 'draft'
+
+        v_seasons = Season.objects.filter(version=version).order_by('start_date')
+        v_room_types = RoomType.objects.filter(version=version).order_by('sort_order', 'name')
+        v_rate_plans = RatePlan.objects.filter(version=version).order_by('sort_order')
+        v_channels = Channel.objects.filter(version=version).order_by('sort_order')
+
+        v_rate_modifiers = RateModifier.objects.filter(
+            version=version
+        ).select_related('channel').order_by('channel__sort_order', 'sort_order')
+
+        modifiers_by_channel = {}
+        channel_modifiers = {}
+        for mod in v_rate_modifiers:
+            ch_name = mod.channel.name
+            if ch_name not in modifiers_by_channel:
+                modifiers_by_channel[ch_name] = []
+            modifiers_by_channel[ch_name].append(mod)
+            channel_modifiers.setdefault(mod.channel_id, []).append(mod)
+
+        # Room type season modifiers
+        rt_season_mods = RoomTypeSeasonModifier.objects.filter(
+            room_type__version=version, season__version=version
+        ).select_related('room_type', 'season').order_by('season__start_date', 'room_type__sort_order')
+
+        # Dynamic pricing rules with nested bands and multipliers
+        dp_rules = DynamicPricingRule.objects.filter(
+            version=version
+        ).select_related(
+            'season', 'booking_window_config'
+        ).prefetch_related(
+            'bands__multipliers__window_band'
+        ).order_by('season__start_date')
+
+        dp_data = []
+        for rule in dp_rules:
+            window_bands = list(rule.booking_window_config.bands.order_by('min_days'))
+            bands_with_mults = []
+            for band in rule.bands.order_by('-min_occupancy'):
+                mults_by_wb = {}
+                for m in band.multipliers.all():
+                    mults_by_wb[m.window_band_id] = m.multiplier
+                ordered_mults = [mults_by_wb.get(wb.id, Decimal('1.00')) for wb in window_bands]
+                bands_with_mults.append({
+                    'band': band,
+                    'multipliers': ordered_mults,
+                })
+            dp_data.append({
+                'rule': rule,
+                'season': rule.season,
+                'window_bands': window_bands,
+                'bands': bands_with_mults,
+            })
+
+        # =====================================================================
+        # Pricing Matrix Calculation
+        # =====================================================================
+        pax = int(self.request.GET.get('pax', 2))
+        rate_plan_id = self.request.GET.get('rate_plan_id')
+
+        if rate_plan_id:
+            selected_rate_plan = v_rate_plans.filter(id=rate_plan_id).first() or v_rate_plans.first()
+        else:
+            selected_rate_plan = v_rate_plans.first()
+
+        meal_supplement = selected_rate_plan.meal_supplement if selected_rate_plan else Decimal('0.00')
+        service_charge_percent = getattr(hotel, 'service_charge_percent', Decimal('10.00')) or Decimal('10.00')
+        tax_percent = getattr(hotel, 'tax_percent', Decimal('16.00')) or Decimal('16.00')
+        tax_on_service = getattr(hotel, 'tax_on_service_charge', True)
+
+        def calc_rate(base_rate, season_index, meal_sup, num_pax,
+                      channel_discount, modifier_discount,
+                      rt_season_mod=Decimal('1.00')):
+            effective_index = season_index * rt_season_mod
+            seasonal_rate = base_rate * effective_index
+            meal_total = meal_sup * num_pax
+            bar_rate = seasonal_rate + meal_total
+
+            ch_disc_amt = bar_rate * (channel_discount / Decimal('100'))
+            channel_base = bar_rate - ch_disc_amt
+            mod_disc_amt = channel_base * (modifier_discount / Decimal('100'))
+            subtotal = channel_base - mod_disc_amt
+
+            sc = subtotal * (service_charge_percent / Decimal('100'))
+            taxable = (subtotal + sc) if tax_on_service else subtotal
+            tax = taxable * (tax_percent / Decimal('100'))
+            final = subtotal + sc + tax
+
+            bar_sc = bar_rate * (service_charge_percent / Decimal('100'))
+            bar_taxable = (bar_rate + bar_sc) if tax_on_service else bar_rate
+            bar_tax = bar_taxable * (tax_percent / Decimal('100'))
+            bar_final = bar_rate + bar_sc + bar_tax
+
+            return {
+                'bar_rate': float(bar_rate),
+                'bar_final': float(bar_final.quantize(Decimal('0.01'))),
+                'channel_base_rate': float(channel_base),
+                'subtotal': float(subtotal),
+                'final_rate': float(final.quantize(Decimal('0.01'))),
+            }
+
+        matrix = {}
+        has_matrix = v_seasons.exists() and v_channels.exists() and v_room_types.exists()
+
+        if has_matrix:
+            for room in v_room_types:
+                matrix[room.id] = {}
+                for channel in v_channels:
+                    matrix[room.id][channel.id] = {}
+                    for season in v_seasons:
+                        rt_mod = room.get_season_modifier(season)
+                        base = room.get_effective_base_rate()
+
+                        # Channel base (0% modifier)
+                        cb = calc_rate(base, season.season_index, meal_supplement,
+                                       pax, channel.base_discount_percent,
+                                       Decimal('0'), rt_mod)
+
+                        # Per-modifier rates
+                        mod_rates = []
+                        for mod in channel_modifiers.get(channel.id, []):
+                            if mod.active:
+                                disc = mod.get_discount_for_season(season)
+                                mr = calc_rate(base, season.season_index, meal_supplement,
+                                               pax, channel.base_discount_percent,
+                                               disc, rt_mod)
+                                mod_rates.append({
+                                    'modifier_id': mod.id,
+                                    'subtotal': mr['subtotal'],
+                                    'final_rate': mr['final_rate'],
+                                })
+
+                        matrix[room.id][channel.id][season.id] = {
+                            'bar_rate': cb['bar_rate'],
+                            'bar_final': cb['bar_final'],
+                            'channel_base_subtotal': cb['subtotal'],
+                            'channel_base_rate': cb['final_rate'],
+                            'modifier_rates': mod_rates,
+                        }
+
+        context.update({
+            'version': version,
+            'summary': summary,
+            'is_editable': is_editable,
+            'v_seasons': v_seasons,
+            'v_room_types': v_room_types,
+            'v_rate_plans': v_rate_plans,
+            'v_channels': v_channels,
+            'modifiers_by_channel': modifiers_by_channel,
+            'channel_modifiers': channel_modifiers,
+            'rt_season_mods': rt_season_mods,
+            'dp_data': dp_data,
+            'matrix': matrix,
+            'has_matrix': has_matrix,
+            'pax': pax,
+            'selected_rate_plan': selected_rate_plan,
+        })
+        return context
 
 
 # Keep old name as alias for backward compat
@@ -287,36 +484,44 @@ class SeasonListView(PricingManagementMixin, View):
 
 class SeasonCreateView(PricingManagementMixin, View):
     """API: Create a new season."""
-    
+
     def post(self, request, *args, **kwargs):
-        from pricing.models import Season
-        
+        from pricing.models import Season, PricingMatrixVersion
+
         hotel = self.get_hotel(request)
         if not hotel:
             return self.error_response('Property not found', 404)
-        
+
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
             return self.error_response('Invalid JSON')
-        
+
+        # Version support: use provided version_id or fall back to published
+        vid = data.get('version_id')
+        if vid:
+            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
+        else:
+            version = PricingMatrixVersion.get_published(hotel)
+
         # Validate required fields
         name = data.get('name', '').strip()
         start_date = self.parse_date(data.get('start_date'))
         end_date = self.parse_date(data.get('end_date'))
-        
+
         if not name:
             return self.error_response('Name is required')
         if not start_date or not end_date:
             return self.error_response('Valid start and end dates are required')
         if start_date > end_date:
             return self.error_response('Start date must be before end date')
-        
+
         season_index = self.parse_decimal(data.get('season_index'), Decimal('1.00'))
         expected_occupancy = self.parse_decimal(data.get('expected_occupancy'), Decimal('70.00'))
-        
+
         season = Season.objects.create(
             hotel=hotel,
+            version=version,
             name=name,
             start_date=start_date,
             end_date=end_date,
@@ -435,30 +640,37 @@ class RoomTypeListView(PricingManagementMixin, View):
 
 class RoomTypeCreateView(PricingManagementMixin, View):
     """API: Create a new room type."""
-    
+
     def post(self, request, *args, **kwargs):
-        from pricing.models import RoomType
-        
+        from pricing.models import RoomType, PricingMatrixVersion
+
         hotel = self.get_hotel(request)
         if not hotel:
             return self.error_response('Property not found', 404)
-        
+
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
             return self.error_response('Invalid JSON')
-        
+
+        vid = data.get('version_id')
+        if vid:
+            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
+        else:
+            version = PricingMatrixVersion.get_published(hotel)
+
         name = data.get('name', '').strip()
         if not name:
             return self.error_response('Name is required')
-        
+
         # Get max sort order
         max_order = RoomType.objects.filter(hotel=hotel).aggregate(
             max_order=models.Max('sort_order')
         )['max_order'] or 0
-        
+
         room_type = RoomType.objects.create(
             hotel=hotel,
+            version=version,
             name=name,
             base_rate=self.parse_decimal(data.get('base_rate'), hotel.reference_base_rate),
             room_index=self.parse_decimal(data.get('room_index'), Decimal('1.00')),
@@ -580,40 +792,56 @@ class RatePlanListView(PricingManagementMixin, View):
     """API: List all rate plans."""
     
     def get(self, request, *args, **kwargs):
-        from pricing.models import RatePlan
+        from pricing.models import RatePlan, PricingMatrixVersion
         
-        rate_plans = RatePlan.objects.all().order_by('sort_order')
+        hotel = self.get_hotel(request)
+        version = PricingMatrixVersion.get_published(hotel) if hotel else None
+        
+        qs = RatePlan.objects.filter(hotel=hotel).order_by('sort_order') if hotel else RatePlan.objects.none()
+        if version: qs = qs.filter(version=version)
         
         data = [{
             'id': r.id,
             'name': r.name,
             'meal_supplement': str(r.meal_supplement),
             'sort_order': r.sort_order,
-        } for r in rate_plans]
+        } for r in qs]
         
         return self.json_response({'rate_plans': data})
 
 
 class RatePlanCreateView(PricingManagementMixin, View):
     """API: Create a new rate plan."""
-    
+
     def post(self, request, *args, **kwargs):
-        from pricing.models import RatePlan
-        
+        from pricing.models import RatePlan, PricingMatrixVersion
+
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found')
+
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
             return self.error_response('Invalid JSON')
-        
+
+        vid = data.get('version_id')
+        if vid:
+            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
+        else:
+            version = PricingMatrixVersion.get_published(hotel)
+
         name = data.get('name', '').strip()
         if not name:
             return self.error_response('Name is required')
-        
-        max_order = RatePlan.objects.aggregate(
+
+        max_order = RatePlan.objects.filter(hotel=hotel).aggregate(
             max_order=models.Max('sort_order')
         )['max_order'] or 0
         
         rate_plan = RatePlan.objects.create(
+            hotel=hotel,
+            version=version,
             name=name,
             meal_supplement=self.parse_decimal(data.get('meal_supplement'), Decimal('0.00')),
             sort_order=int(data.get('sort_order', max_order + 1)),
@@ -678,9 +906,13 @@ class ChannelListView(PricingManagementMixin, View):
     """API: List all channels."""
     
     def get(self, request, *args, **kwargs):
-        from pricing.models import Channel
+        from pricing.models import Channel, PricingMatrixVersion
         
-        channels = Channel.objects.all().prefetch_related('rate_modifiers').order_by('sort_order')
+        hotel = self.get_hotel(request)
+        version = PricingMatrixVersion.get_published(hotel) if hotel else None
+        
+        qs = Channel.objects.filter(hotel=hotel).prefetch_related('rate_modifiers').order_by('sort_order') if hotel else Channel.objects.none()
+        if version: qs = qs.filter(version=version)
         
         data = [{
             'id': c.id,
@@ -690,10 +922,10 @@ class ChannelListView(PricingManagementMixin, View):
             'distribution_share_percent': str(c.distribution_share_percent),
             'sort_order': c.sort_order,
             'modifier_count': c.rate_modifiers.count(),
-        } for c in channels]
+        } for c in qs]
         
         # Distribution validation
-        is_valid, total, message = Channel.validate_total_distribution()
+        is_valid, total, message = Channel.validate_total_distribution(hotel=hotel, version=version)
         
         return self.json_response({
             'channels': data,
@@ -705,24 +937,36 @@ class ChannelListView(PricingManagementMixin, View):
 
 class ChannelCreateView(PricingManagementMixin, View):
     """API: Create a new channel."""
-    
+
     def post(self, request, *args, **kwargs):
-        from pricing.models import Channel
-        
+        from pricing.models import Channel, PricingMatrixVersion
+
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found')
+
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
             return self.error_response('Invalid JSON')
+
+        vid = data.get('version_id')
+        if vid:
+            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
+        else:
+            version = PricingMatrixVersion.get_published(hotel)
         
         name = data.get('name', '').strip()
         if not name:
             return self.error_response('Name is required')
         
-        max_order = Channel.objects.aggregate(
+        max_order = Channel.objects.filter(hotel=hotel).aggregate(
             max_order=models.Max('sort_order')
         )['max_order'] or 0
         
         channel = Channel.objects.create(
+            hotel=hotel,
+            version=version,
             name=name,
             base_discount_percent=self.parse_decimal(data.get('base_discount_percent'), Decimal('0.00')),
             commission_percent=self.parse_decimal(data.get('commission_percent'), Decimal('0.00')),
@@ -871,17 +1115,26 @@ class RateModifierCreateView(PricingManagementMixin, View):
             return self.error_response('Channel is required')
         
         channel = get_object_or_404(Channel, pk=channel_id)
-        
+
+        # Resolve version
+        from pricing.models import PricingMatrixVersion
+        vid = data.get('version_id')
+        if vid:
+            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=channel.hotel)
+        else:
+            version = PricingMatrixVersion.get_published(channel.hotel)
+
         # Check for duplicate name
-        if RateModifier.objects.filter(channel=channel, name=name).exists():
+        if RateModifier.objects.filter(channel=channel, name=name, version=version).exists():
             return self.error_response(f'Modifier "{name}" already exists for {channel.name}')
-        
-        max_order = RateModifier.objects.filter(channel=channel).aggregate(
+
+        max_order = RateModifier.objects.filter(channel=channel, version=version).aggregate(
             max_order=models.Max('sort_order')
         )['max_order'] or 0
-        
+
         modifier = RateModifier.objects.create(
             channel=channel,
+            version=version,
             name=name,
             discount_percent=self.parse_decimal(data.get('discount_percent'), Decimal('0.00')),
             modifier_type=data.get('modifier_type', 'standard'),
@@ -1134,7 +1387,7 @@ class SeasonModifierOverrideBulkPopulateView(PricingManagementMixin, View):
             return self.error_response('Property not found', 404)
         
         seasons = Season.objects.filter(hotel=hotel)
-        modifiers = RateModifier.objects.all()
+        modifiers = RateModifier.objects.filter(channel__hotel=hotel)
         
         created_count = 0
         
@@ -1566,3 +1819,501 @@ class RoomTypeSeasonModifierResetView(PricingManagementMixin, View):
             )
         except Exception as e:
             return self.error_response(str(e))
+
+
+# =============================================================================
+# IMPORT TEMPLATE API VIEWS
+# =============================================================================
+
+class ImportUploadView(PricingManagementMixin, View):
+    """POST: Upload a file and get headers + preview."""
+
+    def post(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        uploaded_file = request.FILES.get('file')
+        if not uploaded_file:
+            return self.error_response('No file uploaded')
+
+        import tempfile, os
+
+        # Save to temp
+        suffix = os.path.splitext(uploaded_file.name)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            for chunk in uploaded_file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+
+        try:
+            from pricing.services.analytics_service import ImportTemplateService
+
+            svc = ImportTemplateService(hotel)
+            result = svc.read_headers(tmp_path)
+
+            if 'error' in result:
+                return self.error_response(result['error'])
+
+            # Store temp path in session for later import execution
+            request.session['import_tmp_path'] = tmp_path
+            request.session['import_filename'] = uploaded_file.name
+
+            # Auto-detect mapping
+            auto = svc.auto_map(result['headers'])
+
+            # Try to match a saved template
+            template_match = svc.detect_template(result['headers'], hotel)
+
+            # Get field definitions for the UI
+            fields = svc.get_field_definitions('reservation')
+
+            return self.success_response(data={
+                'filename': uploaded_file.name,
+                'headers': result['headers'],
+                'preview': result['preview'],
+                'row_count': result['row_count'],
+                'file_type': result['file_type'],
+                'skip_rows': result['skip_rows'],
+                'auto_detected': auto['detected'],
+                'unmatched_headers': auto['unmatched'],
+                'template_match': template_match,
+                'field_definitions': fields,
+            })
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            return self.error_response(str(e))
+
+
+class ImportExecuteView(PricingManagementMixin, View):
+    """POST: Execute import with provided column mapping."""
+
+    def post(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        import os
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return self.error_response('Invalid JSON')
+
+        column_map = data.get('column_map', {})
+        value_transforms = data.get('value_transforms', {})
+        template_id = data.get('template_id')
+        import_type = data.get('import_type', 'reservation')
+
+        # Get the temp file from session
+        tmp_path = request.session.get('import_tmp_path')
+        if not tmp_path or not os.path.exists(tmp_path):
+            return self.error_response('No file uploaded. Please upload a file first.')
+
+        # Validate required fields mapped
+        required = {'confirmation_no', 'arrival_date', 'departure_date'}
+        mapped_fields = set(k for k, v in column_map.items() if v)
+        missing = required - mapped_fields
+        if missing:
+            return self.error_response(f'Required fields not mapped: {", ".join(sorted(missing))}')
+
+        # Load template if specified
+        template = None
+        if template_id:
+            from pricing.models import ImportTemplate
+            try:
+                template = ImportTemplate.objects.get(pk=template_id, is_active=True)
+            except ImportTemplate.DoesNotExist:
+                pass
+
+        try:
+            from pricing.services.analytics_service import ImportTemplateService
+
+            svc = ImportTemplateService(hotel)
+            result = svc.execute_import(
+                file_path=tmp_path,
+                column_map=column_map,
+                hotel=hotel,
+                template=template,
+                value_transforms=value_transforms,
+                import_type=import_type,
+            )
+
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            request.session.pop('import_tmp_path', None)
+            request.session.pop('import_filename', None)
+
+            return self.success_response(
+                data=result,
+                message=f"Import complete: {result.get('rows_created', 0)} created, "
+                        f"{result.get('rows_updated', 0)} updated, "
+                        f"{result.get('rows_skipped', 0)} skipped"
+            )
+        except Exception as e:
+            return self.error_response(str(e))
+
+
+class ImportTemplateListView(PricingManagementMixin, View):
+    """GET: List saved import templates for this property."""
+
+    def get(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        from pricing.models import ImportTemplate
+
+        templates = ImportTemplate.objects.filter(
+            Q(hotel=hotel) | Q(organization=hotel.organization, hotel__isnull=True),
+            is_active=True,
+        ).order_by('-use_count', 'name')
+
+        data = []
+        for t in templates:
+            data.append({
+                'id': t.id,
+                'name': t.name,
+                'import_type': t.import_type,
+                'import_type_display': t.get_import_type_display(),
+                'column_map': t.column_map,
+                'value_transforms': t.value_transforms,
+                'settings': t.settings,
+                'source_headers': t.source_headers,
+                'is_default': t.is_default,
+                'use_count': t.use_count,
+                'last_used_at': t.last_used_at.isoformat() if t.last_used_at else None,
+                'scope': 'property' if t.hotel else 'organization',
+            })
+
+        return self.success_response(data={'templates': data})
+
+
+class ImportTemplateSaveView(PricingManagementMixin, View):
+    """POST: Save a new import template."""
+
+    def post(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return self.error_response('Invalid JSON')
+
+        from pricing.models import ImportTemplate
+
+        name = data.get('name', '').strip()
+        if not name:
+            return self.error_response('Template name is required')
+
+        import_type = data.get('import_type', 'reservation')
+        column_map = data.get('column_map', {})
+        value_transforms = data.get('value_transforms', {})
+        source_headers = data.get('source_headers', [])
+        settings = data.get('settings', {})
+        scope = data.get('scope', 'property')
+
+        template = ImportTemplate.objects.create(
+            hotel=hotel if scope == 'property' else None,
+            organization=hotel.organization if scope == 'organization' else None,
+            name=name,
+            import_type=import_type,
+            column_map=column_map,
+            value_transforms=value_transforms,
+            source_headers=source_headers,
+            settings=settings,
+        )
+
+        return self.success_response(
+            data={'id': template.id, 'name': template.name},
+            message=f'Template "{name}" saved'
+        )
+
+
+class ImportTemplateUpdateView(PricingManagementMixin, View):
+    """POST: Update an existing import template."""
+
+    def post(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        pk = self.kwargs.get('pk')
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return self.error_response('Invalid JSON')
+
+        from pricing.models import ImportTemplate
+
+        template = ImportTemplate.objects.filter(
+            Q(hotel=hotel) | Q(organization=hotel.organization),
+            pk=pk, is_active=True,
+        ).first()
+
+        if not template:
+            return self.error_response('Template not found', 404)
+
+        if 'name' in data:
+            template.name = data['name'].strip()
+        if 'column_map' in data:
+            template.column_map = data['column_map']
+        if 'value_transforms' in data:
+            template.value_transforms = data['value_transforms']
+        if 'source_headers' in data:
+            template.source_headers = data['source_headers']
+        if 'settings' in data:
+            template.settings = data['settings']
+        if 'is_default' in data:
+            template.is_default = bool(data['is_default'])
+
+        template.save()
+
+        return self.success_response(message=f'Template "{template.name}" updated')
+
+
+class ImportTemplateDeleteView(PricingManagementMixin, View):
+    """POST: Soft-delete an import template."""
+
+    def post(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        pk = self.kwargs.get('pk')
+
+        from pricing.models import ImportTemplate
+
+        template = ImportTemplate.objects.filter(
+            Q(hotel=hotel) | Q(organization=hotel.organization),
+            pk=pk, is_active=True,
+        ).first()
+
+        if not template:
+            return self.error_response('Template not found', 404)
+
+        template.is_active = False
+        template.save()
+
+        return self.success_response(message=f'Template "{template.name}" deleted')
+
+
+class ReservationListView(PricingManagementMixin, View):
+    """GET: List reservations with pagination, search, and filters."""
+
+    def get(self, request, *args, **kwargs):
+        from pricing.models import Reservation
+        import math
+
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        qs = Reservation.objects.filter(hotel=hotel).select_related(
+            'guest', 'booking_source', 'room_type', 'rate_plan'
+        )
+
+        # Search
+        search = request.GET.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(confirmation_no__icontains=search) |
+                Q(guest__name__icontains=search) |
+                Q(room_type_name__icontains=search)
+            )
+
+        # Status filter
+        status = request.GET.get('status', '').strip()
+        if status:
+            qs = qs.filter(status=status)
+
+        # Date range filter (arrival_date)
+        date_from = self.parse_date(request.GET.get('date_from'))
+        date_to = self.parse_date(request.GET.get('date_to'))
+        if date_from:
+            qs = qs.filter(arrival_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(arrival_date__lte=date_to)
+
+        # Ordering
+        qs = qs.order_by('-arrival_date', '-booking_date')
+
+        # Pagination
+        page = int(request.GET.get('page', 1))
+        page_size = min(int(request.GET.get('page_size', 25)), 100)
+        total_count = qs.count()
+        total_pages = max(1, math.ceil(total_count / page_size))
+        page = max(1, min(page, total_pages))
+        offset = (page - 1) * page_size
+
+        reservations = []
+        for r in qs[offset:offset + page_size]:
+            reservations.append({
+                'id': r.id,
+                'confirmation_no': r.confirmation_no,
+                'booking_date': str(r.booking_date) if r.booking_date else '',
+                'arrival_date': str(r.arrival_date) if r.arrival_date else '',
+                'departure_date': str(r.departure_date) if r.departure_date else '',
+                'nights': r.nights,
+                'adults': r.adults,
+                'children': r.children,
+                'room_type_name': r.room_type_name or (r.room_type.name if r.room_type else ''),
+                'rate_plan_name': r.rate_plan_name or (r.rate_plan.name if r.rate_plan else ''),
+                'total_amount': str(r.total_amount),
+                'adr': str(r.adr),
+                'status': r.status,
+                'guest_name': r.guest.name if r.guest else '',
+                'source_name': r.booking_source.name if r.booking_source and r.booking_source.name != 'Unknown' else '',
+                'cancellation_date': str(r.cancellation_date) if r.cancellation_date else '',
+            })
+
+        return self.success_response(data={
+            'reservations': reservations,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': total_pages,
+            'total_count': total_count,
+        })
+
+
+class ReservationUpdateView(PricingManagementMixin, View):
+    """POST: Update reservation fields."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import Reservation
+
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        pk = kwargs.get('pk')
+        res = get_object_or_404(Reservation, pk=pk, hotel=hotel)
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return self.error_response('Invalid JSON')
+
+        if 'confirmation_no' in data:
+            val = str(data['confirmation_no']).strip()
+            if not val:
+                return self.error_response('Confirmation number cannot be empty')
+            res.confirmation_no = val
+
+        if 'booking_date' in data:
+            d = self.parse_date(data['booking_date'])
+            if not d:
+                return self.error_response('Invalid booking date')
+            res.booking_date = d
+
+        if 'arrival_date' in data:
+            d = self.parse_date(data['arrival_date'])
+            if not d:
+                return self.error_response('Invalid arrival date')
+            res.arrival_date = d
+
+        if 'departure_date' in data:
+            d = self.parse_date(data['departure_date'])
+            if not d:
+                return self.error_response('Invalid departure date')
+            res.departure_date = d
+
+        if 'nights' in data:
+            try:
+                res.nights = max(1, int(data['nights']))
+            except (ValueError, TypeError):
+                return self.error_response('Invalid nights value')
+
+        if 'adults' in data:
+            try:
+                res.adults = max(0, int(data['adults']))
+            except (ValueError, TypeError):
+                return self.error_response('Invalid adults value')
+
+        if 'children' in data:
+            try:
+                res.children = max(0, int(data['children']))
+            except (ValueError, TypeError):
+                return self.error_response('Invalid children value')
+
+        if 'room_type_name' in data:
+            res.room_type_name = str(data['room_type_name']).strip()
+
+        if 'rate_plan_name' in data:
+            res.rate_plan_name = str(data['rate_plan_name']).strip()
+
+        if 'total_amount' in data:
+            res.total_amount = self.parse_decimal(data['total_amount'], res.total_amount)
+
+        if 'status' in data:
+            valid = ['confirmed', 'cancelled', 'checked_in', 'checked_out', 'no_show']
+            if data['status'] in valid:
+                res.status = data['status']
+
+        if 'cancellation_date' in data:
+            val = data['cancellation_date']
+            if val:
+                d = self.parse_date(val)
+                res.cancellation_date = d
+            else:
+                res.cancellation_date = None
+
+        if 'notes' in data:
+            res.notes = str(data['notes']).strip()
+
+        # save() auto-recalculates adr and lead_time_days
+        res.save()
+
+        return self.success_response(message='Reservation updated')
+
+
+class ReservationDeleteView(PricingManagementMixin, View):
+    """POST: Delete a reservation."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import Reservation
+
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        pk = kwargs.get('pk')
+        res = get_object_or_404(Reservation, pk=pk, hotel=hotel)
+        conf = res.confirmation_no
+        res.delete()
+
+        return self.success_response(message=f'Reservation {conf} deleted')
+
+
+class ReservationBulkDeleteView(PricingManagementMixin, View):
+    """POST: Delete multiple reservations by ID list."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import Reservation
+
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return self.error_response('Invalid JSON')
+
+        ids = data.get('ids', [])
+        if not ids or not isinstance(ids, list):
+            return self.error_response('No reservation IDs provided')
+
+        qs = Reservation.objects.filter(hotel=hotel, pk__in=ids)
+        count = qs.count()
+        qs.delete()
+
+        return self.success_response(
+            data={'deleted_count': count},
+            message=f'{count} reservation{"s" if count != 1 else ""} deleted'
+        )

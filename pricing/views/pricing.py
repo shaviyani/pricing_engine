@@ -61,7 +61,8 @@ class PricingMatrixView(PropertyMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         
         from pricing.models import (
-            Property, Season, RoomType, Channel, RatePlan, RateModifier
+            Property, Season, RoomType, Channel, RatePlan, RateModifier,
+            PricingMatrixVersion
         )
         
         # Get property from URL
@@ -79,16 +80,24 @@ class PricingMatrixView(PropertyMixin, TemplateView):
         context['org_code'] = org_code
         context['prop_code'] = prop_code
         
+        # Get published version
+        version = PricingMatrixVersion.get_published(hotel)
+        context['pricing_version'] = version
+        
         # Get filter parameters
         room_type_id = self.request.GET.get('room_type_id', 'all')
         rate_plan_id = self.request.GET.get('rate_plan_id')
         pax = int(self.request.GET.get('pax', 2))
         
-        # Get all entities
-        seasons = Season.objects.filter(hotel=hotel).order_by('start_date')
-        room_types = RoomType.objects.filter(hotel=hotel).order_by('sort_order')
-        channels = Channel.objects.all().order_by('sort_order')
-        rate_plans = RatePlan.objects.all().order_by('sort_order')
+        # Get all entities (version-scoped)
+        version_filter = {'hotel': hotel}
+        if version:
+            version_filter['version'] = version
+        
+        seasons = Season.objects.filter(**version_filter).order_by('start_date')
+        room_types = RoomType.objects.filter(**version_filter).order_by('sort_order')
+        channels = Channel.objects.filter(**version_filter).order_by('sort_order')
+        rate_plans = RatePlan.objects.filter(**version_filter).order_by('sort_order')
         
         context['seasons'] = seasons
         context['room_types'] = room_types
@@ -443,8 +452,8 @@ class PricingMatrixPDFView(PropertyMixin, View):
         return {
             'seasons': Season.objects.filter(hotel=prop).order_by('start_date'),
             'rooms': RoomType.objects.filter(hotel=prop).order_by('sort_order', 'name'),
-            'rate_plans': RatePlan.objects.all().order_by('sort_order', 'name'),
-            'channels': Channel.objects.all().order_by('sort_order', 'name'),
+            'rate_plans': RatePlan.objects.filter(hotel=prop).order_by('sort_order', 'name'),
+            'channels': Channel.objects.filter(hotel=prop).order_by('sort_order', 'name'),
         }
     
     def _find_bb_rate_plan(self, rate_plans):
@@ -1614,8 +1623,8 @@ def parity_data_ajax(request, org_code, prop_code):
         # Shared/Global: RatePlan, Channel, RateModifier
         seasons = Season.objects.filter(hotel=prop).order_by('start_date')
         rooms = RoomType.objects.filter(hotel=prop)
-        channels = Channel.objects.all()  # Global
-        rate_plans = RatePlan.objects.all()  # Global
+        channels = Channel.objects.filter(hotel=prop)
+        rate_plans = RatePlan.objects.filter(hotel=prop)
         
         if not all([seasons.exists(), rooms.exists(), channels.exists(), rate_plans.exists()]):
             return JsonResponse({'success': False, 'message': 'Missing required data'})
@@ -1749,7 +1758,7 @@ def revenue_forecast_ajax(request, org_code, prop_code):
         annual_adr = (annual_gross / annual_room_nights) if annual_room_nights > 0 else Decimal('0.00')
         
         # Channel breakdown
-        channels = Channel.objects.all()  # Global
+        channels = Channel.objects.filter(hotel=prop)
         channel_data = []
         for channel in channels:
             channel_gross = sum(
@@ -2232,8 +2241,8 @@ class DateRateOverrideCalendarView(PropertyMixin, TemplateView):
         
         # Reference data for rate preview (PROPERTY-SPECIFIC)
         context['room_types'] = RoomType.objects.filter(hotel=hotel)
-        context['rate_plans'] = RatePlan.objects.all()
-        context['channels'] = Channel.objects.all()
+        context['rate_plans'] = RatePlan.objects.filter(hotel=hotel)
+        context['channels'] = Channel.objects.filter(hotel=hotel)
         
         return context
 
@@ -2307,8 +2316,8 @@ def date_rate_detail_ajax(request, org_code, prop_code):
     
     # Get all room types, rate plans, channels for this property
     room_types = RoomType.objects.filter(hotel=hotel)
-    rate_plans = RatePlan.objects.all()
-    channels = Channel.objects.all()
+    rate_plans = RatePlan.objects.filter(hotel=hotel)
+    channels = Channel.objects.filter(hotel=hotel)
     
     # Build rates for all combinations
     rates_data = []
@@ -2451,15 +2460,15 @@ def calendar_rates_ajax(request, org_code, prop_code):
     
     # Get channel
     if channel_id:
-        channel = Channel.objects.filter(id=channel_id).first()
+        channel = Channel.objects.filter(id=channel_id, hotel=hotel).first()
     else:
-        channel = Channel.objects.filter(name__icontains='OTA').first() or Channel.objects.first()
+        channel = Channel.objects.filter(hotel=hotel, name__icontains='OTA').first() or Channel.objects.filter(hotel=hotel).first()
     
     # Get rate plan
     if rate_plan_id:
-        rate_plan = RatePlan.objects.filter(id=rate_plan_id).first()
+        rate_plan = RatePlan.objects.filter(id=rate_plan_id, hotel=hotel).first()
     else:
-        rate_plan = RatePlan.objects.filter(name__icontains='Breakfast').first() or RatePlan.objects.first()
+        rate_plan = RatePlan.objects.filter(hotel=hotel, name__icontains='Breakfast').first() or RatePlan.objects.filter(hotel=hotel).first()
     
     if not channel or not rate_plan:
         return JsonResponse({'error': 'Channel or Rate Plan not found'}, status=404)

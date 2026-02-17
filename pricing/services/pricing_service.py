@@ -397,7 +397,7 @@ class PricingService:
         
         # Get all entities
         seasons = Season.objects.filter(hotel=self.hotel).order_by('start_date')
-        channels = Channel.objects.all().order_by('sort_order')
+        channels = Channel.objects.filter(hotel=self.hotel).order_by('sort_order')
         
         if room_type:
             room_types = [room_type]

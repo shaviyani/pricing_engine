@@ -471,7 +471,7 @@ def revenue_forecast_ajax(request, org_code, prop_code):
         annual_adr = (annual_gross / annual_room_nights) if annual_room_nights > 0 else Decimal('0.00')
         
         # Channel breakdown
-        channels = Channel.objects.all()  # Global
+        channels = Channel.objects.filter(hotel=hotel)
         channel_data = []
         for channel in channels:
             channel_gross = sum(

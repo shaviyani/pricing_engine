@@ -24,7 +24,7 @@ from .models import (
     Organization, Property,
     Season, RoomType, RatePlan, Channel, RateModifier, SeasonModifierOverride,
     RoomTypeSeasonModifier,
-    BookingSource, Guest, Reservation, FileImport,
+    BookingSource, Guest, Reservation, ImportTemplate, FileImport,
     DailyPickupSnapshot, MonthlyPickupSnapshot, PickupCurve, OccupancyForecast,
     DateRateOverride, DateRateOverridePeriod, ModifierTemplate, ModifierRule, PropertyModifier
 )
@@ -530,8 +530,17 @@ class GuestAdmin(admin.ModelAdmin):
 
 
 # =============================================================================
-# FILE IMPORT ADMIN (Property-Specific)
+# IMPORT TEMPLATES & FILE IMPORT (Property-Specific)
 # =============================================================================
+
+@admin.register(ImportTemplate)
+class ImportTemplateAdmin(admin.ModelAdmin):
+    """Admin for import templates."""
+    list_display = ['name', 'import_type', 'hotel', 'organization', 'is_default', 'use_count', 'last_used_at', 'is_active']
+    list_filter = ['import_type', 'is_active', 'hotel', 'organization']
+    search_fields = ['name']
+    readonly_fields = ['use_count', 'last_used_at', 'created_at', 'updated_at']
+
 
 @admin.register(FileImport)
 class FileImportAdmin(admin.ModelAdmin):
@@ -1600,3 +1609,74 @@ def create_channel_modifiers(modeladmin, request, queryset):
     modeladmin.message_user(request, f"Created {created} channel modifiers.")
 
 create_channel_modifiers.short_description = "Create channel modifiers for selected properties"
+
+# =============================================================================
+# NEW: Pricing Version & Dynamic Pricing Admin
+# =============================================================================
+
+from pricing.models import (
+    PricingMatrixVersion, BookingWindowConfig, BookingWindowBand,
+    DynamicPricingRule, DynamicPricingBand, DynamicPricingMultiplier,
+    EventUplift, DynamicPricingSuggestion
+)
+
+
+class PricingMatrixVersionAdmin(admin.ModelAdmin):
+    list_display = ['version_number', 'name', 'status', 'hotel', 'published_at', 'created_at']
+    list_filter = ['status', 'hotel']
+    readonly_fields = ['created_at', 'updated_at']
+    ordering = ['-version_number']
+
+
+class BookingWindowBandInline(admin.TabularInline):
+    model = BookingWindowBand
+    extra = 0
+
+
+class BookingWindowConfigAdmin(admin.ModelAdmin):
+    list_display = ['name', 'hotel', 'is_default']
+    inlines = [BookingWindowBandInline]
+
+
+class DynamicPricingMultiplierInline(admin.TabularInline):
+    model = DynamicPricingMultiplier
+    extra = 0
+
+
+class DynamicPricingBandInline(admin.TabularInline):
+    model = DynamicPricingBand
+    extra = 0
+
+
+class DynamicPricingRuleAdmin(admin.ModelAdmin):
+    list_display = ['season', 'hotel', 'is_active', 'version']
+    list_filter = ['hotel', 'is_active']
+
+
+class DynamicPricingBandAdmin(admin.ModelAdmin):
+    list_display = ['rule', 'min_occupancy', 'max_occupancy', 'rationale']
+    inlines = [DynamicPricingMultiplierInline]
+
+
+class EventUpliftAdmin(admin.ModelAdmin):
+    list_display = ['name', 'hotel', 'uplift_percent', 'start_date', 'end_date', 'is_active']
+    list_filter = ['hotel', 'is_active']
+
+
+admin.site.register(PricingMatrixVersion, PricingMatrixVersionAdmin)
+admin.site.register(BookingWindowConfig, BookingWindowConfigAdmin)
+admin.site.register(DynamicPricingRule, DynamicPricingRuleAdmin)
+admin.site.register(DynamicPricingBand, DynamicPricingBandAdmin)
+admin.site.register(EventUplift, EventUpliftAdmin)
+
+
+class DynamicPricingSuggestionAdmin(admin.ModelAdmin):
+    list_display = ['season_type', 'occupancy_band_label', 'window_band_label',
+                    'current_multiplier', 'suggested_multiplier', 'direction',
+                    'confidence', 'sample_size', 'status', 'generated_at']
+    list_filter = ['hotel', 'status', 'confidence', 'season_type', 'direction']
+    readonly_fields = ['generated_at', 'reviewed_at']
+    ordering = ['-generated_at']
+
+
+admin.site.register(DynamicPricingSuggestion, DynamicPricingSuggestionAdmin)

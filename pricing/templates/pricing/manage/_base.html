@@ -258,7 +258,7 @@
 
 {% block extra_js %}
 <script>
-var API_BASE = '/org/{{ org_code }}/{{ prop_code }}';
+var API_BASE = '/{{ org_code }}/{{ prop_code }}';
 var SHARED_API_BASE = '/pricing';
 var ORG_API_BASE = '/org/{{ org_code }}';
 
@@ -310,12 +310,21 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
         if (el) el.classList.add('active');
     });
 });
+// Initialize: activate first tab's content on load
+document.querySelectorAll('.tab-nav').forEach(function(nav) {
+    var activeBtn = nav.querySelector('.tab-btn.active');
+    if (activeBtn) {
+        var tabId = activeBtn.dataset.tab;
+        var el = document.getElementById('tab-' + tabId);
+        if (el) el.classList.add('active');
+    }
+});
 
 // API URL helper
 function getApiUrl(type, action, id) {
-    var propTypes = ['season', 'room', 'season-override'];
+    var propTypes = ['season', 'room', 'season-override', 'reservation'];
     var base = propTypes.indexOf(type) >= 0 ? API_BASE : SHARED_API_BASE;
-    var map = { season:'seasons', room:'room-types', rateplan:'rate-plans', channel:'channels', modifier:'modifiers', 'season-override':'season-overrides' };
+    var map = { season:'seasons', room:'room-types', rateplan:'rate-plans', channel:'channels', modifier:'modifiers', 'season-override':'season-overrides', reservation:'reservations' };
     var ep = map[type] || type + 's';
     if (action === 'create') return base + '/api/' + ep + '/create/';
     if (action === 'update' || action === 'delete') return base + '/api/' + ep + '/' + id + '/' + action + '/';

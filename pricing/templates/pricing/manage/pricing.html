@@ -5,10 +5,31 @@
 
 {% block section_content %}
 <div class="tab-nav" role="tablist">
-    <button class="tab-btn active" data-tab="rateplans">Rate Plans</button>
+    <button class="tab-btn active" data-tab="versions">Versions</button>
+    <button class="tab-btn" data-tab="rateplans">Rate Plans</button>
     <button class="tab-btn" data-tab="channels">Channels</button>
     <button class="tab-btn" data-tab="modifiers">Rate Modifiers</button>
     <button class="tab-btn" data-tab="rt-season-mods">Room Season Modifiers</button>
+    <button class="tab-btn" data-tab="dynamic-pricing">Dynamic Pricing</button>
+    <button class="tab-btn" data-tab="events">Event Uplifts</button>
+</div>
+
+<!-- ========== VERSIONS TAB ========== -->
+<div id="tab-versions" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <div>
+                <h3 class="mgmt-card-title">Pricing Matrix Versions</h3>
+                <p class="text-sm text-gray-500 mt-1">Manage and publish pricing configurations</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary btn-sm" id="btnCreateDraft" onclick="createDraft()">+ New Draft</button>
+            </div>
+        </div>
+        <div class="mgmt-card-body" id="versionList">
+            <div class="empty-state"><p>Loading versions...</p></div>
+        </div>
+    </div>
 </div>
 
     <div id="tab-rateplans" class="tab-content">
@@ -223,6 +244,69 @@
     </div>
 </div>
 
+<!-- ========== DYNAMIC PRICING TAB ========== -->
+<div id="tab-dynamic-pricing" class="tab-content">
+    <!-- SUGGESTIONS PANEL -->
+    <div class="mgmt-card" id="dpSuggestionsCard" style="margin-bottom:16px;">
+        <div class="mgmt-card-header">
+            <div>
+                <h3 class="mgmt-card-title">
+                    Pricing Suggestions
+                    <span id="dpSuggestionBadge" style="display:none;margin-left:8px;padding:2px 8px;font-size:12px;font-weight:700;background:#ef4444;color:#fff;border-radius:10px;"></span>
+                </h3>
+                <p class="text-sm text-gray-500 mt-1">AI-driven recommendations based on actual booking data — optimized for RevPAR</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-sm" style="background:#f3f4f6;border:1px solid #d1d5db;" onclick="loadDPSuggestions('all')" id="btnShowHistory">History</button>
+                <button class="btn btn-sm" style="background:#dbeafe;color:#1e40af;border:1px solid #93c5fd;" onclick="acceptAllSuggestions()" id="btnAcceptAll" style="display:none;">Accept All</button>
+                <button class="btn btn-primary btn-sm" onclick="runDPAnalysis()" id="btnRunAnalysis">Run Analysis</button>
+            </div>
+        </div>
+        <div class="mgmt-card-body" id="dpSuggestionsContainer">
+            <div class="empty-state" style="padding:24px;">
+                <p style="color:#6b7280;">No pending suggestions.</p>
+                <p style="font-size:13px;color:#9ca3af;margin-top:4px;">Click "Run Analysis" to analyze your booking data and generate pricing recommendations.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- RULES TABLES -->
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <div>
+                <h3 class="mgmt-card-title">Dynamic Pricing Rules</h3>
+                <p class="text-sm text-gray-500 mt-1">Occupancy-based multipliers by season and booking window</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-sm" style="background:#f3f4f6;border:1px solid #d1d5db;" onclick="previewDynamicRate()">Preview Today</button>
+            </div>
+        </div>
+        <div class="mgmt-card-body" id="dpRuleContainer">
+            <div class="empty-state"><p>Loading dynamic pricing rules...</p></div>
+        </div>
+    </div>
+    <div id="dpPreviewPanel" style="display:none;margin-top:16px;" class="mgmt-card">
+        <div class="mgmt-card-header"><h3 class="mgmt-card-title">Dynamic Rate Preview</h3></div>
+        <div class="mgmt-card-body-padded" id="dpPreviewContent"></div>
+    </div>
+</div>
+
+<!-- ========== EVENT UPLIFTS TAB ========== -->
+<div id="tab-events" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <div>
+                <h3 class="mgmt-card-title">Event Uplifts</h3>
+                <p class="text-sm text-gray-500 mt-1">Date-specific rate uplifts for events and holidays</p>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openModal('eventUpliftModal')">+ Add Event</button>
+        </div>
+        <div class="mgmt-card-body" id="eventUpliftList">
+            <div class="empty-state"><p>Loading events...</p></div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block section_modals %}
@@ -398,6 +482,52 @@
     </div>
 </div>
 
+<!-- Event Uplift Modal -->
+<div id="eventUpliftModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title" id="eventModalTitle">Add Event Uplift</h3>
+            <button class="modal-close" onclick="closeModal('eventUpliftModal')">&times;</button>
+        </div>
+        <form onsubmit="return saveEventUplift(event)">
+            <div class="modal-body">
+                <input type="hidden" id="eventEditId" value="">
+                <div class="form-group"><label class="form-label">Event Name</label><input type="text" id="eventName" class="form-input" required></div>
+                <div class="form-group"><label class="form-label">Uplift %</label><input type="number" step="0.01" id="eventUpliftPct" class="form-input" required></div>
+                <div style="display:flex;gap:12px;">
+                    <div class="form-group" style="flex:1;"><label class="form-label">Start Date</label><input type="date" id="eventStart" class="form-input" required></div>
+                    <div class="form-group" style="flex:1;"><label class="form-label">End Date</label><input type="date" id="eventEnd" class="form-input" required></div>
+                </div>
+                <div class="form-group"><label class="form-label">Notes</label><textarea id="eventNotes" class="form-input" rows="2"></textarea></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn" onclick="closeModal('eventUpliftModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Draft Name Modal -->
+<div id="draftModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Create New Draft</h3>
+            <button class="modal-close" onclick="closeModal('draftModal')">&times;</button>
+        </div>
+        <form onsubmit="return submitCreateDraft(event)">
+            <div class="modal-body">
+                <div class="form-group"><label class="form-label">Draft Name</label><input type="text" id="draftName" class="form-input" placeholder="e.g., Summer 2026 Rates" required></div>
+                <div class="form-group"><label class="form-label">Notes (optional)</label><textarea id="draftNotes" class="form-input" rows="2" placeholder="What are you changing?"></textarea></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn" onclick="closeModal('draftModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Draft</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 
 {% endblock %}
 
@@ -474,5 +604,342 @@ fetch(API_BASE+'/api/room-type-season-modifiers/bulk-update/',{method:'POST',hea
 function resetAllRTSeasonMods(){document.querySelectorAll('.rt-season-mod-input').forEach(function(i){i.value='1.00';i.dispatchEvent(new Event('input'));});}
 
 // Auto-load RT mods on tab click
-document.querySelectorAll('.tab-btn').forEach(function(btn){btn.addEventListener('click',function(){if(this.dataset.tab==='rt-season-mods'&&!rtSeasonModData)loadRTSeasonMods();});});
+document.querySelectorAll('.tab-btn').forEach(function(btn){btn.addEventListener('click',function(){
+    if(this.dataset.tab==='rt-season-mods'&&!rtSeasonModData)loadRTSeasonMods();
+    if(this.dataset.tab==='versions')loadVersions();
+    if(this.dataset.tab==='dynamic-pricing'){loadDPRules();loadDPSuggestions('pending');}
+    if(this.dataset.tab==='events')loadEventUplifts();
+});});
+
+// ========================================================================
+// VERSION MANAGEMENT
+// ========================================================================
+var versionsLoaded=false;
+function loadVersions(){
+    fetch(API_BASE+'/api/versions/').then(function(r){return r.json();}).then(function(d){
+        if(!d.success)return;
+        versionsLoaded=true;
+        var c=document.getElementById('versionList');
+        if(!d.data.length){c.innerHTML='<div class="empty-state"><p>No versions yet.</p></div>';return;}
+        var html='<table class="mgmt-table"><thead><tr><th>Version</th><th>Name</th><th>Status</th><th>Records</th><th>Created</th><th></th></tr></thead><tbody>';
+        d.data.forEach(function(v){
+            var badge=v.status==='published'?'background:#dcfce7;color:#166534':v.status==='draft'?'background:#fef3c7;color:#92400e':'background:#f3f4f6;color:#6b7280';
+            var stats=v.seasons+'S / '+v.room_types+'R / '+v.channels+'C / '+v.modifiers+'M';
+            var dt=new Date(v.created_at).toLocaleDateString();
+            var actions='';
+            if(v.status==='draft'){
+                actions='<button class="btn btn-sm" style="background:#059669;color:white;font-size:12px;" onclick="publishDraft()">Publish</button> ';
+                actions+='<button class="btn btn-sm" style="background:#dc2626;color:white;font-size:12px;" onclick="discardDraft()">Discard</button>';
+            }else if(v.status==='archived'){
+                actions='<button class="btn btn-sm" style="font-size:12px;" onclick="revertToVersion('+v.version_number+')">Revert</button>';
+            }
+            var detailUrl=API_BASE+'/manage/versions/'+v.id+'/';
+            html+='<tr><td style="font-weight:700;"><a href="'+detailUrl+'" style="color:#2563eb;text-decoration:none;">v'+v.version_number+'</a></td><td><a href="'+detailUrl+'" style="color:#374151;text-decoration:none;">'+v.name+'</a></td>';
+            html+='<td><span style="padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;'+badge+'">'+v.status+'</span></td>';
+            html+='<td style="font-size:13px;color:#6b7280;">'+stats+'</td><td style="font-size:13px;color:#6b7280;">'+dt+'</td>';
+            html+='<td style="text-align:right;">'+actions+'</td></tr>';
+        });
+        html+='</tbody></table>';
+        c.innerHTML=html;
+    });
+}
+function createDraft(){openModal('draftModal');}
+function submitCreateDraft(e){
+    e.preventDefault();
+    var name=document.getElementById('draftName').value;
+    var notes=document.getElementById('draftNotes').value;
+    fetch(API_BASE+'/api/versions/create-draft/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({name:name,notes:notes})})
+    .then(function(r){return r.json();}).then(function(d){
+        closeModal('draftModal');
+        if(d.success){showToast(d.message);loadVersions();}else showToast(d.error||'Failed','error');
+    });
+    return false;
+}
+function publishDraft(){
+    if(!confirm('Publish this draft? The current published version will be archived.'))return;
+    fetch(API_BASE+'/api/versions/publish/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')}})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);loadVersions();}else showToast(d.error||'Failed','error');
+    });
+}
+function discardDraft(){
+    if(!confirm('Discard this draft? All draft changes will be lost.'))return;
+    fetch(API_BASE+'/api/versions/discard/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')}})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);loadVersions();}else showToast(d.error||'Failed','error');
+    });
+}
+function revertToVersion(vn){
+    if(!confirm('Create a new draft from v'+vn+'?'))return;
+    fetch(API_BASE+'/api/versions/revert/'+vn+'/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({})})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);loadVersions();}else showToast(d.error||'Failed','error');
+    });
+}
+
+// ========================================================================
+// DYNAMIC PRICING
+// ========================================================================
+var dpLoaded=false;
+function loadDPRules(){
+    fetch(API_BASE+'/api/dynamic-pricing/rules/').then(function(r){return r.json();}).then(function(d){
+        if(!d.success)return;
+        dpLoaded=true;
+        var c=document.getElementById('dpRuleContainer');
+        if(!d.data.length){c.innerHTML='<div class="empty-state"><p>No dynamic pricing rules configured.</p></div>';return;}
+        var html='';
+        d.data.forEach(function(rule){
+            var typeBadge=rule.season_type==='peak'?'#dc2626':rule.season_type==='low'?'#2563eb':'#d97706';
+            html+='<div style="padding:16px 20px;border-bottom:1px solid #e5e7eb;">';
+            html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">';
+            html+='<span style="font-weight:700;font-size:15px;">'+rule.season_name+'</span>';
+            html+='<span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;color:white;background:'+typeBadge+';">'+rule.season_type+'</span>';
+            html+='<span style="font-size:12px;color:#9ca3af;margin-left:auto;">'+(rule.is_active?'Active':'Inactive')+'</span>';
+            html+='</div>';
+            // Build table
+            html+='<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+            html+='<thead><tr><th style="text-align:left;padding:6px 10px;background:#f9fafb;border:1px solid #e5e7eb;font-size:11px;font-weight:700;">Occupancy</th>';
+            rule.window_bands.forEach(function(wb){
+                html+='<th style="text-align:center;padding:6px 10px;background:#f9fafb;border:1px solid #e5e7eb;font-size:11px;font-weight:700;min-width:90px;">'+wb.label+'</th>';
+            });
+            html+='<th style="text-align:left;padding:6px 10px;background:#f9fafb;border:1px solid #e5e7eb;font-size:11px;font-weight:600;color:#6b7280;">Rationale</th>';
+            html+='</tr></thead><tbody>';
+            rule.bands.forEach(function(band){
+                html+='<tr><td style="padding:6px 10px;border:1px solid #e5e7eb;font-weight:600;">'+band.label+'</td>';
+                rule.window_bands.forEach(function(wb){
+                    var val=band.multipliers[wb.id]||'1.00';
+                    var fv=parseFloat(val);
+                    var bg=fv>1.1?'#dcfce7':fv<0.9?'#fef2f2':'#ffffff';
+                    var clr=fv>1.1?'#166534':fv<0.9?'#991b1b':'#374151';
+                    html+='<td style="text-align:center;padding:4px 6px;border:1px solid #e5e7eb;background:'+bg+';">';
+                    html+='<input type="number" step="0.01" min="0.50" max="2.00" value="'+fv.toFixed(2)+'" ';
+                    html+='style="width:65px;text-align:center;padding:3px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;font-weight:600;color:'+clr+';" ';
+                    html+='data-band-id="'+band.id+'" data-wb-id="'+wb.id+'" onchange="updateDPMultiplier(this)"></td>';
+                });
+                html+='<td style="padding:6px 10px;border:1px solid #e5e7eb;font-size:12px;color:#6b7280;">'+band.rationale+'</td></tr>';
+            });
+            html+='</tbody></table></div></div>';
+        });
+        c.innerHTML=html;
+    });
+}
+function updateDPMultiplier(el){
+    var bandId=el.dataset.bandId,wbId=el.dataset.wbId,val=el.value;
+    fetch(API_BASE+'/api/dynamic-pricing/multiplier/update/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
+        body:JSON.stringify({band_id:parseInt(bandId),window_band_id:parseInt(wbId),multiplier:val})})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){var fv=parseFloat(d.data.multiplier);el.style.color=fv>1.1?'#166534':fv<0.9?'#991b1b':'#374151';el.parentElement.style.background=fv>1.1?'#dcfce7':fv<0.9?'#fef2f2':'#ffffff';}
+        else showToast(d.error||'Failed','error');
+    });
+}
+function previewDynamicRate(){
+    var dt=prompt('Enter date (YYYY-MM-DD):',new Date().toISOString().split('T')[0]);
+    if(!dt)return;
+    fetch(API_BASE+'/api/dynamic-pricing/preview/?date='+dt).then(function(r){return r.json();}).then(function(d){
+        if(!d.success){showToast(d.error||'Failed','error');return;}
+        var p=d.data,panel=document.getElementById('dpPreviewPanel');
+        panel.style.display='block';
+        var html='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">';
+        html+='<div><div style="font-size:12px;color:#6b7280;">Date</div><div style="font-weight:700;">'+dt+'</div></div>';
+        html+='<div><div style="font-size:12px;color:#6b7280;">Season</div><div style="font-weight:700;">'+p.season_name+'</div></div>';
+        html+='<div><div style="font-size:12px;color:#6b7280;">OTB Occupancy</div><div style="font-weight:700;">'+p.occupancy_pct+'% ('+p.booked_rooms+'/'+p.total_rooms+')</div></div>';
+        html+='<div><div style="font-size:12px;color:#6b7280;">Days Out</div><div style="font-weight:700;">'+p.days_out+'</div></div>';
+        html+='<div><div style="font-size:12px;color:#6b7280;">Occ Band</div><div style="font-weight:700;">'+p.band_label+'</div></div>';
+        html+='<div><div style="font-size:12px;color:#6b7280;">Window</div><div style="font-weight:700;">'+p.window_label+'</div></div>';
+        html+='<div><div style="font-size:12px;color:#6b7280;">Occ Multiplier</div><div style="font-weight:700;font-size:18px;color:'+(parseFloat(p.occupancy_multiplier)>1?'#059669':'#dc2626')+';">x'+p.occupancy_multiplier+'</div></div>';
+        html+='<div><div style="font-size:12px;color:#6b7280;">Event</div><div style="font-weight:700;">'+(p.event_name||'None')+' x'+p.event_multiplier+'</div></div>';
+        html+='<div><div style="font-size:12px;color:#6b7280;">Combined</div><div style="font-weight:700;font-size:20px;color:#2563eb;">x'+p.combined_multiplier+'</div></div>';
+        html+='</div>';
+        document.getElementById('dpPreviewContent').innerHTML=html;
+    });
+}
+
+// ========================================================================
+// EVENT UPLIFTS
+// ========================================================================
+var eventsLoaded=false;
+function loadEventUplifts(){
+    fetch(API_BASE+'/api/event-uplifts/').then(function(r){return r.json();}).then(function(d){
+        if(!d.success)return;
+        eventsLoaded=true;
+        var c=document.getElementById('eventUpliftList');
+        if(!d.data.length){c.innerHTML='<div class="empty-state"><p>No event uplifts configured.</p><button class="btn btn-primary mt-4" onclick="openModal(\'eventUpliftModal\')">Add First Event</button></div>';return;}
+        var html='<table class="mgmt-table"><thead><tr><th>Event</th><th>Uplift</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead><tbody>';
+        d.data.forEach(function(e){
+            var active=e.is_active?'<span style="color:#059669;font-weight:600;">Active</span>':'<span style="color:#9ca3af;">Inactive</span>';
+            html+='<tr><td style="font-weight:600;">'+e.name+'</td>';
+            html+='<td style="font-weight:700;color:#059669;">+'+e.uplift_percent+'%</td>';
+            html+='<td>'+e.start_date+'</td><td>'+e.end_date+'</td>';
+            html+='<td>'+active+'</td>';
+            html+='<td style="text-align:right;"><button class="action-btn" onclick="editEvent('+e.id+',\''+e.name+'\','+e.uplift_percent+',\''+e.start_date+'\',\''+e.end_date+'\',\''+e.notes+'\')">Edit</button> ';
+            html+='<button class="action-btn danger" onclick="deleteEvent('+e.id+',\''+e.name+'\')">Del</button></td></tr>';
+        });
+        html+='</tbody></table>';
+        c.innerHTML=html;
+    });
+}
+function saveEventUplift(e){
+    e.preventDefault();
+    var editId=document.getElementById('eventEditId').value;
+    var url=editId?API_BASE+'/api/event-uplifts/'+editId+'/update/':API_BASE+'/api/event-uplifts/create/';
+    var body={name:document.getElementById('eventName').value,uplift_percent:document.getElementById('eventUpliftPct').value,start_date:document.getElementById('eventStart').value,end_date:document.getElementById('eventEnd').value,notes:document.getElementById('eventNotes').value};
+    fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(d){
+        closeModal('eventUpliftModal');
+        if(d.success){showToast(d.message);loadEventUplifts();}else showToast(d.error||'Failed','error');
+    });
+    return false;
+}
+function editEvent(id,name,pct,start,end,notes){
+    document.getElementById('eventEditId').value=id;
+    document.getElementById('eventName').value=name;
+    document.getElementById('eventUpliftPct').value=pct;
+    document.getElementById('eventStart').value=start;
+    document.getElementById('eventEnd').value=end;
+    document.getElementById('eventNotes').value=notes||'';
+    document.getElementById('eventModalTitle').textContent='Edit Event Uplift';
+    openModal('eventUpliftModal');
+}
+function deleteEvent(id,name){
+    if(!confirm('Delete event "'+name+'"?'))return;
+    fetch(API_BASE+'/api/event-uplifts/'+id+'/delete/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')}})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);loadEventUplifts();}else showToast(d.error||'Failed','error');
+    });
+}
+
+// ========================================================================
+// DYNAMIC PRICING SUGGESTIONS
+// ========================================================================
+function runDPAnalysis(){
+    var btn=document.getElementById('btnRunAnalysis');
+    btn.disabled=true;btn.textContent='Analyzing...';
+    fetch(API_BASE+'/api/dynamic-pricing/analyze/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')}})
+    .then(function(r){return r.json();}).then(function(d){
+        btn.disabled=false;btn.textContent='Run Analysis';
+        if(d.success){
+            showToast(d.message);
+            loadDPSuggestions('pending');
+        } else {
+            showToast(d.error||'Analysis failed','error');
+        }
+    }).catch(function(){btn.disabled=false;btn.textContent='Run Analysis';});
+}
+
+function loadDPSuggestions(status){
+    status=status||'pending';
+    var url=API_BASE+'/api/dynamic-pricing/suggestions/?status='+status;
+    fetch(url).then(function(r){return r.json();}).then(function(d){
+        if(!d.success)return;
+        var c=document.getElementById('dpSuggestionsContainer');
+        var badge=document.getElementById('dpSuggestionBadge');
+        var btnAll=document.getElementById('btnAcceptAll');
+
+        // Update badge
+        if(d.pending_count>0){
+            badge.style.display='inline';
+            badge.textContent=d.pending_count;
+            btnAll.style.display='';
+        } else {
+            badge.style.display='none';
+            btnAll.style.display='none';
+        }
+
+        if(!d.data.length){
+            c.innerHTML='<div class="empty-state" style="padding:24px;"><p style="color:#6b7280;">No '+(status==='all'?'':'pending ')+' suggestions.</p><p style="font-size:13px;color:#9ca3af;margin-top:4px;">Click "Run Analysis" to analyze your booking data.</p></div>';
+            return;
+        }
+
+        var html='';
+        d.data.forEach(function(s){
+            var arrow=s.direction==='increase'?'↑':'↓';
+            var arrowColor=s.direction==='increase'?'#059669':'#dc2626';
+            var confColor=s.confidence==='high'?'#059669':s.confidence==='medium'?'#d97706':'#6b7280';
+            var confBg=s.confidence==='high'?'#ecfdf5':s.confidence==='medium'?'#fffbeb':'#f9fafb';
+            var isPending=s.status==='pending';
+            var statusBadge='';
+            if(!isPending){
+                var sBg=s.status==='accepted'?'#ecfdf5':s.status==='rejected'?'#fef2f2':'#f9fafb';
+                var sClr=s.status==='accepted'?'#059669':s.status==='rejected'?'#dc2626':'#6b7280';
+                statusBadge='<span style="padding:2px 8px;font-size:11px;font-weight:600;background:'+sBg+';color:'+sClr+';border-radius:4px;margin-left:8px;">'+s.status.toUpperCase()+'</span>';
+            }
+
+            html+='<div style="padding:16px;border-bottom:1px solid #f3f4f6;">';
+            // Header row
+            html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+            html+='<div style="display:flex;align-items:center;gap:10px;">';
+            html+='<span style="font-weight:700;font-size:14px;text-transform:capitalize;">'+s.season_type+'</span>';
+            html+='<span style="color:#6b7280;font-size:13px;">'+s.occupancy_band_label+' | '+s.window_band_label+'</span>';
+            html+='<span style="padding:2px 6px;font-size:11px;font-weight:600;background:'+confBg+';color:'+confColor+';border-radius:4px;">'+s.confidence.toUpperCase()+'</span>';
+            html+=statusBadge;
+            html+='</div>';
+
+            // Multiplier change display
+            html+='<div style="display:flex;align-items:center;gap:12px;">';
+            html+='<div style="text-align:center;">';
+            html+='<span style="font-size:20px;font-weight:700;color:'+arrowColor+';">x'+s.current_multiplier+' '+arrow+' x'+s.suggested_multiplier+'</span>';
+            html+='<span style="margin-left:6px;font-size:13px;color:'+arrowColor+';">('+s.change_display+')</span>';
+            html+='</div>';
+
+            if(isPending){
+                html+='<button onclick="acceptSuggestion('+s.id+')" style="padding:4px 12px;font-size:12px;font-weight:600;background:#059669;color:#fff;border:none;border-radius:4px;cursor:pointer;">Accept</button>';
+                html+='<button onclick="rejectSuggestion('+s.id+')" style="padding:4px 12px;font-size:12px;font-weight:600;background:#fff;color:#6b7280;border:1px solid #d1d5db;border-radius:4px;cursor:pointer;">Reject</button>';
+            }
+            html+='</div></div>';
+
+            // Stats row
+            html+='<div style="display:flex;gap:24px;font-size:13px;color:#6b7280;">';
+            html+='<span>'+s.sample_size+' bookings</span>';
+            if(s.actual_adr)html+='<span>ADR: $'+parseFloat(s.actual_adr).toFixed(0)+'</span>';
+            if(s.actual_occupancy_pct)html+='<span>Occ: '+parseFloat(s.actual_occupancy_pct).toFixed(0)+'%</span>';
+            if(s.actual_revpar)html+='<span>RevPAR: $'+parseFloat(s.actual_revpar).toFixed(0)+'</span>';
+            if(s.revpar_improvement_pct){
+                var impClr=parseFloat(s.revpar_improvement_pct)>0?'#059669':'#dc2626';
+                html+='<span style="font-weight:600;color:'+impClr+';">Est. RevPAR impact: '+
+                    (parseFloat(s.revpar_improvement_pct)>0?'+':'')+parseFloat(s.revpar_improvement_pct).toFixed(1)+'%</span>';
+            }
+            html+='</div>';
+
+            // Reasoning (collapsible)
+            if(s.reasoning){
+                var rid='reasoning_'+s.id;
+                html+='<div style="margin-top:8px;">';
+                html+='<a href="#" onclick="var el=document.getElementById(\''+rid+'\');el.style.display=el.style.display===\'none\'?\'block\':\'none\';return false;" style="font-size:12px;color:#6b7280;text-decoration:underline;">Show reasoning</a>';
+                html+='<div id="'+rid+'" style="display:none;margin-top:6px;padding:10px;background:#f9fafb;border-radius:6px;font-size:12px;color:#4b5563;line-height:1.5;">'+s.reasoning+'</div>';
+                html+='</div>';
+            }
+
+            html+='</div>';
+        });
+        c.innerHTML=html;
+    });
+}
+
+function acceptSuggestion(id){
+    fetch(API_BASE+'/api/dynamic-pricing/suggestions/'+id+'/accept/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')}})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);loadDPSuggestions('pending');loadDPRules();}
+        else showToast(d.error||'Failed','error');
+    });
+}
+
+function rejectSuggestion(id){
+    fetch(API_BASE+'/api/dynamic-pricing/suggestions/'+id+'/reject/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')}})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);loadDPSuggestions('pending');}
+        else showToast(d.error||'Failed','error');
+    });
+}
+
+function acceptAllSuggestions(){
+    if(!confirm('Accept all pending suggestions? This will update the dynamic pricing multipliers.'))return;
+    fetch(API_BASE+'/api/dynamic-pricing/suggestions/accept-all/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')}})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);loadDPSuggestions('pending');loadDPRules();}
+        else showToast(d.error||'Failed','error');
+    });
+}
+
+// Auto-load versions on page load (default tab)
+document.addEventListener('DOMContentLoaded',function(){loadVersions();});
 {% endblock %}

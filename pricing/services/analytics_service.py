@@ -2,16 +2,19 @@
 Analytics services: ReservationImportService, BookingAnalysisService.
 """
 
-from decimal import Decimal, ROUND_HALF_UP
-from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+from datetime import date, datetime, timedelta
 from collections import defaultdict
 import calendar
+import hashlib
 import re
 import csv
 import io
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
+from django.db import transaction
 from django.db.models import Sum, Count, Avg, Min, Max, Q, F
+from django.utils import timezone
 
 try:
     import pandas as pd
@@ -464,9 +467,9 @@ class ReservationImportService:
                 
                 if df is None:
                     df = pd.read_csv(
-                        file_path, 
-                        encoding='utf-8', 
-                        errors='replace', 
+                        file_path,
+                        encoding='utf-8',
+                        encoding_errors='replace',
                         index_col=False,
                         skiprows=skiprows
                     )
@@ -555,7 +558,10 @@ class ReservationImportService:
         else:
             room_types = {rt.name.lower(): rt for rt in RoomType.objects.all()}
         
-        rate_plans = {rp.name.lower(): rp for rp in RatePlan.objects.all()}
+        if self.hotel:
+            rate_plans = {rp.name.lower(): rp for rp in RatePlan.objects.filter(hotel=self.hotel)}
+        else:
+            rate_plans = {rp.name.lower(): rp for rp in RatePlan.objects.all()}
         
         # Reset sequence tracker for this import
         self._sequence_tracker = defaultdict(int)
@@ -658,7 +664,13 @@ class ReservationImportService:
         )
         
         if not booking_source:
-            booking_source = BookingSource.get_or_create_unknown()
+            if source_str and source_str not in ('Direct', 'nan', ''):
+                booking_source, _ = BookingSource.objects.get_or_create(
+                    name=source_str,
+                    defaults={'import_values': [source_str.lower()], 'is_direct': False, 'sort_order': 100}
+                )
+            else:
+                booking_source = BookingSource.get_or_create_unknown()
         
         # Update channel on booking source if we mapped one
         if channel and booking_source and not booking_source.channel:
@@ -924,7 +936,10 @@ class ReservationImportService:
                 channel_name = 'Trip.com'
         
         if channel_name:
-            return Channel.objects.filter(name__iexact=channel_name).first()
+            qs = Channel.objects.filter(name__iexact=channel_name)
+            if self.hotel:
+                qs = qs.filter(hotel=self.hotel)
+            return qs.first()
         
         return None
     
@@ -2379,3 +2394,296 @@ class BookingAnalysisService:
         if not distribution:
             distribution = [{'country': 'Unknown', 'room_nights': 0, 'bookings': 0}]
         return distribution
+
+
+# =============================================================================
+# IMPORT TEMPLATE SERVICE
+# =============================================================================
+
+class ImportTemplateService:
+    """
+    Manages the template-based import workflow:
+    
+    1. read_headers(file_path) → Read CSV/Excel headers + preview rows
+    2. detect_template(headers, hotel) → Match against saved templates
+    3. auto_map(headers) → Use DEFAULT_COLUMN_MAPPING as hints for unmapped columns
+    4. execute_import(file_path, column_map, hotel, template) → Run import with explicit mapping
+    
+    The column_map dict format: {system_field: csv_header}
+    e.g., {"confirmation_no": "Res #", "arrival_date": "Arr"}
+    """
+    
+    # System fields grouped by importance and type
+    RESERVATION_FIELDS = {
+        'required': [
+            {'field': 'confirmation_no', 'label': 'Confirmation No', 'type': 'text'},
+            {'field': 'arrival_date', 'label': 'Arrival Date', 'type': 'date'},
+            {'field': 'departure_date', 'label': 'Departure Date', 'type': 'date'},
+        ],
+        'recommended': [
+            {'field': 'booking_date', 'label': 'Booking Date', 'type': 'date'},
+            {'field': 'nights', 'label': 'Nights', 'type': 'number'},
+            {'field': 'total_amount', 'label': 'Total Amount', 'type': 'currency'},
+            {'field': 'adr', 'label': 'ADR / Daily Rate', 'type': 'currency'},
+            {'field': 'status', 'label': 'Status', 'type': 'text'},
+            {'field': 'room_no', 'label': 'Room Type', 'type': 'text'},
+            {'field': 'source', 'label': 'Booking Source / Channel', 'type': 'text'},
+        ],
+        'optional': [
+            {'field': 'guest_name', 'label': 'Guest Name', 'type': 'text'},
+            {'field': 'country', 'label': 'Country', 'type': 'text'},
+            {'field': 'adults', 'label': 'Adults', 'type': 'number'},
+            {'field': 'children', 'label': 'Children', 'type': 'number'},
+            {'field': 'rate_plan', 'label': 'Rate Plan', 'type': 'text'},
+            {'field': 'email', 'label': 'Email', 'type': 'text'},
+            {'field': 'cancellation_date', 'label': 'Cancellation Date', 'type': 'date'},
+            {'field': 'reservation_type', 'label': 'Reservation Type', 'type': 'text'},
+            {'field': 'market_code', 'label': 'Market Segment', 'type': 'text'},
+            {'field': 'payment_type', 'label': 'Payment Type', 'type': 'text'},
+            {'field': 'user', 'label': 'User / Agent', 'type': 'text'},
+            {'field': 'pax', 'label': 'Pax', 'type': 'number'},
+            {'field': 'rooms_count', 'label': 'Rooms Count', 'type': 'number'},
+            {'field': 'deposit', 'label': 'Deposit', 'type': 'currency'},
+            {'field': 'total_charges', 'label': 'Total Charges', 'type': 'currency'},
+            {'field': 'hotel_name', 'label': 'Hotel Name', 'type': 'text'},
+            {'field': 'promotion', 'label': 'Promotion', 'type': 'text'},
+        ],
+    }
+    
+    # Maps import_type to its field definitions
+    FIELD_DEFINITIONS = {
+        'reservation': RESERVATION_FIELDS,
+        # Future: arrival_report, review, competitor_rates
+    }
+    
+    def __init__(self, hotel=None):
+        self.hotel = hotel
+    
+    def read_headers(self, file_path, max_preview_rows=5):
+        """
+        Read headers and preview rows from a CSV/Excel file.
+        
+        Returns:
+            {
+                'headers': ['Col A', 'Col B', ...],
+                'preview': [[row1_val1, row1_val2], ...],
+                'row_count': 150,
+                'file_type': 'csv',
+                'skip_rows': 0,
+            }
+        """
+        file_path = Path(file_path)
+        suffix = file_path.suffix.lower()
+        skip_rows = 0
+        
+        # SynXis header detection
+        if suffix == '.csv':
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    first_line = f.readline()
+                if 'Reservation Activity Report' in first_line or first_line.startswith(',,'):
+                    skip_rows = 3
+            except Exception:
+                pass
+        
+        try:
+            if suffix in ['.xlsx', '.xls']:
+                df = pd.read_excel(file_path, skiprows=skip_rows, nrows=max_preview_rows + 1)
+            else:
+                df = None
+                for encoding in ['utf-8', 'latin1', 'cp1252']:
+                    try:
+                        df = pd.read_csv(file_path, encoding=encoding, index_col=False,
+                                         skiprows=skip_rows, nrows=max_preview_rows + 1)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if df is None:
+                    df = pd.read_csv(file_path, encoding='utf-8', encoding_errors='replace',
+                                     index_col=False, skiprows=skip_rows, nrows=max_preview_rows + 1)
+            
+            headers = [str(c).strip() for c in df.columns.tolist()]
+            
+            # Preview rows as lists of strings
+            preview = []
+            for _, row in df.head(max_preview_rows).iterrows():
+                preview.append([str(v) if pd.notna(v) else '' for v in row.tolist()])
+            
+            # Get total row count (read minimal data for large files)
+            if suffix in ['.xlsx', '.xls']:
+                full_df = pd.read_excel(file_path, skiprows=skip_rows, usecols=[0])
+            else:
+                full_df = pd.read_csv(file_path, encoding='utf-8', encoding_errors='replace',
+                                       index_col=False, skiprows=skip_rows, usecols=[0])
+            row_count = len(full_df)
+            
+            return {
+                'headers': headers,
+                'preview': preview,
+                'row_count': row_count,
+                'file_type': suffix.lstrip('.'),
+                'skip_rows': skip_rows,
+            }
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def detect_template(self, headers, hotel=None, import_type='reservation'):
+        """
+        Find the best matching saved template for these CSV headers.
+        
+        Search order:
+        1. Property-specific templates
+        2. Organization-level templates
+        3. Any active template matching these headers
+        
+        Returns:
+            {'template': {...}, 'score': 0.95} or None
+        """
+        from pricing.models import ImportTemplate
+        
+        hotel = hotel or self.hotel
+        
+        candidates = []
+        
+        # Property-specific
+        if hotel:
+            for t in ImportTemplate.objects.filter(
+                hotel=hotel, import_type=import_type, is_active=True
+            ):
+                score = t.matches_headers(headers)
+                if score >= 0.7:
+                    candidates.append((t, score))
+            
+            # Organization-level
+            if hotel.organization:
+                for t in ImportTemplate.objects.filter(
+                    organization=hotel.organization, hotel__isnull=True,
+                    import_type=import_type, is_active=True
+                ):
+                    score = t.matches_headers(headers)
+                    if score >= 0.7:
+                        candidates.append((t, score))
+        
+        if not candidates:
+            return None
+        
+        # Best match
+        candidates.sort(key=lambda x: (-x[1], -x[0].use_count))
+        best_template, best_score = candidates[0]
+        
+        return {
+            'template': {
+                'id': best_template.id,
+                'name': best_template.name,
+                'import_type': best_template.import_type,
+                'column_map': best_template.column_map,
+                'value_transforms': best_template.value_transforms,
+                'settings': best_template.settings,
+                'use_count': best_template.use_count,
+                'last_used_at': best_template.last_used_at.isoformat() if best_template.last_used_at else None,
+            },
+            'score': round(best_score, 2),
+        }
+    
+    def auto_map(self, headers, import_type='reservation'):
+        """
+        Auto-detect column mapping using DEFAULT_COLUMN_MAPPING from ReservationImportService.
+        
+        Returns:
+            {system_field: csv_header} for each detected match, plus unmatched headers
+        """
+        detected = {}
+        unmatched = list(headers)
+        
+        # Use the existing auto-detect logic
+        mapping_source = ReservationImportService.DEFAULT_COLUMN_MAPPING
+        
+        for system_field, possible_names in mapping_source.items():
+            possible_lower = [n.lower() for n in possible_names]
+            for header in headers:
+                if header.strip().lower() in possible_lower:
+                    detected[system_field] = header
+                    if header in unmatched:
+                        unmatched.remove(header)
+                    break
+        
+        return {
+            'detected': detected,
+            'unmatched': unmatched,
+        }
+    
+    def get_field_definitions(self, import_type='reservation'):
+        """Return field definitions for the mapping UI."""
+        return self.FIELD_DEFINITIONS.get(import_type, self.RESERVATION_FIELDS)
+    
+    def execute_import(self, file_path, column_map, hotel=None, template=None,
+                        value_transforms=None, import_type='reservation', settings=None):
+        """
+        Run import using an explicit column mapping.
+        
+        This wraps ReservationImportService with the template-provided mapping
+        instead of relying on auto-detect.
+        
+        Args:
+            file_path: Path to the file
+            column_map: {system_field: csv_header} mapping
+            hotel: Property to import to
+            template: ImportTemplate instance (optional, for tracking)
+            value_transforms: {field: {source_val: target_val}} (optional)
+            import_type: Type of import
+            settings: Additional settings (header_row, date_format, etc.)
+        
+        Returns:
+            Dict with import results
+        """
+        from pricing.models import FileImport, ImportTemplate as TemplateModel
+        
+        hotel = hotel or self.hotel
+        file_path = Path(file_path)
+        settings = settings or {}
+        
+        # Invert the column_map for the existing service:
+        # ReservationImportService expects {system_field: [possible_csv_names]}
+        # We give it {system_field: [exact_csv_header]}
+        inverted_mapping = {}
+        for system_field, csv_header in column_map.items():
+            if csv_header:  # Skip unmapped fields
+                inverted_mapping[system_field] = [csv_header]
+        
+        # Create FileImport record
+        file_import = FileImport.objects.create(
+            hotel=hotel,
+            template=template,
+            filename=file_path.name,
+            import_type=import_type,
+            column_map_used=column_map,
+            status='pending',
+        )
+        
+        # Track template usage
+        if template:
+            template.record_usage()
+        
+        if import_type == 'reservation':
+            service = ReservationImportService(
+                column_mapping=inverted_mapping,
+                hotel=hotel,
+            )
+            
+            # If value_transforms provided, inject them
+            if value_transforms:
+                service._value_transforms = value_transforms
+            
+            result = service.import_file(str(file_path), file_import=file_import, hotel=hotel)
+            return result
+        else:
+            # Future: dispatch to other processors
+            file_import.status = 'failed'
+            file_import.errors = [{'row': 0, 'message': f'Import type "{import_type}" not yet implemented'}]
+            file_import.save()
+            return {
+                'success': False,
+                'file_import_id': file_import.id,
+                'status': 'failed',
+                'error': f'Import type "{import_type}" not yet implemented',
+            }

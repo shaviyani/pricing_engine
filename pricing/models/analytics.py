@@ -199,8 +199,130 @@ class Guest(models.Model):
 
 
 # =============================================================================
-# FILE IMPORT & RESERVATION (Property-Specific)
+# IMPORT TEMPLATES & FILE IMPORT (Property-Specific)
 # =============================================================================
+
+class ImportTemplate(models.Model):
+    """
+    Saved column mapping configuration for recurring file imports.
+    
+    When a user uploads a CSV, the system matches headers against saved templates.
+    If no match, auto-detect runs and the user adjusts the mapping manually,
+    then saves it as a template for future use.
+    
+    PROPERTY-SCOPED: Each property can have its own templates (different PMS).
+    Templates can also be org-level (shared across properties in a chain).
+    
+    Example:
+        name: "ABS PMS Weekly Export"
+        import_type: "reservation"
+        column_map: {"confirmation_no": "Res #", "arrival_date": "Arr", ...}
+        value_transforms: {"status": {"New Booking": "confirmed"}}
+    """
+    IMPORT_TYPE_CHOICES = [
+        ('reservation', 'Reservations'),
+        ('arrival_report', 'Country Arrival Report'),
+        ('review', 'Guest Reviews'),
+        ('competitor_rates', 'Competitor Rates'),
+    ]
+    
+    hotel = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name='import_templates',
+        null=True,
+        blank=True,
+        help_text="Property this template belongs to (null = org-level shared)"
+    )
+    organization = models.ForeignKey(
+        'Organization',
+        on_delete=models.CASCADE,
+        related_name='import_templates',
+        null=True,
+        blank=True,
+        help_text="Organization for shared templates"
+    )
+    
+    name = models.CharField(max_length=200, help_text="Template name (e.g., 'ABS PMS Weekly Export')")
+    import_type = models.CharField(max_length=30, choices=IMPORT_TYPE_CHOICES, default='reservation')
+    
+    # The mapping: system field name → CSV column header
+    # e.g., {"confirmation_no": "Res #", "arrival_date": "Arr", "total_amount": "Revenue($)"}
+    column_map = models.JSONField(
+        default=dict,
+        help_text="Maps system DB fields to CSV column headers"
+    )
+    
+    # Value transformations per field
+    # e.g., {"status": {"New Booking": "confirmed", "Cancellation": "cancelled"}}
+    value_transforms = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Value transformations per field"
+    )
+    
+    # Settings
+    settings = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Import settings: header_row, date_format, skip_rows, encoding, etc."
+    )
+    
+    # The CSV headers this template was built from (for auto-matching)
+    source_headers = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Original CSV headers this template maps from"
+    )
+    
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Auto-use this template when headers match"
+    )
+    is_active = models.BooleanField(default=True)
+    
+    # Usage tracking
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    use_count = models.PositiveIntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-last_used_at', '-use_count', 'name']
+        verbose_name = "Import Template"
+        verbose_name_plural = "Import Templates"
+    
+    def __str__(self):
+        scope = self.hotel.name if self.hotel else (self.organization.name if self.organization else 'Global')
+        return f"{self.name} ({self.get_import_type_display()}) — {scope}"
+    
+    def matches_headers(self, csv_headers):
+        """
+        Check if this template's source_headers match the given CSV headers.
+        Returns a score 0.0–1.0 indicating match quality.
+        """
+        if not self.source_headers or not csv_headers:
+            return 0.0
+        
+        # Normalize for comparison
+        template_set = set(h.strip().lower() for h in self.source_headers)
+        csv_set = set(h.strip().lower() for h in csv_headers)
+        
+        if not template_set:
+            return 0.0
+        
+        # Intersection over template headers (how many template headers are in the CSV)
+        matched = template_set & csv_set
+        return len(matched) / len(template_set)
+    
+    def record_usage(self):
+        """Track that this template was used."""
+        from django.utils import timezone as tz
+        self.last_used_at = tz.now()
+        self.use_count += 1
+        self.save(update_fields=['last_used_at', 'use_count'])
+
 
 class FileImport(models.Model):
     """
@@ -224,8 +346,18 @@ class FileImport(models.Model):
         help_text="Property this import belongs to"
     )
     
+    template = models.ForeignKey(
+        ImportTemplate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='file_imports',
+        help_text="Import template used for column mapping"
+    )
+    
     filename = models.CharField(max_length=255)
     file_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    import_type = models.CharField(max_length=30, default='reservation')
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='pending', db_index=True)
     
     rows_total = models.PositiveIntegerField(default=0)
@@ -235,6 +367,9 @@ class FileImport(models.Model):
     rows_skipped = models.PositiveIntegerField(default=0)
     
     errors = models.JSONField(default=list, blank=True)
+    
+    # Store the actual column mapping used (snapshot at time of import)
+    column_map_used = models.JSONField(default=dict, blank=True)
     
     date_range_start = models.DateField(null=True, blank=True)
     date_range_end = models.DateField(null=True, blank=True)

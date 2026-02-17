@@ -9,7 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.views.generic import TemplateView, View
 from django.http import JsonResponse
 
-from pricing.models import Organization, Property, Season, RoomType, RatePlan, Channel
+from pricing.models import Organization, Property, Season, RoomType, RatePlan, Channel, PricingMatrixVersion
 
 logger = logging.getLogger(__name__)
 
@@ -64,26 +64,39 @@ class PropertyMixin(OrganizationMixin):
         context['property'] = prop
         context['prop'] = prop
         
+        # Version info
+        published = PricingMatrixVersion.get_published(prop)
+        draft = PricingMatrixVersion.get_draft(prop)
+        context['published_version'] = published
+        context['draft_version'] = draft
+        context['active_version'] = draft or published  # Draft takes priority for editing
+        
         # Store in session for redirect convenience
         self.request.session['current_property_id'] = prop.id
         self.request.session['current_org_id'] = context['organization'].id
         
         return context
     
-    def get_property_querysets(self, prop):
+    def get_property_querysets(self, prop, version=None):
         """
-        Get common querysets filtered by property/hotel.
+        Get common querysets filtered by property and version.
         
-        Property-Specific (have hotel FK): Season, RoomType
-        Shared/Global (no hotel FK): RatePlan, Channel, RateModifier
-        
-        Returns dict with seasons, rooms, rate_plans, channels.
+        All pricing models are now property-scoped AND versioned.
+        If version is None, uses published version.
         """
+        if version is None:
+            version = PricingMatrixVersion.get_published(prop)
+        
+        base_filter = {'hotel': prop}
+        if version:
+            base_filter['version'] = version
+        
         return {
-            'seasons': Season.objects.filter(hotel=prop).order_by('start_date'),
-            'rooms': RoomType.objects.filter(hotel=prop).order_by('sort_order'),
-            'rate_plans': RatePlan.objects.all().order_by('sort_order'),  # Global
-            'channels': Channel.objects.all().order_by('sort_order'),  # Global
+            'seasons': Season.objects.filter(**base_filter).order_by('start_date'),
+            'rooms': RoomType.objects.filter(**base_filter).order_by('sort_order'),
+            'rate_plans': RatePlan.objects.filter(**base_filter).order_by('sort_order'),
+            'channels': Channel.objects.filter(**base_filter).order_by('sort_order'),
+            'version': version,
         }
 
 

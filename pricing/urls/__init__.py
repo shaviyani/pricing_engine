@@ -10,6 +10,7 @@ from .pricing import urlpatterns as pricing_urls
 from .analytics import urlpatterns as analytics_urls
 from .forecasts import urlpatterns as forecast_urls
 from .admin import urlpatterns as admin_urls
+from .version import urlpatterns as version_urls
 
 app_name = 'pricing'
 
@@ -19,4 +20,5 @@ urlpatterns = (
     + analytics_urls
     + forecast_urls
     + admin_urls
+    + version_urls
 )

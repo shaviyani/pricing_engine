@@ -5,56 +5,159 @@
 
 {% block section_content %}
 <div class="tab-nav" role="tablist">
-    <button class="tab-btn active" data-tab="import-upload">Upload</button>
+    <button class="tab-btn active" data-tab="import-reservations">Reservations{% if reservation_count %} <span class="badge badge-blue" style="font-size:10px;margin-left:4px;">{{ reservation_count }}</span>{% endif %}</button>
+    <button class="tab-btn" data-tab="import-upload">Upload & Map</button>
+    <button class="tab-btn" data-tab="import-templates">Saved Templates</button>
     <button class="tab-btn" data-tab="import-history">Import History</button>
     <button class="tab-btn" data-tab="import-sources">Booking Sources</button>
 </div>
 
-<div id="tab-import-upload" class="tab-content active">
+<!-- ========== RESERVATIONS TAB ========== -->
+<div id="tab-import-reservations" class="tab-content active">
     <div class="mgmt-card">
-        <div class="mgmt-card-header"><h3 class="mgmt-card-title">Import Reservation Data</h3></div>
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Reservations</h3>
+        </div>
+        <div class="mgmt-card-body-padded" style="padding-bottom:8px;">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <input type="text" id="resSearch" placeholder="Search confirmation # or guest name..." style="flex:1;min-width:200px;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;" oninput="debounceResSearch()">
+                <select id="resStatus" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;" onchange="loadReservations(1)">
+                    <option value="">All Statuses</option>
+                    <option value="confirmed">Confirmed</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="checked_in">Checked In</option>
+                    <option value="checked_out">Checked Out</option>
+                    <option value="no_show">No Show</option>
+                </select>
+                <input type="date" id="resDateFrom" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;" onchange="loadReservations(1)" title="Arrival from">
+                <input type="date" id="resDateTo" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;" onchange="loadReservations(1)" title="Arrival to">
+                <button id="bulkDeleteBtn" class="btn btn-sm" style="display:none;background:#fef2f2;color:#dc2626;border:1px solid #fca5a5;font-weight:600;padding:8px 14px;font-size:13px;" onclick="bulkDeleteReservations()">Delete Selected (<span id="bulkDeleteCount">0</span>)</button>
+            </div>
+        </div>
+        <div class="mgmt-card-body" id="reservationTableWrap">
+            <div class="empty-state"><p>Loading reservations...</p></div>
+        </div>
+        <div id="resPagination" style="display:none;padding:10px 16px;border-top:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;font-size:13px;">
+            <span id="resPagInfo" style="color:#6b7280;"></span>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-sm" id="resPrevBtn" onclick="loadReservations(resCurrentPage-1)" style="background:#fff;border:1px solid #d1d5db;">Prev</button>
+                <button class="btn btn-sm" id="resNextBtn" onclick="loadReservations(resCurrentPage+1)" style="background:#fff;border:1px solid #d1d5db;">Next</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== UPLOAD & MAP TAB ========== -->
+<div id="tab-import-upload" class="tab-content">
+    <!-- STEP 1: Upload -->
+    <div class="mgmt-card" id="uploadCard">
+        <div class="mgmt-card-header"><h3 class="mgmt-card-title">Step 1: Upload File</h3></div>
         <div class="mgmt-card-body-padded">
             {% if import_stats.total_imports %}
-            <div class="stat-grid">
+            <div class="stat-grid" style="margin-bottom:16px;">
                 <div class="stat-card"><div class="stat-value">{{ import_stats.total_imports }}</div><div class="stat-label">Total Imports</div></div>
                 <div class="stat-card"><div class="stat-value">{{ import_stats.total_rows|default:"0" }}</div><div class="stat-label">Rows Processed</div></div>
                 <div class="stat-card"><div class="stat-value">{{ import_stats.total_created|default:"0" }}</div><div class="stat-label">Created</div></div>
                 <div class="stat-card"><div class="stat-value">{{ import_stats.total_updated|default:"0" }}</div><div class="stat-label">Updated</div></div>
             </div>
             {% endif %}
-            <div style="border:2px dashed #d1d5db; border-radius:12px; padding:40px; text-align:center; background:#f9fafb;">
-                <p style="font-size:32px; margin-bottom:8px;">📤</p>
-                <p class="font-semibold text-gray-700">Upload CSV/Excel File</p>
-                <p class="text-sm text-gray-500 mt-2">PMS export file (.csv, .xlsx, .xls)</p>
+            <div id="uploadZone" style="border:2px dashed #d1d5db;border-radius:12px;padding:40px;text-align:center;background:#f9fafb;cursor:pointer;" onclick="document.getElementById('importFileInput').click()">
+                <p style="font-size:32px;margin-bottom:8px;">📤</p>
+                <p class="font-semibold text-gray-700">Drop file here or click to browse</p>
+                <p class="text-sm text-gray-500 mt-2">Supports .csv, .xlsx, .xls</p>
                 <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" style="display:none;">
-                <button class="btn btn-primary mt-4" onclick="document.getElementById('importFileInput').click()">Select File</button>
             </div>
-            <div class="alert alert-info" style="margin-top:16px;">
-                <span>You can also import via <a href="{% url 'admin:index' %}pricing/fileimport/" class="underline font-medium">Django Admin → File Imports</a></span>
+            <div id="uploadProgress" style="display:none;margin-top:16px;text-align:center;">
+                <p style="color:#6b7280;">Reading file headers...</p>
             </div>
+        </div>
+    </div>
+
+    <!-- STEP 2: Column Mapping (hidden until upload) -->
+    <div id="mappingCard" class="mgmt-card" style="display:none;margin-top:16px;">
+        <div class="mgmt-card-header">
+            <div>
+                <h3 class="mgmt-card-title">Step 2: Map Columns</h3>
+                <p class="text-sm text-gray-500 mt-1" id="mappingSubtitle"></p>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <span id="templateMatchBadge" style="display:none;padding:4px 10px;font-size:12px;font-weight:600;background:#ecfdf5;color:#059669;border-radius:6px;"></span>
+            </div>
+        </div>
+        <div class="mgmt-card-body-padded">
+            <div id="fileInfoBar" style="display:flex;gap:16px;align-items:center;padding:10px 14px;background:#f0f9ff;border-radius:8px;margin-bottom:16px;font-size:13px;">
+                <span id="fileInfoName" class="font-semibold"></span>
+                <span id="fileInfoRows" style="color:#6b7280;"></span>
+                <span id="fileInfoType" style="color:#6b7280;"></span>
+                <button class="btn btn-sm" style="margin-left:auto;background:#fff;border:1px solid #d1d5db;font-size:12px;" onclick="resetUpload()">Change File</button>
+            </div>
+            <div style="margin-bottom:20px;">
+                <p class="font-semibold text-sm text-gray-600 mb-2">Preview (first 5 rows)</p>
+                <div style="overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px;">
+                    <table class="mgmt-table" id="previewTable" style="font-size:12px;"><thead></thead><tbody></tbody></table>
+                </div>
+            </div>
+            <div id="mappingGrid"></div>
+            <div id="unmatchedSection" style="display:none;margin-top:16px;">
+                <p class="text-sm text-gray-500 font-semibold">Unmapped CSV Columns (ignored)</p>
+                <div id="unmatchedList" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 3: Save Template & Import (hidden until mapping) -->
+    <div id="actionCard" class="mgmt-card" style="display:none;margin-top:16px;">
+        <div class="mgmt-card-header"><h3 class="mgmt-card-title">Step 3: Import</h3></div>
+        <div class="mgmt-card-body-padded">
+            <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
+                <div style="flex:1;min-width:200px;">
+                    <label class="text-sm font-semibold text-gray-600">Save mapping as template (optional)</label>
+                    <div style="display:flex;gap:8px;margin-top:4px;">
+                        <input type="text" id="templateNameInput" placeholder="e.g., ABS PMS Weekly Export" style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
+                        <button class="btn btn-sm" style="background:#f3f4f6;border:1px solid #d1d5db;" onclick="saveTemplate()">Save Template</button>
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="executeImport()" id="btnExecuteImport" style="padding:10px 24px;font-size:15px;font-weight:600;">Import Data</button>
+            </div>
+            <div id="importResultPanel" style="display:none;margin-top:16px;"></div>
         </div>
     </div>
 </div>
 
+<!-- ========== SAVED TEMPLATES TAB ========== -->
+<div id="tab-import-templates" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Saved Import Templates</h3>
+            <p class="text-sm text-gray-500">Reusable column mappings for different PMS/channel manager formats</p>
+        </div>
+        <div class="mgmt-card-body" id="templateList">
+            <div class="empty-state"><p>Loading templates...</p></div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== IMPORT HISTORY TAB ========== -->
 <div id="tab-import-history" class="tab-content">
     <div class="mgmt-card">
         <div class="mgmt-card-header"><h3 class="mgmt-card-title">Import History</h3></div>
         <div class="mgmt-card-body">
             {% if file_imports %}
             <table class="mgmt-table">
-                <thead><tr><th>File</th><th>Status</th><th>Rows</th><th>Created</th><th>Updated</th><th>Date Range</th><th>Imported</th></tr></thead>
+                <thead><tr><th>File</th><th>Template</th><th>Status</th><th>Rows</th><th>Created</th><th>Updated</th><th>Date Range</th><th>Imported</th></tr></thead>
                 <tbody>
-                    {% for imp in file_imports %}
-                    <tr>
-                        <td class="font-medium">{{ imp.filename }}</td>
-                        <td><span class="badge {% if imp.status == 'completed' %}badge-green{% elif imp.status == 'failed' %}badge-red{% else %}badge-yellow{% endif %}">{{ imp.status }}</span></td>
-                        <td>{{ imp.rows_total }}</td>
-                        <td class="text-green-600">+{{ imp.rows_created }}</td>
-                        <td class="text-blue-600">~{{ imp.rows_updated }}</td>
-                        <td class="text-sm text-gray-500">{% if imp.date_range_start %}{{ imp.date_range_start|date:"M j" }} – {{ imp.date_range_end|date:"M j, Y" }}{% else %}—{% endif %}</td>
-                        <td class="text-sm text-gray-500">{{ imp.created_at|timesince }} ago</td>
-                    </tr>
-                    {% endfor %}
+                {% for imp in file_imports %}
+                <tr>
+                    <td class="font-medium">{{ imp.filename }}</td>
+                    <td class="text-sm text-gray-500">{% if imp.template %}{{ imp.template.name }}{% else %}—{% endif %}</td>
+                    <td><span class="badge {% if imp.status == 'completed' %}badge-green{% elif imp.status == 'failed' %}badge-red{% else %}badge-yellow{% endif %}">{{ imp.status }}</span></td>
+                    <td>{{ imp.rows_total }}</td>
+                    <td class="text-green-600">+{{ imp.rows_created }}</td>
+                    <td class="text-blue-600">~{{ imp.rows_updated }}</td>
+                    <td class="text-sm text-gray-500">{% if imp.date_range_start %}{{ imp.date_range_start|date:"M j" }} – {{ imp.date_range_end|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                    <td class="text-sm text-gray-500">{{ imp.created_at|timesince }} ago</td>
+                </tr>
+                {% endfor %}
                 </tbody>
             </table>
             {% else %}
@@ -64,6 +167,7 @@
     </div>
 </div>
 
+<!-- ========== BOOKING SOURCES TAB ========== -->
 <div id="tab-import-sources" class="tab-content">
     <div class="mgmt-card">
         <div class="mgmt-card-header">
@@ -75,15 +179,15 @@
             <table class="mgmt-table">
                 <thead><tr><th>Source Name</th><th>Maps to Channel</th><th>Direct?</th><th>Import Values</th><th>Active</th></tr></thead>
                 <tbody>
-                    {% for src in booking_sources %}
-                    <tr>
-                        <td class="font-medium">{{ src.name }}</td>
-                        <td>{% if src.channel %}<span class="badge badge-blue">{{ src.channel.name }}</span>{% else %}<span class="text-gray-400">—</span>{% endif %}</td>
-                        <td>{% if src.is_direct %}<span class="badge badge-green">Direct</span>{% else %}<span class="badge badge-gray">OTA</span>{% endif %}</td>
-                        <td class="text-sm text-gray-500">{{ src.import_values|truncatechars:50 }}</td>
-                        <td>{% if src.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-red">Inactive</span>{% endif %}</td>
-                    </tr>
-                    {% endfor %}
+                {% for src in booking_sources %}
+                <tr>
+                    <td class="font-medium">{{ src.name }}</td>
+                    <td>{% if src.channel %}<span class="badge badge-blue">{{ src.channel.name }}</span>{% else %}<span class="text-gray-400">—</span>{% endif %}</td>
+                    <td>{% if src.is_direct %}<span class="badge badge-green">Direct</span>{% else %}<span class="badge badge-gray">OTA</span>{% endif %}</td>
+                    <td class="text-sm text-gray-500">{{ src.import_values|truncatechars:50 }}</td>
+                    <td>{% if src.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-red">Inactive</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
                 </tbody>
             </table>
             {% else %}
@@ -92,4 +196,521 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block section_modals %}
+<!-- Template Edit Modal -->
+<div id="templateEditModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" style="max-width:640px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 class="modal-title">Edit Import Template</h3>
+            <button class="modal-close" onclick="closeModal('templateEditModal')">×</button>
+        </div>
+        <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
+            <input type="hidden" id="editTemplateId">
+            <div style="margin-bottom:16px;">
+                <label class="text-sm font-semibold text-gray-600">Template Name</label>
+                <input type="text" id="editTemplateName" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;margin-top:4px;">
+            </div>
+            <div style="margin-bottom:16px;">
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                    <input type="checkbox" id="editTemplateDefault">
+                    <span class="font-semibold text-gray-600">Set as default template</span>
+                </label>
+            </div>
+            <div>
+                <label class="text-sm font-semibold text-gray-600" style="margin-bottom:8px;display:block;">Column Mapping</label>
+                <div id="editMappingGrid"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('templateEditModal')">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="saveTemplateEdit()">Save Changes</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block section_js %}
+// =========================================================================
+// IMPORT PAGE — Variables
+// =========================================================================
+var uploadData = null;
+var currentColumnMap = {};
+var matchedTemplateId = null;
+var resCurrentPage = 1;
+var resSearchTimer = null;
+
+// =========================================================================
+// RESERVATIONS TAB
+// =========================================================================
+function loadReservations(page) {
+    page = page || 1;
+    resCurrentPage = page;
+    var search = document.getElementById('resSearch').value.trim();
+    var status = document.getElementById('resStatus').value;
+    var dateFrom = document.getElementById('resDateFrom').value;
+    var dateTo = document.getElementById('resDateTo').value;
+
+    var params = 'page=' + page + '&page_size=25';
+    if (search) params += '&search=' + encodeURIComponent(search);
+    if (status) params += '&status=' + encodeURIComponent(status);
+    if (dateFrom) params += '&date_from=' + dateFrom;
+    if (dateTo) params += '&date_to=' + dateTo;
+
+    fetch(API_BASE + '/api/reservations/?' + params)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.success) { showToast(d.error || 'Failed to load reservations', 'error'); return; }
+        var data = d.data;
+        var wrap = document.getElementById('reservationTableWrap');
+        var pag = document.getElementById('resPagination');
+
+        // Reset bulk delete state on page load
+        document.getElementById('bulkDeleteBtn').style.display = 'none';
+
+        if (!data.reservations.length) {
+            wrap.innerHTML = '<div class="empty-state"><p>No reservations found.</p></div>';
+            pag.style.display = 'none';
+            return;
+        }
+
+        var html = '<div style="overflow-x:auto;"><table class="mgmt-table" style="font-size:13px;">';
+        html += '<thead><tr>';
+        html += '<th style="width:32px;"><input type="checkbox" id="resSelectAll" onchange="toggleSelectAll(this)" title="Select all"></th>';
+        html += '<th>Conf #</th><th>Arrival</th><th>Departure</th><th>Nts</th><th>Pax</th>';
+        html += '<th>Room</th><th>Rate Plan</th><th>ADR</th><th>Total</th>';
+        html += '<th>Status</th><th>Source</th><th></th>';
+        html += '</tr></thead><tbody>';
+
+        data.reservations.forEach(function(r) {
+            html += '<tr data-id="' + r.id + '">';
+            // Checkbox
+            html += '<td><input type="checkbox" class="res-checkbox" value="' + r.id + '" onchange="updateBulkDeleteBtn()"></td>';
+            // Confirmation #
+            html += '<td><input type="text" class="editable-input" style="width:90px;font-size:12px;" value="' + escHtml(r.confirmation_no) + '" data-type="reservation" data-id="' + r.id + '" data-field="confirmation_no" onchange="updateField(this)"></td>';
+            // Arrival
+            html += '<td><input type="date" class="editable-input" style="width:130px;font-size:12px;" value="' + r.arrival_date + '" data-type="reservation" data-id="' + r.id + '" data-field="arrival_date" onchange="updateField(this)"></td>';
+            // Departure
+            html += '<td><input type="date" class="editable-input" style="width:130px;font-size:12px;" value="' + r.departure_date + '" data-type="reservation" data-id="' + r.id + '" data-field="departure_date" onchange="updateField(this)"></td>';
+            // Nights
+            html += '<td><input type="number" class="editable-input" style="width:50px;font-size:12px;text-align:center;" value="' + r.nights + '" data-type="reservation" data-id="' + r.id + '" data-field="nights" onchange="updateField(this)" min="1"></td>';
+            // Pax (adults+children)
+            html += '<td style="white-space:nowrap;">';
+            html += '<input type="number" class="editable-input" style="width:40px;font-size:12px;text-align:center;" value="' + r.adults + '" data-type="reservation" data-id="' + r.id + '" data-field="adults" onchange="updateField(this)" min="0" title="Adults">';
+            html += '<span style="color:#9ca3af;margin:0 2px;">+</span>';
+            html += '<input type="number" class="editable-input" style="width:40px;font-size:12px;text-align:center;" value="' + r.children + '" data-type="reservation" data-id="' + r.id + '" data-field="children" onchange="updateField(this)" min="0" title="Children">';
+            html += '</td>';
+            // Room
+            html += '<td><input type="text" class="editable-input" style="width:100px;font-size:12px;" value="' + escHtml(r.room_type_name) + '" data-type="reservation" data-id="' + r.id + '" data-field="room_type_name" onchange="updateField(this)"></td>';
+            // Rate Plan
+            html += '<td><input type="text" class="editable-input" style="width:90px;font-size:12px;" value="' + escHtml(r.rate_plan_name) + '" data-type="reservation" data-id="' + r.id + '" data-field="rate_plan_name" onchange="updateField(this)"></td>';
+            // ADR (read-only, auto-calculated)
+            html += '<td style="font-size:12px;color:#6b7280;text-align:right;">$' + parseFloat(r.adr).toFixed(2) + '</td>';
+            // Total
+            html += '<td><input type="number" class="editable-input" style="width:80px;font-size:12px;text-align:right;" value="' + parseFloat(r.total_amount).toFixed(2) + '" data-type="reservation" data-id="' + r.id + '" data-field="total_amount" onchange="updateField(this)" step="0.01"></td>';
+            // Status
+            html += '<td><select class="editable-input" style="font-size:11px;padding:4px 6px;" data-type="reservation" data-id="' + r.id + '" data-field="status" onchange="updateField(this)">';
+            ['confirmed','cancelled','checked_in','checked_out','no_show'].forEach(function(s) {
+                html += '<option value="' + s + '"' + (r.status === s ? ' selected' : '') + '>' + s.replace('_', ' ') + '</option>';
+            });
+            html += '</select></td>';
+            // Source (read-only)
+            html += '<td class="text-sm text-gray-500" style="font-size:12px;">' + escHtml(r.source_name || '—') + '</td>';
+            // Actions
+            html += '<td><button class="action-btn danger" style="padding:4px 8px;" onclick="deleteItem(\'reservation\',' + r.id + ',\'' + escHtml(r.confirmation_no).replace(/'/g, "\\'") + '\')" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button></td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        wrap.innerHTML = html;
+
+        // Pagination
+        pag.style.display = 'flex';
+        document.getElementById('resPagInfo').textContent = 'Page ' + data.page + ' of ' + data.total_pages + ' (' + data.total_count + ' total)';
+        document.getElementById('resPrevBtn').disabled = (data.page <= 1);
+        document.getElementById('resNextBtn').disabled = (data.page >= data.total_pages);
+    })
+    .catch(function(err) { showToast('Error: ' + err, 'error'); });
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function debounceResSearch() {
+    clearTimeout(resSearchTimer);
+    resSearchTimer = setTimeout(function() { loadReservations(1); }, 300);
+}
+
+function toggleSelectAll(el) {
+    var boxes = document.querySelectorAll('.res-checkbox');
+    boxes.forEach(function(cb) { cb.checked = el.checked; });
+    updateBulkDeleteBtn();
+}
+
+function updateBulkDeleteBtn() {
+    var checked = document.querySelectorAll('.res-checkbox:checked');
+    var btn = document.getElementById('bulkDeleteBtn');
+    var count = document.getElementById('bulkDeleteCount');
+    if (checked.length > 0) {
+        btn.style.display = 'inline-block';
+        count.textContent = checked.length;
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
+function bulkDeleteReservations() {
+    var checked = document.querySelectorAll('.res-checkbox:checked');
+    var ids = Array.prototype.map.call(checked, function(cb) { return parseInt(cb.value); });
+    if (!ids.length) return;
+    document.getElementById('deleteItemName').textContent = ids.length + ' reservation' + (ids.length > 1 ? 's' : '');
+    document.getElementById('confirmDeleteBtn').onclick = function() {
+        fetch(API_BASE + '/api/reservations/bulk-delete/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ ids: ids })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            closeModal('deleteModal');
+            if (d.success) {
+                showToast(d.message || ids.length + ' reservations deleted');
+                loadReservations(resCurrentPage);
+            } else {
+                showToast(d.error || 'Bulk delete failed', 'error');
+            }
+        })
+        .catch(function(err) { closeModal('deleteModal'); showToast('Error: ' + err, 'error'); });
+    };
+    openModal('deleteModal');
+}
+
+// =========================================================================
+// STEP 1: FILE UPLOAD
+// =========================================================================
+document.getElementById('importFileInput').addEventListener('change', function(e) {
+    var file = e.target.files[0]; if (!file) return; handleFileUpload(file);
+});
+var zone = document.getElementById('uploadZone');
+zone.addEventListener('dragover', function(e) { e.preventDefault(); this.style.borderColor = '#3b82f6'; this.style.background = '#eff6ff'; });
+zone.addEventListener('dragleave', function() { this.style.borderColor = '#d1d5db'; this.style.background = '#f9fafb'; });
+zone.addEventListener('drop', function(e) { e.preventDefault(); this.style.borderColor = '#d1d5db'; this.style.background = '#f9fafb'; if (e.dataTransfer.files.length) handleFileUpload(e.dataTransfer.files[0]); });
+
+function handleFileUpload(file) {
+    document.getElementById('uploadProgress').style.display = 'block';
+    document.getElementById('uploadZone').style.display = 'none';
+    var fd = new FormData(); fd.append('file', file);
+    fetch(API_BASE + '/api/import/upload/', { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken') }, body: fd })
+    .then(function(r) { return r.json(); }).then(function(d) {
+        document.getElementById('uploadProgress').style.display = 'none';
+        if (!d.success) { showToast(d.error || 'Upload failed', 'error'); document.getElementById('uploadZone').style.display = 'block'; return; }
+        uploadData = d.data; renderMappingUI(d.data);
+    }).catch(function(err) { document.getElementById('uploadProgress').style.display = 'none'; document.getElementById('uploadZone').style.display = 'block'; showToast('Upload error: ' + err, 'error'); });
+}
+
+function resetUpload() {
+    uploadData = null; currentColumnMap = {}; matchedTemplateId = null;
+    document.getElementById('uploadZone').style.display = 'block';
+    document.getElementById('mappingCard').style.display = 'none';
+    document.getElementById('actionCard').style.display = 'none';
+    document.getElementById('importResultPanel').style.display = 'none';
+    document.getElementById('importFileInput').value = '';
+}
+
+// =========================================================================
+// STEP 2: MAPPING UI
+// =========================================================================
+function renderMappingUI(data) {
+    document.getElementById('mappingCard').style.display = 'block';
+    document.getElementById('actionCard').style.display = 'block';
+    document.getElementById('fileInfoName').textContent = data.filename;
+    document.getElementById('fileInfoRows').textContent = data.row_count + ' rows';
+    document.getElementById('fileInfoType').textContent = data.file_type.toUpperCase();
+    document.getElementById('mappingSubtitle').textContent = data.headers.length + ' columns detected';
+
+    var badge = document.getElementById('templateMatchBadge');
+    if (data.template_match) {
+        badge.style.display = 'inline'; badge.textContent = 'Matched: ' + data.template_match.template.name + ' (' + Math.round(data.template_match.score * 100) + '%)';
+        currentColumnMap = JSON.parse(JSON.stringify(data.template_match.template.column_map));
+        matchedTemplateId = data.template_match.template.id;
+    } else {
+        badge.style.display = 'none';
+        currentColumnMap = JSON.parse(JSON.stringify(data.auto_detected));
+        matchedTemplateId = null;
+    }
+    renderPreview(data.headers, data.preview);
+    renderMappingGrid(data.headers, data.field_definitions, currentColumnMap);
+    renderUnmatched(data.headers, currentColumnMap);
+}
+
+function renderPreview(headers, rows) {
+    var thead = document.querySelector('#previewTable thead');
+    var tbody = document.querySelector('#previewTable tbody');
+    thead.innerHTML = '<tr>' + headers.map(function(h) { return '<th style="white-space:nowrap;font-size:11px;padding:6px 10px;">' + h + '</th>'; }).join('') + '</tr>';
+    tbody.innerHTML = rows.map(function(row) { return '<tr>' + row.map(function(v) { return '<td style="white-space:nowrap;font-size:11px;padding:4px 10px;max-width:150px;overflow:hidden;text-overflow:ellipsis;">' + v + '</td>'; }).join('') + '</tr>'; }).join('');
+}
+
+function renderMappingGrid(headers, fieldDefs, colMap) {
+    var grid = document.getElementById('mappingGrid');
+    var html = '';
+    var groups = [{ key: 'required', label: 'Required Fields', color: '#dc2626' }, { key: 'recommended', label: 'Recommended Fields', color: '#d97706' }, { key: 'optional', label: 'Optional Fields', color: '#6b7280' }];
+
+    groups.forEach(function(g) {
+        var fields = fieldDefs[g.key] || []; if (!fields.length) return;
+        html += '<div style="margin-bottom:16px;"><p style="font-size:12px;font-weight:700;color:' + g.color + ';text-transform:uppercase;margin-bottom:8px;">' + g.label + '</p>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">';
+        fields.forEach(function(f) {
+            var mapped = colMap[f.field] || '';
+            var isReq = g.key === 'required';
+            var bc = mapped ? '#059669' : (isReq ? '#dc2626' : '#e5e7eb');
+            html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid ' + bc + ';border-radius:6px;background:#fff;">';
+            html += '<span style="font-size:13px;font-weight:600;min-width:140px;">' + f.label + '</span>';
+            html += '<select onchange="updateMapping(\'' + f.field + '\',this.value)" style="flex:1;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;">';
+            html += '<option value="">— Not mapped —</option>';
+            headers.forEach(function(h) { html += '<option value="' + h + '"' + (mapped === h ? ' selected' : '') + '>' + h + '</option>'; });
+            html += '</select>';
+            if (mapped) html += '<span style="color:#059669;font-size:14px;">✓</span>';
+            html += '</div>';
+        });
+        html += '</div></div>';
+    });
+    grid.innerHTML = html;
+}
+
+function renderUnmatched(headers, colMap) {
+    var mapped = {}; for (var k in colMap) { if (colMap[k]) mapped[colMap[k]] = true; }
+    var unmatched = headers.filter(function(h) { return !mapped[h]; });
+    var section = document.getElementById('unmatchedSection');
+    var list = document.getElementById('unmatchedList');
+    if (unmatched.length) {
+        section.style.display = 'block';
+        list.innerHTML = unmatched.map(function(h) { return '<span style="padding:4px 10px;font-size:12px;background:#f3f4f6;color:#6b7280;border-radius:4px;">' + h + '</span>'; }).join('');
+    } else { section.style.display = 'none'; }
+}
+
+function updateMapping(field, csvHeader) {
+    if (csvHeader) { currentColumnMap[field] = csvHeader; } else { delete currentColumnMap[field]; }
+    if (uploadData) { renderMappingGrid(uploadData.headers, uploadData.field_definitions, currentColumnMap); renderUnmatched(uploadData.headers, currentColumnMap); }
+}
+
+// =========================================================================
+// STEP 3: SAVE TEMPLATE & EXECUTE
+// =========================================================================
+function saveTemplate() {
+    var name = document.getElementById('templateNameInput').value.trim();
+    if (!name) { showToast('Enter a template name', 'error'); return; }
+    fetch(API_BASE + '/api/import/templates/save/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') }, body: JSON.stringify({ name: name, import_type: 'reservation', column_map: currentColumnMap, source_headers: uploadData ? uploadData.headers : [], value_transforms: {}, scope: 'property' }) })
+    .then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) { showToast(d.message); document.getElementById('templateNameInput').value = ''; matchedTemplateId = d.data.id; }
+        else showToast(d.error || 'Save failed', 'error');
+    });
+}
+
+function executeImport() {
+    var btn = document.getElementById('btnExecuteImport'); btn.disabled = true; btn.textContent = 'Importing...';
+    fetch(API_BASE + '/api/import/execute/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') }, body: JSON.stringify({ column_map: currentColumnMap, import_type: 'reservation', template_id: matchedTemplateId, value_transforms: {} }) })
+    .then(function(r) { return r.json(); }).then(function(d) {
+        btn.disabled = false; btn.textContent = 'Import Data';
+        var panel = document.getElementById('importResultPanel'); panel.style.display = 'block';
+        if (d.success) {
+            var r = d.data;
+            var hasErrors = r.errors && r.errors.length > 0;
+            var warnings = hasErrors ? r.errors.filter(function(e) { return e.row === 0; }) : [];
+            var rowErrors = hasErrors ? r.errors.filter(function(e) { return e.row > 0; }) : [];
+            var bgColor = rowErrors.length > 0 ? '#fffbeb' : '#ecfdf5';
+            var borderColor = rowErrors.length > 0 ? '#fde68a' : '#a7f3d0';
+            var iconColor = rowErrors.length > 0 ? '#d97706' : '#059669';
+            var icon = rowErrors.length > 0 ? '⚠' : '✓';
+            var statusText = rowErrors.length > 0 ? 'Import Completed with Errors' : 'Import Complete';
+
+            var html = '<div style="padding:16px;background:' + bgColor + ';border-radius:8px;border:1px solid ' + borderColor + ';">';
+            html += '<p style="font-weight:700;color:' + iconColor + ';font-size:15px;margin-bottom:8px;">' + icon + ' ' + statusText + '</p>';
+            html += '<div style="display:flex;gap:20px;font-size:14px;flex-wrap:wrap;">';
+            html += '<span><strong>' + r.rows_created + '</strong> created</span>';
+            html += '<span><strong>' + r.rows_updated + '</strong> updated</span>';
+            html += '<span><strong>' + r.rows_skipped + '</strong> skipped</span>';
+            html += '<span style="color:#6b7280;">of ' + r.rows_total + ' total</span>';
+            if (r.success_rate !== undefined) html += '<span style="color:#6b7280;">(' + r.success_rate.toFixed(1) + '% success)</span>';
+            html += '</div>';
+
+            if (warnings.length > 0) {
+                html += '<div style="margin-top:12px;padding:10px;background:#fef3c7;border-radius:6px;border:1px solid #fde68a;">';
+                html += '<p style="font-weight:600;font-size:13px;color:#92400e;margin-bottom:6px;">Warnings</p>';
+                warnings.forEach(function(w) { html += '<p style="font-size:12px;color:#78350f;margin:2px 0;">• ' + w.message + '</p>'; });
+                html += '</div>';
+            }
+
+            if (rowErrors.length > 0) {
+                var showCount = Math.min(rowErrors.length, 20);
+                html += '<div style="margin-top:12px;padding:10px;background:#fef2f2;border-radius:6px;border:1px solid #fca5a5;">';
+                html += '<p style="font-weight:600;font-size:13px;color:#991b1b;margin-bottom:6px;">Row Errors (' + rowErrors.length + ')</p>';
+                html += '<div style="max-height:200px;overflow-y:auto;">';
+                html += '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
+                html += '<thead><tr style="text-align:left;border-bottom:1px solid #fca5a5;"><th style="padding:4px 8px;color:#991b1b;">Row</th><th style="padding:4px 8px;color:#991b1b;">Error</th></tr></thead><tbody>';
+                for (var i = 0; i < showCount; i++) {
+                    html += '<tr style="border-bottom:1px solid #fee2e2;"><td style="padding:4px 8px;color:#b91c1c;font-weight:600;white-space:nowrap;">' + rowErrors[i].row + '</td><td style="padding:4px 8px;color:#7f1d1d;">' + rowErrors[i].message + '</td></tr>';
+                }
+                html += '</tbody></table></div>';
+                if (rowErrors.length > showCount) html += '<p style="font-size:11px;color:#9ca3af;margin-top:6px;">Showing ' + showCount + ' of ' + rowErrors.length + ' errors</p>';
+                html += '</div>';
+            }
+
+            html += '</div>';
+            panel.innerHTML = html;
+            showToast(d.message);
+        } else {
+            panel.innerHTML = '<div style="padding:16px;background:#fef2f2;border-radius:8px;border:1px solid #fca5a5;"><p style="font-weight:700;color:#dc2626;">✗ Import Failed</p><p style="font-size:13px;color:#6b7280;margin-top:4px;">' + (d.error || 'Unknown error') + '</p></div>';
+            showToast(d.error || 'Import failed', 'error');
+        }
+    }).catch(function(err) { btn.disabled = false; btn.textContent = 'Import Data'; showToast('Error: ' + err, 'error'); });
+}
+
+// =========================================================================
+// TEMPLATES TAB
+// =========================================================================
+var savedTemplatesCache = [];
+
+// System field definitions for mapping grid
+var SYSTEM_FIELDS = [
+    {group: 'Required', color: '#dc2626', fields: [
+        {field: 'confirmation_no', label: 'Confirmation No'},
+        {field: 'arrival_date', label: 'Arrival Date'},
+        {field: 'departure_date', label: 'Departure Date'}
+    ]},
+    {group: 'Recommended', color: '#d97706', fields: [
+        {field: 'booking_date', label: 'Booking Date'},
+        {field: 'nights', label: 'Nights'},
+        {field: 'total_amount', label: 'Total Amount'},
+        {field: 'adr', label: 'ADR / Daily Rate'},
+        {field: 'status', label: 'Status'},
+        {field: 'room_no', label: 'Room Type'},
+        {field: 'source', label: 'Booking Source / Channel'}
+    ]},
+    {group: 'Optional', color: '#6b7280', fields: [
+        {field: 'guest_name', label: 'Guest Name'},
+        {field: 'country', label: 'Country'},
+        {field: 'adults', label: 'Adults'},
+        {field: 'children', label: 'Children'},
+        {field: 'rate_plan', label: 'Rate Plan'},
+        {field: 'email', label: 'Email'},
+        {field: 'cancellation_date', label: 'Cancellation Date'},
+        {field: 'reservation_type', label: 'Reservation Type'},
+        {field: 'market_code', label: 'Market Segment'},
+        {field: 'payment_type', label: 'Payment Type'},
+        {field: 'user', label: 'User / Agent'},
+        {field: 'pax', label: 'Pax'},
+        {field: 'rooms_count', label: 'Rooms Count'},
+        {field: 'deposit', label: 'Deposit'},
+        {field: 'total_charges', label: 'Total Charges'},
+        {field: 'hotel_name', label: 'Hotel Name'},
+        {field: 'promotion', label: 'Promotion'}
+    ]}
+];
+
+function loadTemplates() {
+    fetch(API_BASE + '/api/import/templates/').then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.success) return;
+        var list = document.getElementById('templateList'); var templates = d.data.templates;
+        savedTemplatesCache = templates;
+        if (!templates.length) { list.innerHTML = '<div class="empty-state"><p>No saved templates yet. Upload a file and save the mapping.</p></div>'; return; }
+        var html = '<table class="mgmt-table"><thead><tr><th>Name</th><th>Type</th><th>Scope</th><th>Columns</th><th>Used</th><th>Last Used</th><th></th></tr></thead><tbody>';
+        templates.forEach(function(t) {
+            var cc = Object.keys(t.column_map).filter(function(k) { return t.column_map[k]; }).length;
+            var lu = t.last_used_at ? new Date(t.last_used_at).toLocaleDateString() : 'Never';
+            html += '<tr><td class="font-medium">' + escHtml(t.name) + (t.is_default ? ' <span class="badge badge-green" style="font-size:10px;">DEFAULT</span>' : '') + '</td><td><span class="badge badge-blue">' + t.import_type_display + '</span></td><td class="text-sm text-gray-500">' + t.scope + '</td><td>' + cc + ' fields</td><td>' + t.use_count + '×</td><td class="text-sm text-gray-500">' + lu + '</td>';
+            html += '<td style="white-space:nowrap;"><button onclick="editTemplate(' + t.id + ')" class="text-sm" style="background:none;border:none;cursor:pointer;color:#3b82f6;margin-right:8px;">Edit</button>';
+            html += '<button onclick="deleteTemplate(' + t.id + ',\'' + escHtml(t.name).replace(/'/g, "\\'") + '\')" class="text-sm" style="background:none;border:none;cursor:pointer;color:#dc2626;">Delete</button></td></tr>';
+        });
+        html += '</tbody></table>'; list.innerHTML = html;
+    });
+}
+
+function editTemplate(id) {
+    var t = savedTemplatesCache.find(function(tpl) { return tpl.id === id; });
+    if (!t) { showToast('Template not found', 'error'); return; }
+    document.getElementById('editTemplateId').value = t.id;
+    document.getElementById('editTemplateName').value = t.name;
+    document.getElementById('editTemplateDefault').checked = t.is_default;
+
+    var headers = t.source_headers || [];
+    var colMap = t.column_map || {};
+    var grid = document.getElementById('editMappingGrid');
+    var html = '';
+
+    SYSTEM_FIELDS.forEach(function(g) {
+        html += '<div style="margin-bottom:12px;"><p style="font-size:11px;font-weight:700;color:' + g.color + ';text-transform:uppercase;margin-bottom:6px;">' + g.group + '</p>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">';
+        g.fields.forEach(function(f) {
+            var mapped = colMap[f.field] || '';
+            var bc = mapped ? '#059669' : '#e5e7eb';
+            html += '<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid ' + bc + ';border-radius:6px;background:#fff;">';
+            html += '<span style="font-size:12px;font-weight:600;min-width:120px;">' + f.label + '</span>';
+            html += '<select data-field="' + f.field + '" class="edit-map-select" style="flex:1;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;">';
+            html += '<option value="">— Not mapped —</option>';
+            headers.forEach(function(h) { html += '<option value="' + escHtml(h) + '"' + (mapped === h ? ' selected' : '') + '>' + escHtml(h) + '</option>'; });
+            html += '</select>';
+            if (mapped) html += '<span style="color:#059669;font-size:12px;">✓</span>';
+            html += '</div>';
+        });
+        html += '</div></div>';
+    });
+
+    if (!headers.length) {
+        html += '<p class="text-sm text-gray-500" style="margin-top:8px;">No source headers saved with this template. Column mapping dropdowns will be empty until a file is uploaded with this template.</p>';
+    }
+
+    grid.innerHTML = html;
+    openModal('templateEditModal');
+}
+
+function saveTemplateEdit() {
+    var id = document.getElementById('editTemplateId').value;
+    var name = document.getElementById('editTemplateName').value.trim();
+    if (!name) { showToast('Template name is required', 'error'); return; }
+
+    var colMap = {};
+    document.querySelectorAll('.edit-map-select').forEach(function(sel) {
+        var field = sel.getAttribute('data-field');
+        var val = sel.value;
+        if (val) colMap[field] = val;
+    });
+
+    fetch(API_BASE + '/api/import/templates/' + id + '/update/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ name: name, column_map: colMap, is_default: document.getElementById('editTemplateDefault').checked })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            showToast(d.message || 'Template updated');
+            closeModal('templateEditModal');
+            loadTemplates();
+        } else {
+            showToast(d.error || 'Update failed', 'error');
+        }
+    })
+    .catch(function(err) { showToast('Error: ' + err, 'error'); });
+}
+
+function deleteTemplate(id, name) {
+    if (!confirm('Delete template "' + name + '"?')) return;
+    fetch(API_BASE + '/api/import/templates/' + id + '/delete/', { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken') } }).then(function(r) { return r.json(); }).then(function(d) { if (d.success) { showToast(d.message); loadTemplates(); } else showToast(d.error || 'Failed', 'error'); });
+}
+
+// =========================================================================
+// TAB SWITCHING (override base tab handler for import-specific tabs)
+// =========================================================================
+document.querySelectorAll('.tab-btn').forEach(function(btn) { btn.addEventListener('click', function() {
+    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+    this.classList.add('active'); document.getElementById('tab-' + this.dataset.tab).classList.add('active');
+    if (this.dataset.tab === 'import-templates') loadTemplates();
+    if (this.dataset.tab === 'import-reservations') loadReservations(resCurrentPage);
+}); });
+
+// Load reservations on page load
+loadReservations(1);
 {% endblock %}

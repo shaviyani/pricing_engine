@@ -5,6 +5,7 @@ from pricing.views import (
     PricingManagementView, PropertyUpdateView,
     ManageLandingView, ManageOrganizationView, ManagePropertyView,
     ManagePricingView, ManageOffersView, ManageImportView, ManageReportsView,
+    ManageVersionDetailView,
     SeasonListView, SeasonCreateView, SeasonUpdateView, SeasonDeleteView,
     RoomTypeListView, RoomTypeCreateView, RoomTypeUpdateView, RoomTypeDeleteView, RoomTypeReorderView,
     RatePlanListView, RatePlanCreateView, RatePlanUpdateView, RatePlanDeleteView,
@@ -17,6 +18,11 @@ from pricing.views import (
     OrganizationSettingsView, OrganizationUpdateView, PropertyCreateView, PropertyDeleteView,
     RoomTypeSeasonModifierListView, RoomTypeSeasonModifierUpdateView,
     RoomTypeSeasonModifierBulkUpdateView, RoomTypeSeasonModifierResetView,
+    ImportUploadView, ImportExecuteView,
+    ImportTemplateListView, ImportTemplateSaveView,
+    ImportTemplateUpdateView, ImportTemplateDeleteView,
+    ReservationListView, ReservationUpdateView, ReservationDeleteView,
+    ReservationBulkDeleteView,
 )
 
 # Property-scoped management URLs
@@ -38,6 +44,8 @@ urlpatterns = [
          ManageImportView.as_view(), name='manage_import'),
     path('<slug:org_code>/<slug:prop_code>/manage/reports/',
          ManageReportsView.as_view(), name='manage_reports'),
+    path('<slug:org_code>/<slug:prop_code>/manage/versions/<int:version_id>/',
+         ManageVersionDetailView.as_view(), name='manage_version_detail'),
 
     # Property settings
     path('<slug:org_code>/<slug:prop_code>/api/property/update/',
@@ -84,6 +92,30 @@ urlpatterns = [
          RoomTypeSeasonModifierBulkUpdateView.as_view(), name='api_rt_season_modifier_bulk_update'),
     path('<slug:org_code>/<slug:prop_code>/api/room-type-season-modifiers/reset/',
          RoomTypeSeasonModifierResetView.as_view(), name='api_rt_season_modifier_reset'),
+
+    # Import API
+    path('<slug:org_code>/<slug:prop_code>/api/import/upload/',
+         ImportUploadView.as_view(), name='api_import_upload'),
+    path('<slug:org_code>/<slug:prop_code>/api/import/execute/',
+         ImportExecuteView.as_view(), name='api_import_execute'),
+    path('<slug:org_code>/<slug:prop_code>/api/import/templates/',
+         ImportTemplateListView.as_view(), name='api_import_template_list'),
+    path('<slug:org_code>/<slug:prop_code>/api/import/templates/save/',
+         ImportTemplateSaveView.as_view(), name='api_import_template_save'),
+    path('<slug:org_code>/<slug:prop_code>/api/import/templates/<int:pk>/update/',
+         ImportTemplateUpdateView.as_view(), name='api_import_template_update'),
+    path('<slug:org_code>/<slug:prop_code>/api/import/templates/<int:pk>/delete/',
+         ImportTemplateDeleteView.as_view(), name='api_import_template_delete'),
+
+    # Reservations API
+    path('<slug:org_code>/<slug:prop_code>/api/reservations/',
+         ReservationListView.as_view(), name='api_reservation_list'),
+    path('<slug:org_code>/<slug:prop_code>/api/reservations/<int:pk>/update/',
+         ReservationUpdateView.as_view(), name='api_reservation_update'),
+    path('<slug:org_code>/<slug:prop_code>/api/reservations/<int:pk>/delete/',
+         ReservationDeleteView.as_view(), name='api_reservation_delete'),
+    path('<slug:org_code>/<slug:prop_code>/api/reservations/bulk-delete/',
+         ReservationBulkDeleteView.as_view(), name='api_reservation_bulk_delete'),
 ]
 
 # Shared (org-level or global) URLs

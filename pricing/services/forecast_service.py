@@ -118,7 +118,7 @@ class RevenueForecastService:
         occupied_room_nights = int(available_room_nights * occupancy_rate)
         
         # Channels are shared (no hotel filter)
-        channels = Channel.objects.all()
+        channels = Channel.objects.filter(hotel=self.hotel)
         channel_breakdown = []
         
         total_gross_revenue = Decimal('0.00')
@@ -179,7 +179,7 @@ class RevenueForecastService:
         from pricing.services import calculate_final_rate_with_modifier
         
         room_types = self._get_room_types()
-        rate_plans = RatePlan.objects.all()  # Shared
+        rate_plans = RatePlan.objects.filter(hotel=self.hotel)
         
         if not room_types.exists() or not rate_plans.exists():
             return Decimal('0.00')
@@ -270,7 +270,7 @@ class RevenueForecastService:
                         channel_data['net_revenue'] * proportion
                     )
         
-        channels = Channel.objects.all()
+        channels = Channel.objects.filter(hotel=self.hotel)
         channel_breakdown = []
         for channel in channels:
             if channel.id in channel_contributions:

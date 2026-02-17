@@ -106,4 +106,17 @@ from .admin_views import (
     RoomTypeSeasonModifierUpdateView,
     RoomTypeSeasonModifierBulkUpdateView,
     RoomTypeSeasonModifierResetView,
+    ManageVersionDetailView,
+    # Import Templates
+    ImportUploadView,
+    ImportExecuteView,
+    ImportTemplateListView,
+    ImportTemplateSaveView,
+    ImportTemplateUpdateView,
+    ImportTemplateDeleteView,
+    # Reservations
+    ReservationListView,
+    ReservationUpdateView,
+    ReservationDeleteView,
+    ReservationBulkDeleteView,
 )

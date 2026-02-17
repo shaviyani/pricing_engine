@@ -1,0 +1,998 @@
+{% extends "pricing/manage/_base.html" %}
+{% load pricing_filters %}
+
+{% block section_title %}Version v{{ version.version_number }}{% endblock %}
+{% block page_heading %}Version v{{ version.version_number }}: {{ version.name }}{% endblock %}
+
+{% block section_css %}
+/* Matrix styles */
+.matrix-container { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.matrix-table { width:100%; border-collapse:collapse; font-size:13px; min-width:800px; }
+.matrix-table thead th {
+    background:#f9fafb; padding:12px 8px; text-align:center; font-weight:600;
+    color:#374151; position:sticky; top:0; z-index:10; border-bottom:2px solid #e5e7eb;
+}
+.matrix-table thead th.corner {
+    position:sticky; left:0; z-index:20; background:#f9fafb;
+    text-align:left; min-width:220px; padding-left:16px;
+}
+.season-header { min-width:110px; }
+.season-name { font-weight:700; color:#111827; font-size:12px; }
+.season-dates { font-size:10px; color:#6b7280; font-weight:400; margin-top:2px; }
+.season-index { font-size:10px; color:#3b82f6; font-weight:600; margin-top:2px; background:#eff6ff; padding:2px 6px; border-radius:4px; display:inline-block; }
+.matrix-table tbody td { padding:10px 8px; vertical-align:middle; text-align:center; border-bottom:1px solid #f3f4f6; }
+.room-header-row td { background:#f3f4f6 !important; text-align:left !important; padding-left:16px !important; font-weight:700; color:#111827; font-size:14px; border-bottom:2px solid #d1d5db !important; }
+.channel-header-row td { background:#fff !important; color:#111827; font-weight:600; font-size:13px; cursor:pointer; border-bottom:2px solid #e5e7eb !important; border-top:1px solid #e5e7eb; }
+.channel-header-row td.ch-name { position:sticky; left:0; z-index:5; background:#fff !important; text-align:left; padding-left:24px; }
+.channel-header-row:hover td { background:#f9fafb !important; }
+.channel-header-row:hover td.ch-name { background:#f9fafb !important; }
+.bar-row td { background:#f0fdf4 !important; border-bottom:1px solid #bbf7d0; }
+.bar-row td.row-label { position:sticky; left:0; z-index:5; background:#dcfce7 !important; text-align:left; padding-left:32px; font-weight:500; color:#166534; font-style:italic; }
+.ch-base-row td { background:#f8fafc; font-weight:600; border-bottom:1px solid #e2e8f0; }
+.ch-base-row td.row-label { position:sticky; left:0; z-index:5; background:#f1f5f9; text-align:left; padding-left:32px; font-weight:600; color:#1e293b; }
+.mod-row td { background:#fff; }
+.mod-row td.row-label { position:sticky; left:0; z-index:5; background:#fafafa; text-align:left; padding-left:40px; font-weight:500; color:#4b5563; }
+.mod-row:hover td { background:#eff6ff !important; }
+.mod-row:hover td.row-label { background:#dbeafe !important; }
+.mod-row.stacked td { background:#fefce8; }
+.mod-row.stacked td.row-label { background:#fef9c3; }
+.rate-dual { display:flex; flex-direction:column; align-items:center; gap:1px; }
+.rate-sub { font-size:14px; font-weight:700; color:#111827; }
+.rate-fin { font-size:10px; color:#6b7280; font-weight:500; }
+.ch-badge { font-size:10px; padding:2px 8px; border-radius:9999px; font-weight:500; }
+.ch-badge.disc { background:#dcfce7; color:#166534; }
+.ch-badge.comm { background:#fef3c7; color:#92400e; }
+.disc-badge { font-size:10px; color:#059669; font-weight:600; margin-left:4px; background:#d1fae5; padding:1px 6px; border-radius:4px; }
+.toggle-icon { display:inline-block; transition:transform 0.2s; margin-right:8px; font-size:10px; }
+.toggle-icon.collapsed { transform:rotate(-90deg); }
+.ch-detail-hidden { display:none; }
+.filter-select { padding:8px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:14px; min-width:160px; background:white; color:#374151; cursor:pointer; }
+.filter-select:focus { outline:none; border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,0.1); }
+{% endblock %}
+
+{% block section_content %}
+
+<!-- Back link -->
+<div style="margin-bottom:16px;">
+    <a href="/{{ org_code }}/{{ prop_code }}/manage/pricing/" class="btn btn-secondary btn-sm">&larr; Back to Pricing</a>
+</div>
+
+<!-- Version Header Card -->
+<div class="mgmt-card" style="margin-bottom:24px;">
+    <div style="padding:20px 24px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;">
+            <div>
+                <h2 style="font-size:20px;font-weight:700;color:#111827;margin:0;">
+                    v{{ version.version_number }} &mdash; {{ version.name }}
+                </h2>
+                <p style="color:#6b7280;font-size:14px;margin-top:4px;">
+                    {% if version.notes %}{{ version.notes }}{% else %}No notes{% endif %}
+                </p>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                {% if version.status == 'published' %}
+                    <span class="badge badge-green">Published</span>
+                {% elif version.status == 'draft' %}
+                    <span class="badge badge-yellow">Draft</span>
+                {% else %}
+                    <span class="badge badge-gray">Archived</span>
+                {% endif %}
+                {% if is_editable %}
+                    <span style="font-size:12px;color:#92400e;background:#fef3c7;padding:4px 10px;border-radius:6px;font-weight:500;">Editable</span>
+                {% endif %}
+            </div>
+        </div>
+        <div style="display:flex;gap:24px;margin-top:12px;font-size:13px;color:#6b7280;flex-wrap:wrap;">
+            <span>Created by: <strong style="color:#374151;">{{ version.created_by|default:"--" }}</strong></span>
+            <span>Created: <strong style="color:#374151;">{{ version.created_at|date:"M d, Y H:i" }}</strong></span>
+            {% if version.published_at %}
+                <span>Published: <strong style="color:#374151;">{{ version.published_at|date:"M d, Y H:i" }}</strong></span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Summary Stat Cards -->
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{ summary.seasons }}</div>
+        <div class="stat-label">Seasons</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ summary.room_types }}</div>
+        <div class="stat-label">Room Types</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ summary.rate_plans }}</div>
+        <div class="stat-label">Rate Plans</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ summary.channels }}</div>
+        <div class="stat-label">Channels</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ summary.modifiers }}</div>
+        <div class="stat-label">Modifiers</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ summary.dynamic_rules }}</div>
+        <div class="stat-label">DP Rules</div>
+    </div>
+</div>
+
+<!-- Tab Navigation -->
+<div class="tab-nav" role="tablist">
+    <button class="tab-btn active" data-tab="v-matrix">Pricing Matrix</button>
+    <button class="tab-btn" data-tab="v-seasons">Seasons</button>
+    <button class="tab-btn" data-tab="v-rooms">Room Types</button>
+    <button class="tab-btn" data-tab="v-rateplans">Rate Plans</button>
+    <button class="tab-btn" data-tab="v-channels">Channels</button>
+    <button class="tab-btn" data-tab="v-modifiers">Rate Modifiers</button>
+    <button class="tab-btn" data-tab="v-dynamic">Dynamic Pricing</button>
+</div>
+
+<!-- ===================== PRICING MATRIX TAB ===================== -->
+<div id="tab-v-matrix" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Pricing Matrix</h3>
+            <div style="display:flex;gap:8px;">
+                <button onclick="expandAllCh()" class="btn btn-secondary btn-sm">Expand All</button>
+                <button onclick="collapseAllCh()" class="btn btn-secondary btn-sm">Collapse All</button>
+            </div>
+        </div>
+        <div style="padding:16px 20px;border-bottom:1px solid #e5e7eb;">
+            <form method="get" style="display:flex;flex-wrap:wrap;gap:12px;align-items:end;">
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;display:block;margin-bottom:4px;">Rate Plan</label>
+                    <select name="rate_plan_id" class="filter-select" onchange="this.form.submit()">
+                        {% for plan in v_rate_plans %}
+                        <option value="{{ plan.id }}" {% if selected_rate_plan and plan.id == selected_rate_plan.id %}selected{% endif %}>
+                            {{ plan.name }} (${{ plan.meal_supplement }}/pax)
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;display:block;margin-bottom:4px;">Guests</label>
+                    <select name="pax" class="filter-select" onchange="this.form.submit()">
+                        <option value="1" {% if pax == 1 %}selected{% endif %}>1 Guest</option>
+                        <option value="2" {% if pax == 2 %}selected{% endif %}>2 Guests</option>
+                        <option value="3" {% if pax == 3 %}selected{% endif %}>3 Guests</option>
+                        <option value="4" {% if pax == 4 %}selected{% endif %}>4 Guests</option>
+                    </select>
+                </div>
+            </form>
+        </div>
+        <div class="mgmt-card-body">
+            {% if has_matrix %}
+            <div class="matrix-container">
+                <table class="matrix-table" id="pricingMatrix">
+                    <thead>
+                        <tr>
+                            <th class="corner">Channel / Modifier</th>
+                            {% for season in v_seasons %}
+                            <th class="season-header">
+                                <div class="season-name">{{ season.name }}</div>
+                                <div class="season-dates">{{ season.start_date|date:"M d" }} - {{ season.end_date|date:"M d" }}</div>
+                                <div class="season-index">&times;{{ season.season_index }}</div>
+                            </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for room in v_room_types %}
+                        {% with room_data=matrix|get_item:room.id %}
+                        <!-- Room header -->
+                        <tr class="room-header-row">
+                            <td colspan="{{ v_seasons|length|add:1 }}">
+                                {{ room.name }}
+                                <span style="font-weight:400;color:#6b7280;font-size:12px;margin-left:8px;">
+                                    Base: ${{ room.get_effective_base_rate|floatformat:0 }} &middot; {{ room.number_of_rooms }} rooms
+                                </span>
+                            </td>
+                        </tr>
+                        {% for channel in v_channels %}
+                        {% with ch_data=room_data|get_item:channel.id %}
+                        {% with ch_mods=channel_modifiers|get_item:channel.id %}
+                        <!-- Channel header (click to expand) -->
+                        <tr class="channel-header-row" onclick="toggleCh('r{{ room.id }}c{{ channel.id }}')">
+                            <td class="ch-name">
+                                <span class="toggle-icon collapsed" id="ti-r{{ room.id }}c{{ channel.id }}">&#9660;</span>
+                                {{ channel.name }}
+                                {% if channel.base_discount_percent > 0 %}<span class="ch-badge disc">-{{ channel.base_discount_percent }}%</span>{% endif %}
+                                {% if channel.commission_percent > 0 %}<span class="ch-badge comm">{{ channel.commission_percent }}% comm</span>{% endif %}
+                            </td>
+                            {% for season in v_seasons %}
+                            {% with cell=ch_data|get_item:season.id %}
+                            <td>
+                                <div class="rate-dual">
+                                    <span class="rate-sub">${{ cell.channel_base_subtotal|floatformat:0 }}</span>
+                                    <span class="rate-fin">${{ cell.channel_base_rate|floatformat:0 }}</span>
+                                </div>
+                            </td>
+                            {% endwith %}
+                            {% endfor %}
+                        </tr>
+                        <!-- BAR row -->
+                        <tr class="bar-row r{{ room.id }}c{{ channel.id }}-det ch-detail-hidden">
+                            <td class="row-label">BAR (Reference)</td>
+                            {% for season in v_seasons %}
+                            {% with cell=ch_data|get_item:season.id %}
+                            <td>
+                                <div class="rate-dual">
+                                    <span class="rate-sub" style="color:#166534;">${{ cell.bar_rate|floatformat:2 }}</span>
+                                    <span class="rate-fin">${{ cell.bar_final|floatformat:2 }}</span>
+                                </div>
+                            </td>
+                            {% endwith %}
+                            {% endfor %}
+                        </tr>
+                        <!-- Channel base row -->
+                        <tr class="ch-base-row r{{ room.id }}c{{ channel.id }}-det ch-detail-hidden">
+                            <td class="row-label">Channel Base Rate</td>
+                            {% for season in v_seasons %}
+                            {% with cell=ch_data|get_item:season.id %}
+                            <td>
+                                <div class="rate-dual">
+                                    <span class="rate-sub">${{ cell.channel_base_subtotal|floatformat:2 }}</span>
+                                    <span class="rate-fin">${{ cell.channel_base_rate|floatformat:2 }}</span>
+                                </div>
+                            </td>
+                            {% endwith %}
+                            {% endfor %}
+                        </tr>
+                        <!-- Modifier rows -->
+                        {% for modifier in ch_mods %}
+                        {% if modifier.active %}
+                        <tr class="mod-row {% if modifier.is_stacked %}stacked{% endif %} r{{ room.id }}c{{ channel.id }}-det ch-detail-hidden">
+                            <td class="row-label">
+                                {{ modifier.name }}
+                                {% if modifier.discount_percent > 0 %}<span class="disc-badge">-{{ modifier.discount_percent }}%</span>{% endif %}
+                            </td>
+                            {% for season in v_seasons %}
+                            {% with cell=ch_data|get_item:season.id %}
+                            <td>
+                                {% for mr in cell.modifier_rates %}
+                                {% if mr.modifier_id == modifier.id %}
+                                <div class="rate-dual">
+                                    <span class="rate-sub">${{ mr.subtotal|floatformat:2 }}</span>
+                                    <span class="rate-fin">${{ mr.final_rate|floatformat:2 }}</span>
+                                </div>
+                                {% endif %}
+                                {% endfor %}
+                            </td>
+                            {% endwith %}
+                            {% endfor %}
+                        </tr>
+                        {% endif %}
+                        {% empty %}
+                        <tr class="mod-row r{{ room.id }}c{{ channel.id }}-det ch-detail-hidden">
+                            <td class="row-label" style="color:#9ca3af;font-style:italic;">No modifiers</td>
+                            {% for season in v_seasons %}<td style="color:#9ca3af;">&mdash;</td>{% endfor %}
+                        </tr>
+                        {% endfor %}
+                        {% endwith %}
+                        {% endwith %}
+                        {% endfor %}
+                        {% endwith %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>Add seasons, room types, and channels to generate the pricing matrix.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===================== SEASONS TAB ===================== -->
+<div id="tab-v-seasons" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Seasons ({{ summary.seasons }})</h3>
+            {% if is_editable %}
+            <button class="btn btn-primary btn-sm" onclick="openModal('seasonModal')">+ Add Season</button>
+            {% endif %}
+        </div>
+        <div class="mgmt-card-body">
+            {% if v_seasons %}
+            <table class="mgmt-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Start Date</th>
+                        <th>End Date</th>
+                        <th>Index</th>
+                        <th>Expected Occ.</th>
+                        {% if is_editable %}<th style="width:60px;"></th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for season in v_seasons %}
+                    <tr data-id="{{ season.id }}">
+                        {% if is_editable %}
+                        <td><input class="editable-input" data-type="season" data-id="{{ season.id }}" data-field="name" value="{{ season.name }}" onchange="updateFieldReload(this)"></td>
+                        <td>
+                            <select class="editable-input" data-type="season" data-id="{{ season.id }}" data-field="season_type" onchange="updateFieldReload(this)" style="width:auto;">
+                                <option value="peak" {% if season.season_type == 'peak' %}selected{% endif %}>Peak</option>
+                                <option value="shoulder" {% if season.season_type == 'shoulder' %}selected{% endif %}>Shoulder</option>
+                                <option value="low" {% if season.season_type == 'low' %}selected{% endif %}>Low</option>
+                            </select>
+                        </td>
+                        <td><input type="date" class="editable-input" data-type="season" data-id="{{ season.id }}" data-field="start_date" value="{{ season.start_date|date:'Y-m-d' }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="date" class="editable-input" data-type="season" data-id="{{ season.id }}" data-field="end_date" value="{{ season.end_date|date:'Y-m-d' }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="number" step="0.01" class="editable-input" style="width:70px;" data-type="season" data-id="{{ season.id }}" data-field="season_index" value="{{ season.season_index }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="number" step="1" class="editable-input" style="width:70px;" data-type="season" data-id="{{ season.id }}" data-field="expected_occupancy" value="{{ season.expected_occupancy }}" onchange="updateFieldReload(this)"></td>
+                        <td>
+                            <div class="row-actions" style="opacity:1;">
+                                <button class="action-btn danger" onclick="deleteItem('season',{{ season.id }},'{{ season.name }}')">&#128465;</button>
+                            </div>
+                        </td>
+                        {% else %}
+                        <td style="font-weight:600;">{{ season.name }}</td>
+                        <td>
+                            {% if season.season_type == 'peak' %}<span class="badge badge-red">Peak</span>
+                            {% elif season.season_type == 'low' %}<span class="badge badge-blue">Low</span>
+                            {% else %}<span class="badge badge-yellow">Shoulder</span>{% endif %}
+                        </td>
+                        <td>{{ season.start_date|date:"M d, Y" }}</td>
+                        <td>{{ season.end_date|date:"M d, Y" }}</td>
+                        <td style="font-weight:600;">{{ season.season_index }}</td>
+                        <td>{{ season.expected_occupancy }}%</td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>No seasons in this version.</p>
+                {% if is_editable %}<button class="btn btn-primary btn-sm" onclick="openModal('seasonModal')">Add First Season</button>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===================== ROOM TYPES TAB ===================== -->
+<div id="tab-v-rooms" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Room Types ({{ summary.room_types }})</h3>
+            {% if is_editable %}
+            <button class="btn btn-primary btn-sm" onclick="openModal('roomModal')">+ Add Room Type</button>
+            {% endif %}
+        </div>
+        <div class="mgmt-card-body">
+            {% if v_room_types %}
+            <table class="mgmt-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Base Rate</th>
+                        <th>Method</th>
+                        <th>Index / Adjustment</th>
+                        <th>Rooms</th>
+                        <th>Target Occ.</th>
+                        {% if is_editable %}<th style="width:60px;"></th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for room in v_room_types %}
+                    <tr data-id="{{ room.id }}">
+                        {% if is_editable %}
+                        <td><input class="editable-input" data-type="room" data-id="{{ room.id }}" data-field="name" value="{{ room.name }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="number" step="0.01" class="editable-input" style="width:90px;" data-type="room" data-id="{{ room.id }}" data-field="base_rate" value="{{ room.base_rate }}" onchange="updateFieldReload(this)"></td>
+                        <td>
+                            <select class="editable-input" style="width:auto;" data-type="room" data-id="{{ room.id }}" data-field="pricing_method" onchange="updateFieldReload(this)">
+                                <option value="base" {% if room.pricing_method == 'base' %}selected{% endif %}>Base</option>
+                                <option value="index" {% if room.pricing_method == 'index' %}selected{% endif %}>Index</option>
+                                <option value="adjustment" {% if room.pricing_method == 'adjustment' %}selected{% endif %}>Adjustment</option>
+                            </select>
+                        </td>
+                        <td>
+                            {% if room.pricing_method == 'index' %}
+                            <input type="number" step="0.01" class="editable-input" style="width:70px;" data-type="room" data-id="{{ room.id }}" data-field="room_index" value="{{ room.room_index }}" onchange="updateFieldReload(this)">
+                            {% elif room.pricing_method == 'adjustment' %}
+                            <input type="number" step="0.01" class="editable-input" style="width:70px;" data-type="room" data-id="{{ room.id }}" data-field="room_adjustment" value="{{ room.room_adjustment }}" onchange="updateFieldReload(this)">
+                            {% else %}--{% endif %}
+                        </td>
+                        <td><input type="number" class="editable-input" style="width:60px;" data-type="room" data-id="{{ room.id }}" data-field="number_of_rooms" value="{{ room.number_of_rooms }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="number" step="1" class="editable-input" style="width:60px;" data-type="room" data-id="{{ room.id }}" data-field="target_occupancy" value="{{ room.target_occupancy }}" onchange="updateFieldReload(this)"></td>
+                        <td>
+                            <div class="row-actions" style="opacity:1;">
+                                <button class="action-btn danger" onclick="deleteItem('room',{{ room.id }},'{{ room.name }}')">&#128465;</button>
+                            </div>
+                        </td>
+                        {% else %}
+                        <td style="font-weight:600;">{{ room.name }}</td>
+                        <td>${{ room.base_rate }}</td>
+                        <td><span class="badge badge-gray">{{ room.get_pricing_method_display }}</span></td>
+                        <td>
+                            {% if room.pricing_method == 'index' %}x{{ room.room_index }}
+                            {% elif room.pricing_method == 'adjustment' %}+${{ room.room_adjustment }}
+                            {% else %}--{% endif %}
+                        </td>
+                        <td>{{ room.number_of_rooms }}</td>
+                        <td>{{ room.target_occupancy }}%</td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>No room types in this version.</p>
+                {% if is_editable %}<button class="btn btn-primary btn-sm" onclick="openModal('roomModal')">Add First Room Type</button>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===================== RATE PLANS TAB ===================== -->
+<div id="tab-v-rateplans" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Rate Plans ({{ summary.rate_plans }})</h3>
+            {% if is_editable %}
+            <button class="btn btn-primary btn-sm" onclick="openModal('rateplanModal')">+ Add Rate Plan</button>
+            {% endif %}
+        </div>
+        <div class="mgmt-card-body">
+            {% if v_rate_plans %}
+            <table class="mgmt-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Meal Supplement</th>
+                        {% if is_editable %}<th style="width:60px;"></th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for plan in v_rate_plans %}
+                    <tr data-id="{{ plan.id }}">
+                        {% if is_editable %}
+                        <td><input class="editable-input" data-type="rateplan" data-id="{{ plan.id }}" data-field="name" value="{{ plan.name }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="number" step="0.01" class="editable-input" style="width:100px;" data-type="rateplan" data-id="{{ plan.id }}" data-field="meal_supplement" value="{{ plan.meal_supplement }}" onchange="updateFieldReload(this)"></td>
+                        <td>
+                            <div class="row-actions" style="opacity:1;">
+                                <button class="action-btn danger" onclick="deleteItem('rateplan',{{ plan.id }},'{{ plan.name }}')">&#128465;</button>
+                            </div>
+                        </td>
+                        {% else %}
+                        <td style="font-weight:600;">{{ plan.name }}</td>
+                        <td>{% if plan.meal_supplement > 0 %}${{ plan.meal_supplement }} / person{% else %}Room Only{% endif %}</td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>No rate plans in this version.</p>
+                {% if is_editable %}<button class="btn btn-primary btn-sm" onclick="openModal('rateplanModal')">Add First Rate Plan</button>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===================== CHANNELS TAB ===================== -->
+<div id="tab-v-channels" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Channels ({{ summary.channels }})</h3>
+            {% if is_editable %}
+            <button class="btn btn-primary btn-sm" onclick="openModal('channelModal')">+ Add Channel</button>
+            {% endif %}
+        </div>
+        <div class="mgmt-card-body">
+            {% if v_channels %}
+            <table class="mgmt-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Base Discount</th>
+                        <th>Commission</th>
+                        <th>Distribution Share</th>
+                        {% if is_editable %}<th style="width:60px;"></th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ch in v_channels %}
+                    <tr data-id="{{ ch.id }}">
+                        {% if is_editable %}
+                        <td><input class="editable-input" data-type="channel" data-id="{{ ch.id }}" data-field="name" value="{{ ch.name }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="number" step="0.01" class="editable-input" style="width:80px;" data-type="channel" data-id="{{ ch.id }}" data-field="base_discount_percent" value="{{ ch.base_discount_percent }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="number" step="0.01" class="editable-input" style="width:80px;" data-type="channel" data-id="{{ ch.id }}" data-field="commission_percent" value="{{ ch.commission_percent }}" onchange="updateFieldReload(this)"></td>
+                        <td><input type="number" step="0.01" class="editable-input" style="width:80px;" data-type="channel" data-id="{{ ch.id }}" data-field="distribution_share_percent" value="{{ ch.distribution_share_percent }}" onchange="updateFieldReload(this)"></td>
+                        <td>
+                            <div class="row-actions" style="opacity:1;">
+                                <button class="action-btn danger" onclick="deleteItem('channel',{{ ch.id }},'{{ ch.name }}')">&#128465;</button>
+                            </div>
+                        </td>
+                        {% else %}
+                        <td style="font-weight:600;">{{ ch.name }}</td>
+                        <td>{{ ch.base_discount_percent }}%</td>
+                        <td>{{ ch.commission_percent }}%</td>
+                        <td>{{ ch.distribution_share_percent }}%</td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>No channels in this version.</p>
+                {% if is_editable %}<button class="btn btn-primary btn-sm" onclick="openModal('channelModal')">Add First Channel</button>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===================== RATE MODIFIERS TAB ===================== -->
+<div id="tab-v-modifiers" class="tab-content">
+    {% if is_editable %}
+    <div style="margin-bottom:16px;text-align:right;">
+        <button class="btn btn-primary btn-sm" onclick="openModal('modifierModal')">+ Add Rate Modifier</button>
+    </div>
+    {% endif %}
+    {% for channel_name, mods in modifiers_by_channel.items %}
+    <div class="mgmt-card" {% if not forloop.first %}style="margin-top:16px;"{% endif %}>
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">{{ channel_name }}</h3>
+            <span class="badge badge-blue">{{ mods|length }} modifier{{ mods|length|pluralize }}</span>
+        </div>
+        <div class="mgmt-card-body">
+            <table class="mgmt-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Discount</th>
+                        <th>Active</th>
+                        {% if is_editable %}<th style="width:60px;"></th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for mod in mods %}
+                    <tr data-id="{{ mod.id }}">
+                        {% if is_editable %}
+                        <td><input class="editable-input" data-type="modifier" data-id="{{ mod.id }}" data-field="name" value="{{ mod.name }}" onchange="updateFieldReload(this)"></td>
+                        <td>
+                            <select class="editable-input" style="width:auto;" data-type="modifier" data-id="{{ mod.id }}" data-field="modifier_type" onchange="updateFieldReload(this)">
+                                <option value="standard" {% if mod.modifier_type == 'standard' %}selected{% endif %}>Standard</option>
+                                <option value="member" {% if mod.modifier_type == 'member' %}selected{% endif %}>Member</option>
+                                <option value="mobile" {% if mod.modifier_type == 'mobile' %}selected{% endif %}>Mobile</option>
+                                <option value="promo" {% if mod.modifier_type == 'promo' %}selected{% endif %}>Promo</option>
+                                <option value="early_bird" {% if mod.modifier_type == 'early_bird' %}selected{% endif %}>Early Bird</option>
+                                <option value="last_minute" {% if mod.modifier_type == 'last_minute' %}selected{% endif %}>Last Minute</option>
+                                <option value="corporate" {% if mod.modifier_type == 'corporate' %}selected{% endif %}>Corporate</option>
+                            </select>
+                        </td>
+                        <td><input type="number" step="0.01" class="editable-input" style="width:80px;" data-type="modifier" data-id="{{ mod.id }}" data-field="discount_percent" value="{{ mod.discount_percent }}" onchange="updateFieldReload(this)"></td>
+                        <td>
+                            <label class="toggle">
+                                <input type="checkbox" data-type="modifier" data-id="{{ mod.id }}" data-field="active" {% if mod.active %}checked{% endif %} onchange="updateFieldReload(this)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </td>
+                        <td>
+                            <div class="row-actions" style="opacity:1;">
+                                <button class="action-btn danger" onclick="deleteItem('modifier',{{ mod.id }},'{{ mod.name }}')">&#128465;</button>
+                            </div>
+                        </td>
+                        {% else %}
+                        <td style="font-weight:600;">{{ mod.name }}</td>
+                        <td><span class="badge badge-gray">{{ mod.get_modifier_type_display }}</span></td>
+                        <td>{{ mod.discount_percent }}%</td>
+                        <td>
+                            {% if mod.active %}<span style="color:#059669;font-weight:600;">Active</span>
+                            {% else %}<span style="color:#9ca3af;">Inactive</span>{% endif %}
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% empty %}
+    <div class="mgmt-card">
+        <div class="mgmt-card-body">
+            <div class="empty-state">
+                <p>No rate modifiers in this version.</p>
+                {% if is_editable %}<button class="btn btn-primary btn-sm" onclick="openModal('modifierModal')">Add First Modifier</button>{% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- ===================== DYNAMIC PRICING TAB ===================== -->
+<div id="tab-v-dynamic" class="tab-content">
+    {% for dp in dp_data %}
+    <div class="mgmt-card" {% if not forloop.first %}style="margin-top:16px;"{% endif %}>
+        <div class="mgmt-card-header">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <h3 class="mgmt-card-title">{{ dp.season.name }}</h3>
+                {% if dp.season.season_type == 'peak' %}<span class="badge badge-red">Peak</span>
+                {% elif dp.season.season_type == 'low' %}<span class="badge badge-blue">Low</span>
+                {% else %}<span class="badge badge-yellow">Shoulder</span>{% endif %}
+                {% if not dp.rule.is_active %}<span class="badge badge-gray">Inactive</span>{% endif %}
+            </div>
+        </div>
+        <div style="padding:16px 20px;">
+            {% if dp.bands %}
+            <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;padding:8px 10px;background:#f9fafb;border:1px solid #e5e7eb;font-size:11px;font-weight:700;">
+                                Occupancy Band
+                            </th>
+                            {% for wb in dp.window_bands %}
+                            <th style="text-align:center;padding:8px 10px;background:#f9fafb;border:1px solid #e5e7eb;font-size:11px;font-weight:700;min-width:90px;">
+                                {{ wb.label }}
+                            </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bm in dp.bands %}
+                        <tr>
+                            <td style="padding:8px 10px;border:1px solid #e5e7eb;font-weight:600;white-space:nowrap;">
+                                {{ bm.band.min_occupancy }}% &ndash; {{ bm.band.max_occupancy }}%
+                            </td>
+                            {% for mult in bm.multipliers %}
+                            <td style="text-align:center;padding:8px 10px;border:1px solid #e5e7eb;font-weight:600;
+                                {% if mult > 1.05 %}background:#dcfce7;color:#166534;
+                                {% elif mult < 0.95 %}background:#fef2f2;color:#991b1b;
+                                {% else %}color:#374151;{% endif %}">
+                                x{{ mult }}
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color:#6b7280;padding:8px 0;">No occupancy bands configured.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% empty %}
+    <div class="mgmt-card">
+        <div class="mgmt-card-body">
+            <div class="empty-state"><p>No dynamic pricing rules in this version.</p></div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% endblock %}
+
+<!-- ===================== CREATE MODALS ===================== -->
+{% block section_modals %}
+{% if is_editable %}
+
+<!-- Create Season Modal -->
+<div id="seasonModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <form id="seasonForm" onsubmit="submitVersionForm(event,'season')">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Season</h3>
+                <button type="button" class="modal-close" onclick="closeModal('seasonModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="version_id" value="{{ version.id }}">
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g. Peak Summer">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Type</label>
+                        <select name="season_type" class="form-select">
+                            <option value="peak">Peak</option>
+                            <option value="shoulder" selected>Shoulder</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Season Index</label>
+                        <input type="number" step="0.01" name="season_index" class="form-input" value="1.00">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Start Date</label>
+                        <input type="date" name="start_date" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">End Date</label>
+                        <input type="date" name="end_date" class="form-input" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Expected Occupancy (%)</label>
+                    <input type="number" step="1" name="expected_occupancy" class="form-input" value="70">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('seasonModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Season</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Create Room Type Modal -->
+<div id="roomModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <form id="roomForm" onsubmit="submitVersionForm(event,'room')">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Room Type</h3>
+                <button type="button" class="modal-close" onclick="closeModal('roomModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="version_id" value="{{ version.id }}">
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g. Deluxe Room">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Base Rate ($)</label>
+                        <input type="number" step="0.01" name="base_rate" class="form-input" required value="100">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Pricing Method</label>
+                        <select name="pricing_method" class="form-select">
+                            <option value="base" selected>Base</option>
+                            <option value="index">Index</option>
+                            <option value="adjustment">Adjustment</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Number of Rooms</label>
+                        <input type="number" name="number_of_rooms" class="form-input" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Target Occupancy (%)</label>
+                        <input type="number" name="target_occupancy" class="form-input" value="75">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('roomModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Room Type</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Create Rate Plan Modal -->
+<div id="rateplanModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <form id="rateplanForm" onsubmit="submitVersionForm(event,'rateplan')">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Rate Plan</h3>
+                <button type="button" class="modal-close" onclick="closeModal('rateplanModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="version_id" value="{{ version.id }}">
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g. Bed & Breakfast">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Meal Supplement ($ per person)</label>
+                    <input type="number" step="0.01" name="meal_supplement" class="form-input" value="0">
+                    <p class="form-hint">Set to 0 for Room Only plan</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('rateplanModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Rate Plan</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Create Channel Modal -->
+<div id="channelModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <form id="channelForm" onsubmit="submitVersionForm(event,'channel')">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Channel</h3>
+                <button type="button" class="modal-close" onclick="closeModal('channelModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="version_id" value="{{ version.id }}">
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g. Booking.com">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Base Discount (%)</label>
+                        <input type="number" step="0.01" name="base_discount_percent" class="form-input" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Commission (%)</label>
+                        <input type="number" step="0.01" name="commission_percent" class="form-input" value="0">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Distribution Share (%)</label>
+                    <input type="number" step="0.01" name="distribution_share_percent" class="form-input" value="0">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('channelModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Channel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Create Modifier Modal -->
+<div id="modifierModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <form id="modifierForm" onsubmit="submitVersionForm(event,'modifier')">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Rate Modifier</h3>
+                <button type="button" class="modal-close" onclick="closeModal('modifierModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="version_id" value="{{ version.id }}">
+                <div class="form-group">
+                    <label class="form-label">Channel</label>
+                    <select name="channel_id" class="form-select" required>
+                        {% for ch in v_channels %}
+                        <option value="{{ ch.id }}">{{ ch.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g. Member Discount">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Type</label>
+                        <select name="modifier_type" class="form-select">
+                            <option value="standard">Standard</option>
+                            <option value="member">Member</option>
+                            <option value="mobile">Mobile</option>
+                            <option value="promo">Promo</option>
+                            <option value="early_bird">Early Bird</option>
+                            <option value="last_minute">Last Minute</option>
+                            <option value="corporate">Corporate</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Discount (%)</label>
+                        <input type="number" step="0.01" name="discount_percent" class="form-input" value="0">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modifierModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Modifier</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+<!-- ===================== CUSTOM JAVASCRIPT ===================== -->
+{% block section_js %}
+
+// Matrix expand/collapse
+function toggleCh(id) {
+    var rows = document.querySelectorAll('.' + id + '-det');
+    var icon = document.getElementById('ti-' + id);
+    var hidden = rows[0] && rows[0].classList.contains('ch-detail-hidden');
+    rows.forEach(function(r) {
+        if (hidden) r.classList.remove('ch-detail-hidden');
+        else r.classList.add('ch-detail-hidden');
+    });
+    if (icon) {
+        if (hidden) icon.classList.remove('collapsed');
+        else icon.classList.add('collapsed');
+    }
+}
+function expandAllCh() {
+    document.querySelectorAll('.ch-detail-hidden').forEach(function(r) { r.classList.remove('ch-detail-hidden'); });
+    document.querySelectorAll('.toggle-icon').forEach(function(i) { i.classList.remove('collapsed'); });
+}
+function collapseAllCh() {
+    document.querySelectorAll('[class*="-det"]').forEach(function(r) {
+        if (r.className.match(/r\d+c\d+-det/)) r.classList.add('ch-detail-hidden');
+    });
+    document.querySelectorAll('.toggle-icon').forEach(function(i) { i.classList.add('collapsed'); });
+}
+
+{% if is_editable %}
+// Override updateField to reload after success (so matrix auto-updates)
+function updateFieldReload(input) {
+    var type = input.dataset.type, id = input.dataset.id, field = input.dataset.field;
+    var value = input.type === 'checkbox' ? input.checked : input.value;
+    input.classList.add('saving');
+    var d = {}; d[field] = value;
+    fetch(getApiUrl(type, 'update', id), {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+        body: JSON.stringify(d)
+    }).then(function(r) { return r.json(); }).then(function(data) {
+        input.classList.remove('saving');
+        if (data.success) {
+            showToast('Updated');
+            setTimeout(function() { location.reload(); }, 600);
+        } else {
+            input.classList.add('error');
+            showToast(data.error || 'Update failed', 'error');
+            setTimeout(function() { input.classList.remove('error'); }, 2000);
+        }
+    }).catch(function() {
+        input.classList.remove('saving');
+        input.classList.add('error');
+        showToast('Network error', 'error');
+    });
+}
+
+// Submit create form with version_id
+function submitVersionForm(event, type) {
+    event.preventDefault();
+    var d = {};
+    new FormData(event.target).forEach(function(v, k) { d[k] = v; });
+    fetch(getApiUrl(type, 'create'), {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+        body: JSON.stringify(d)
+    }).then(function(r) { return r.json(); }).then(function(data) {
+        if (data.success) {
+            showToast(data.message || 'Created');
+            // Close the modal
+            var modalId = type + 'Modal';
+            closeModal(modalId);
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(data.error || 'Failed', 'error');
+        }
+    }).catch(function() { showToast('Network error', 'error'); });
+}
+
+// Override confirmDelete to reload page after success
+var _origConfirmDelete = confirmDelete;
+confirmDelete = function() {
+    fetch(getApiUrl(deleteType, 'delete', deleteId), {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'X-CSRFToken': getCookie('csrftoken')}
+    }).then(function(r) { return r.json(); }).then(function(data) {
+        if (data.success) {
+            showToast(data.message || 'Deleted');
+            closeModal('deleteModal');
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(data.error || 'Delete failed', 'error');
+        }
+    });
+};
+{% endif %}
+
+{% endblock %}

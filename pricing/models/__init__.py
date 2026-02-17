@@ -15,8 +15,9 @@ from .core import (
     ModifierRule,
 )
 
-# Pricing: Seasons, rooms, rates, channels, overrides
+# Pricing: Versions, Seasons, rooms, rates, channels, overrides, dynamic pricing
 from .pricing import (
+    PricingMatrixVersion,
     Season,
     RoomType,
     RatePlan,
@@ -26,12 +27,20 @@ from .pricing import (
     RoomTypeSeasonModifier,
     DateRateOverride,
     DateRateOverridePeriod,
+    BookingWindowConfig,
+    BookingWindowBand,
+    DynamicPricingRule,
+    DynamicPricingBand,
+    DynamicPricingMultiplier,
+    EventUplift,
+    DynamicPricingSuggestion,
 )
 
 # Analytics: Reservations, guests, imports
 from .analytics import (
     BookingSource,
     Guest,
+    ImportTemplate,
     FileImport,
     Reservation,
 )
@@ -48,11 +57,15 @@ __all__ = [
     # Core
     'Organization', 'Property', 'ModifierTemplate', 'PropertyModifier', 'ModifierRule',
     # Pricing
+    'PricingMatrixVersion',
     'Season', 'RoomType', 'RatePlan', 'Channel', 'RateModifier',
     'SeasonModifierOverride', 'RoomTypeSeasonModifier',
     'DateRateOverride', 'DateRateOverridePeriod',
+    'BookingWindowConfig', 'BookingWindowBand',
+    'DynamicPricingRule', 'DynamicPricingBand', 'DynamicPricingMultiplier',
+    'EventUplift', 'DynamicPricingSuggestion',
     # Analytics
-    'BookingSource', 'Guest', 'FileImport', 'Reservation',
+    'BookingSource', 'Guest', 'ImportTemplate', 'FileImport', 'Reservation',
     # Forecasts
     'DailyPickupSnapshot', 'MonthlyPickupSnapshot', 'PickupCurve', 'OccupancyForecast',
 ]
