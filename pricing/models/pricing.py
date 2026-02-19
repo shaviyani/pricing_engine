@@ -1,6 +1,6 @@
 """
 Pricing models: PricingMatrixVersion, Season, RoomType, RatePlan, Channel,
-RateModifier, SeasonModifierOverride, RoomTypeSeasonModifier,
+TravelAgent, RateModifier, SeasonModifierOverride, RoomTypeSeasonModifier,
 DateRateOverride, DateRateOverridePeriod,
 BookingWindowConfig, BookingWindowBand, DynamicPricingRule,
 DynamicPricingBand, DynamicPricingMultiplier, EventUplift.
@@ -269,6 +269,72 @@ class Channel(models.Model):
         for channel in channels:
             channel.distribution_share_percent = share
             channel.save()
+
+
+# =============================================================================
+# TRAVEL AGENT
+# =============================================================================
+
+def generate_agent_token():
+    """Generate a unique 8-character alphanumeric token."""
+    import string
+    import secrets
+    alphabet = string.ascii_letters + string.digits
+    for _ in range(100):  # max attempts
+        token = ''.join(secrets.choice(alphabet) for _ in range(8))
+        if not TravelAgent.objects.filter(token=token).exists():
+            return token
+    raise RuntimeError('Could not generate unique agent token')
+
+
+class TravelAgent(models.Model):
+    """
+    Individual travel agent company with a unique URL token.
+
+    Each agent links to a Property and optionally to a Channel.
+    The token generates a unique public URL for this agent's rate card.
+    NOT versioned — operational entity like DateRateOverride.
+    """
+    property = models.ForeignKey(
+        Property, on_delete=models.CASCADE,
+        related_name='travel_agents',
+    )
+    channel = models.ForeignKey(
+        'Channel', on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='travel_agents',
+        help_text="Channel with this agent's rates. Leave blank for default agent channel."
+    )
+    name = models.CharField(max_length=200)
+    email = models.EmailField(blank=True)
+    token = models.CharField(
+        max_length=8, unique=True, editable=False,
+        default=generate_agent_token,
+    )
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['property', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.property.name})"
+
+    def get_absolute_url(self):
+        from django.urls import reverse
+        return reverse('pricing:agent_rate_card', kwargs={'token': self.token})
+
+    def get_channel(self):
+        """Return linked channel or fall back to property's agent channel."""
+        if self.channel_id:
+            return self.channel
+        version = PricingMatrixVersion.get_published(self.property)
+        qs = Channel.objects.filter(hotel=self.property)
+        if version:
+            qs = qs.filter(version=version)
+        return qs.filter(name__icontains='agent').first()
 
 
 class RateModifier(models.Model):

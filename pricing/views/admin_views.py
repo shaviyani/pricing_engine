@@ -18,7 +18,7 @@ from django.db import transaction
 
 from pricing.models import (
     Organization, Property, Season, RoomType, RatePlan, Channel,
-    RateModifier, SeasonModifierOverride,
+    TravelAgent, RateModifier, SeasonModifierOverride,
     ModifierTemplate, PropertyModifier, ModifierRule,
 )
 from pricing.services import PricingService
@@ -73,7 +73,8 @@ class ManageLandingView(ManageBaseMixin, TemplateView):
         context['override_count'] = DateRateOverride.objects.filter(hotel=hotel, active=True).count() if hotel else 0
         context['import_count'] = FileImport.objects.filter(hotel=hotel).count() if hotel else 0
         context['source_count'] = BookingSource.objects.count()
-        
+        context['agent_count'] = TravelAgent.objects.filter(property=hotel).count() if hotel else 0
+
         return context
 
 
@@ -2393,3 +2394,149 @@ class RoomTypeMappingUpdateView(PricingManagementMixin, View):
             return self.success_response(
                 message=f'{count} reservations unmapped'
             )
+
+
+# =============================================================================
+# TRAVEL AGENTS MANAGEMENT
+# =============================================================================
+
+class ManageAgentsView(ManageBaseMixin, TemplateView):
+    """Management page for travel agents and their unique URLs."""
+    template_name = 'pricing/manage/agents.html'
+    active_section = 'agents'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        hotel = context.get('hotel')
+        if hotel:
+            agents = TravelAgent.objects.filter(
+                property=hotel
+            ).select_related('channel').order_by('name')
+            context['agents'] = agents
+            context['channels'] = Channel.objects.filter(hotel=hotel).order_by('name')
+        return context
+
+
+class TravelAgentListView(PricingManagementMixin, View):
+    """API: List all travel agents for this property."""
+
+    def get(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found')
+
+        agents = TravelAgent.objects.filter(
+            property=hotel
+        ).select_related('channel').order_by('name')
+
+        data = [{
+            'id': a.id,
+            'name': a.name,
+            'email': a.email,
+            'channel_id': a.channel_id,
+            'channel_name': a.channel.name if a.channel else 'Default',
+            'token': a.token,
+            'url': a.get_absolute_url(),
+            'is_active': a.is_active,
+            'notes': a.notes,
+            'created_at': a.created_at.strftime('%Y-%m-%d'),
+        } for a in agents]
+
+        return self.json_response({'agents': data})
+
+
+class TravelAgentCreateView(PricingManagementMixin, View):
+    """API: Create a new travel agent."""
+
+    def post(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found')
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return self.error_response('Invalid JSON')
+
+        name = data.get('name', '').strip()
+        if not name:
+            return self.error_response('Agent name is required')
+
+        channel_id = data.get('channel_id')
+        channel = None
+        if channel_id:
+            channel = Channel.objects.filter(pk=channel_id, hotel=hotel).first()
+
+        agent = TravelAgent.objects.create(
+            property=hotel,
+            channel=channel,
+            name=name,
+            email=data.get('email', '').strip(),
+            notes=data.get('notes', '').strip(),
+        )
+
+        return self.success_response(
+            data={
+                'id': agent.id,
+                'name': agent.name,
+                'token': agent.token,
+                'url': agent.get_absolute_url(),
+            },
+            message=f'Agent "{agent.name}" created successfully'
+        )
+
+
+class TravelAgentUpdateView(PricingManagementMixin, View):
+    """API: Update a travel agent."""
+
+    def post(self, request, *args, **kwargs):
+        agent_id = kwargs.get('pk')
+        agent = get_object_or_404(TravelAgent, pk=agent_id)
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return self.error_response('Invalid JSON')
+
+        if 'name' in data:
+            name = data['name'].strip()
+            if not name:
+                return self.error_response('Name cannot be empty')
+            agent.name = name
+
+        if 'email' in data:
+            agent.email = data['email'].strip()
+
+        if 'notes' in data:
+            agent.notes = data['notes'].strip()
+
+        if 'is_active' in data:
+            agent.is_active = bool(data['is_active'])
+
+        if 'channel_id' in data:
+            channel_id = data['channel_id']
+            if channel_id:
+                channel = Channel.objects.filter(pk=channel_id, hotel=agent.property).first()
+                agent.channel = channel
+            else:
+                agent.channel = None
+
+        agent.save()
+
+        return self.success_response(
+            message=f'Agent "{agent.name}" updated successfully'
+        )
+
+
+class TravelAgentDeleteView(PricingManagementMixin, View):
+    """API: Delete a travel agent."""
+
+    def post(self, request, *args, **kwargs):
+        agent_id = kwargs.get('pk')
+        agent = get_object_or_404(TravelAgent, pk=agent_id)
+        name = agent.name
+        agent.delete()
+
+        return self.success_response(
+            message=f'Agent "{name}" deleted successfully'
+        )

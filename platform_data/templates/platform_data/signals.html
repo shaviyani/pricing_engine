@@ -1,0 +1,342 @@
+{% extends "platform_data/base.html" %}
+
+{% block title %}Signals & Data{% endblock %}
+{% block page_title %}Market Intelligence{% endblock %}
+{% block page_subtitle %}Upload and manage market data shared across all properties{% endblock %}
+
+{% block extra_css %}
+<style>
+.tab-nav { display:flex; gap:4px; border-bottom:2px solid #e2e8f0; margin-bottom:20px; }
+.tab-btn { padding:10px 18px; font-size:13px; font-weight:600; color:#64748b; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; cursor:pointer; }
+.tab-btn:hover { color:#1e293b; }
+.tab-btn.active { color:#2563eb; border-bottom-color:#2563eb; }
+.tab-content { display:none; }
+.tab-content.active { display:block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tab-nav">
+    <button class="tab-btn active" data-tab="upload">Upload Data</button>
+    <button class="tab-btn" data-tab="arrivals">Arrival Data</button>
+    <button class="tab-btn" data-tab="events">Events</button>
+    <button class="tab-btn" data-tab="history">Import History</button>
+</div>
+
+<!-- ========== UPLOAD TAB ========== -->
+<div id="tab-upload" class="tab-content active">
+    <div class="platform-card">
+        <div class="platform-card-header"><h3>Upload Market Data</h3></div>
+        <div class="platform-card-body-padded">
+            <div style="display:flex; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:#64748b;">Import Type</label>
+                    <select id="importType" style="display:block; margin-top:4px; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px;">
+                        <option value="arrival_report">Country Arrival Report</option>
+                        <option value="event">Market Events</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:#64748b;">Country Code</label>
+                    <input type="text" id="countryCode" value="MV" maxlength="2" style="display:block; margin-top:4px; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; width:80px; text-transform:uppercase;">
+                </div>
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:#64748b;">Report Period (for arrivals)</label>
+                    <input type="date" id="reportPeriod" style="display:block; margin-top:4px; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px;">
+                </div>
+            </div>
+
+            <div id="uploadZone" style="border:2px dashed #cbd5e1; border-radius:10px; padding:40px; text-align:center; background:#f8fafc; cursor:pointer;" onclick="document.getElementById('fileInput').click()">
+                <p style="font-size:28px; margin-bottom:8px;">📡</p>
+                <p style="font-weight:600; color:#475569;">Drop file here or click to browse</p>
+                <p style="font-size:12px; color:#94a3b8; margin-top:4px;">CSV, XLSX</p>
+                <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display:none;">
+            </div>
+            <div id="uploadProgress" style="display:none; text-align:center; padding:20px; color:#64748b;">Reading headers...</div>
+        </div>
+    </div>
+
+    <!-- Mapping card (hidden until upload) -->
+    <div id="mappingCard" class="platform-card" style="display:none;">
+        <div class="platform-card-header">
+            <div>
+                <h3>Map Columns</h3>
+                <span id="mappingInfo" style="font-size:12px; color:#64748b;"></span>
+            </div>
+            <button class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;" onclick="resetUpload()">Change File</button>
+        </div>
+        <div class="platform-card-body-padded">
+            <div style="margin-bottom:16px; overflow-x:auto; border:1px solid #e2e8f0; border-radius:8px;">
+                <table class="data-table" id="previewTable" style="font-size:11px;"><thead></thead><tbody></tbody></table>
+            </div>
+            <div id="mappingGrid"></div>
+            <div style="display:flex; gap:12px; margin-top:20px; align-items:flex-end; flex-wrap:wrap;">
+                <div style="flex:1; min-width:200px;">
+                    <label style="font-size:12px; font-weight:600; color:#64748b;">Save as template (optional)</label>
+                    <div style="display:flex; gap:8px; margin-top:4px;">
+                        <input type="text" id="templateName" placeholder="e.g., MoT Monthly Report" style="flex:1; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;">
+                        <button class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;" onclick="saveTemplate()">Save</button>
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="executeImport()" id="btnImport" style="padding:10px 24px; font-size:14px;">Import Data</button>
+            </div>
+            <div id="importResult" style="display:none; margin-top:16px;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== ARRIVALS TAB ========== -->
+<div id="tab-arrivals" class="tab-content">
+    <div class="platform-card">
+        <div class="platform-card-header">
+            <h3>Country Arrival Data</h3>
+            <span style="font-size:12px; color:#64748b;">{{ total_arrival_records }} records{% if latest_arrival_period %} · Latest: {{ latest_arrival_period|date:"M Y" }}{% endif %}</span>
+        </div>
+        <div class="platform-card-body-padded">
+            <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+                <select id="arrivalPeriod" style="padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;" onchange="loadArrivals()">
+                    <option value="">All periods</option>
+                    {% for p in arrival_periods %}
+                    <option value="{{ p|date:'Y-m-d' }}">{{ p|date:"M Y" }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div id="arrivalsTable"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== EVENTS TAB ========== -->
+<div id="tab-events" class="tab-content">
+    <div class="platform-card">
+        <div class="platform-card-header">
+            <h3>Market Events</h3>
+            <button class="btn btn-sm btn-primary" onclick="showEventForm()">+ Add Event</button>
+        </div>
+        <div class="platform-card-body">
+            <!-- Add event form (hidden) -->
+            <div id="eventForm" style="display:none; padding:16px 20px; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+                    <div><label style="font-size:11px; font-weight:600; color:#64748b;">Event Name</label><input type="text" id="evName" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; margin-top:2px;"></div>
+                    <div><label style="font-size:11px; font-weight:600; color:#64748b;">Start Date</label><input type="date" id="evStart" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; margin-top:2px;"></div>
+                    <div><label style="font-size:11px; font-weight:600; color:#64748b;">End Date</label><input type="date" id="evEnd" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; margin-top:2px;"></div>
+                    <div><label style="font-size:11px; font-weight:600; color:#64748b;">Type</label><select id="evType" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; margin-top:2px;"><option value="religious">Religious</option><option value="national">National</option><option value="festival">Festival</option><option value="school">School Holiday</option><option value="sports">Sports</option><option value="conference">Conference</option><option value="cultural">Cultural</option><option value="other">Other</option></select></div>
+                    <div><label style="font-size:11px; font-weight:600; color:#64748b;">Impact</label><select id="evImpact" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; margin-top:2px;"><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option></select></div>
+                    <div><label style="font-size:11px; font-weight:600; color:#64748b;">Demand Uplift %</label><input type="number" id="evUplift" value="10" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; margin-top:2px;"></div>
+                </div>
+                <div style="margin-top:12px; display:flex; gap:8px;">
+                    <button class="btn btn-primary btn-sm" onclick="createEvent()">Save Event</button>
+                    <button class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;" onclick="document.getElementById('eventForm').style.display='none'">Cancel</button>
+                </div>
+            </div>
+            <div id="eventsTable"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== HISTORY TAB ========== -->
+<div id="tab-history" class="tab-content">
+    <div class="platform-card">
+        <div class="platform-card-header"><h3>Import History</h3></div>
+        <div class="platform-card-body">
+            {% if recent_imports %}
+            <table class="data-table">
+                <thead><tr><th>File</th><th>Type</th><th>Country</th><th>Status</th><th>Rows</th><th>Created</th><th>Updated</th><th>When</th></tr></thead>
+                <tbody>
+                {% for imp in recent_imports %}
+                <tr>
+                    <td style="font-weight:500;">{{ imp.filename }}</td>
+                    <td><span class="badge badge-blue">{{ imp.get_import_type_display }}</span></td>
+                    <td>{{ imp.country_code }}</td>
+                    <td><span class="badge {% if imp.status == 'completed' %}badge-green{% elif imp.status == 'failed' %}badge-red{% else %}badge-yellow{% endif %}">{{ imp.status }}</span></td>
+                    <td>{{ imp.rows_total }}</td>
+                    <td style="color:#059669;">+{{ imp.rows_created }}</td>
+                    <td style="color:#2563eb;">~{{ imp.rows_updated }}</td>
+                    <td style="font-size:12px; color:#64748b;">{{ imp.created_at|timesince }} ago</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state"><p>No imports yet.</p></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var uploadData = null;
+var currentColumnMap = {};
+var matchedTemplateId = null;
+
+function getCookie(n){var v=document.cookie.match('(^|;)\\s*'+n+'\\s*=\\s*([^;]+)');return v?v.pop():'';}
+function showToast(msg,type){var t=document.createElement('div');t.textContent=msg;t.style.cssText='position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:8px;color:#fff;font-size:14px;z-index:9999;max-width:400px;'+(type==='error'?'background:#dc2626;':'background:#059669;');document.body.appendChild(t);setTimeout(function(){t.remove();},4000);}
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(function(btn){btn.addEventListener('click',function(){
+    document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.remove('active');});
+    document.querySelectorAll('.tab-content').forEach(function(c){c.classList.remove('active');});
+    this.classList.add('active');document.getElementById('tab-'+this.dataset.tab).classList.add('active');
+    if(this.dataset.tab==='arrivals')loadArrivals();
+    if(this.dataset.tab==='events')loadEvents();
+});});
+
+// =========================================================================
+// UPLOAD & MAPPING
+// =========================================================================
+document.getElementById('fileInput').addEventListener('change',function(e){if(e.target.files[0])handleUpload(e.target.files[0]);});
+var zone=document.getElementById('uploadZone');
+zone.addEventListener('dragover',function(e){e.preventDefault();this.style.borderColor='#3b82f6';});
+zone.addEventListener('dragleave',function(){this.style.borderColor='#cbd5e1';});
+zone.addEventListener('drop',function(e){e.preventDefault();this.style.borderColor='#cbd5e1';if(e.dataTransfer.files.length)handleUpload(e.dataTransfer.files[0]);});
+
+function handleUpload(file){
+    document.getElementById('uploadZone').style.display='none';
+    document.getElementById('uploadProgress').style.display='block';
+    var fd=new FormData();fd.append('file',file);fd.append('import_type',document.getElementById('importType').value);
+    fetch('/platform/api/signals/upload/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')},body:fd})
+    .then(function(r){return r.json();}).then(function(d){
+        document.getElementById('uploadProgress').style.display='none';
+        if(!d.success){showToast(d.error||'Upload failed','error');document.getElementById('uploadZone').style.display='block';return;}
+        uploadData=d.data;renderMapping(d.data);
+    }).catch(function(e){document.getElementById('uploadProgress').style.display='none';document.getElementById('uploadZone').style.display='block';showToast('Error: '+e,'error');});
+}
+
+function resetUpload(){
+    uploadData=null;currentColumnMap={};matchedTemplateId=null;
+    document.getElementById('uploadZone').style.display='block';
+    document.getElementById('mappingCard').style.display='none';
+    document.getElementById('importResult').style.display='none';
+    document.getElementById('fileInput').value='';
+}
+
+function renderMapping(data){
+    document.getElementById('mappingCard').style.display='block';
+    document.getElementById('mappingInfo').textContent=data.filename+' — '+data.row_count+' rows, '+data.headers.length+' columns';
+    if(data.template_match){currentColumnMap=JSON.parse(JSON.stringify(data.template_match.template.column_map));matchedTemplateId=data.template_match.template.id;}
+    else{currentColumnMap={};matchedTemplateId=null;}
+
+    // Preview
+    var thead=document.querySelector('#previewTable thead');
+    var tbody=document.querySelector('#previewTable tbody');
+    thead.innerHTML='<tr>'+data.headers.map(function(h){return '<th style="white-space:nowrap;padding:6px 10px;">'+h+'</th>';}).join('')+'</tr>';
+    tbody.innerHTML=data.preview.map(function(row){return '<tr>'+row.map(function(v){return '<td style="white-space:nowrap;padding:4px 10px;max-width:150px;overflow:hidden;text-overflow:ellipsis;">'+v+'</td>';}).join('')+'</tr>';}).join('');
+
+    // Mapping grid
+    var fields=data.field_definitions;
+    var grid=document.getElementById('mappingGrid');
+    var html='';
+    var groups=[{key:'required',label:'Required',color:'#dc2626'},{key:'recommended',label:'Recommended',color:'#d97706'},{key:'optional',label:'Optional',color:'#64748b'}];
+    groups.forEach(function(g){
+        var ff=fields[g.key]||[];if(!ff.length)return;
+        html+='<p style="font-size:11px;font-weight:700;color:'+g.color+';text-transform:uppercase;margin:12px 0 6px;">'+g.label+'</p>';
+        html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">';
+        ff.forEach(function(f){
+            var mapped=currentColumnMap[f.field]||'';
+            var bc=mapped?'#059669':(g.key==='required'?'#dc2626':'#e2e8f0');
+            html+='<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid '+bc+';border-radius:6px;background:#fff;">';
+            html+='<span style="font-size:13px;font-weight:600;min-width:130px;">'+f.label+'</span>';
+            html+='<select onchange="updateMap(\''+f.field+'\',this.value)" style="flex:1;padding:5px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;">';
+            html+='<option value="">— Not mapped —</option>';
+            data.headers.forEach(function(h){html+='<option value="'+h+'"'+(mapped===h?' selected':'')+'>'+h+'</option>';});
+            html+='</select>';
+            if(mapped)html+='<span style="color:#059669;">✓</span>';
+            html+='</div>';
+        });
+        html+='</div>';
+    });
+    grid.innerHTML=html;
+}
+
+function updateMap(field,val){
+    if(val)currentColumnMap[field]=val;else delete currentColumnMap[field];
+    if(uploadData)renderMapping(uploadData);
+}
+
+function saveTemplate(){
+    var name=document.getElementById('templateName').value.trim();
+    if(!name){showToast('Enter a name','error');return;}
+    fetch('/platform/api/signals/templates/save/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({name:name,import_type:document.getElementById('importType').value,column_map:currentColumnMap,source_headers:uploadData?uploadData.headers:[]})})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);document.getElementById('templateName').value='';matchedTemplateId=d.data.id;}
+        else showToast(d.error||'Failed','error');
+    });
+}
+
+function executeImport(){
+    var btn=document.getElementById('btnImport');btn.disabled=true;btn.textContent='Importing...';
+    var periodInput=document.getElementById('reportPeriod').value;
+    fetch('/platform/api/signals/execute/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({column_map:currentColumnMap,import_type:document.getElementById('importType').value,country_code:document.getElementById('countryCode').value.toUpperCase(),report_period:periodInput||null,template_id:matchedTemplateId})})
+    .then(function(r){return r.json();}).then(function(d){
+        btn.disabled=false;btn.textContent='Import Data';
+        var panel=document.getElementById('importResult');panel.style.display='block';
+        if(d.success){
+            var r=d.data;
+            panel.innerHTML='<div style="padding:14px;background:#ecfdf5;border-radius:8px;border:1px solid #a7f3d0;"><strong style="color:#059669;">✓ Import Complete</strong> — '+r.rows_created+' created, '+r.rows_updated+' updated, '+r.rows_skipped+' skipped of '+r.rows_total+' total</div>';
+            showToast(d.message);
+        } else {
+            panel.innerHTML='<div style="padding:14px;background:#fef2f2;border-radius:8px;border:1px solid #fca5a5;"><strong style="color:#dc2626;">✗ Failed</strong> — '+(d.error||'Unknown error')+'</div>';
+            showToast(d.error||'Failed','error');
+        }
+    }).catch(function(e){btn.disabled=false;btn.textContent='Import Data';showToast('Error: '+e,'error');});
+}
+
+// =========================================================================
+// ARRIVALS BROWSER
+// =========================================================================
+function loadArrivals(){
+    var period=document.getElementById('arrivalPeriod').value;
+    var url='/platform/api/arrivals/?country=MV';
+    if(period)url+='&period='+period;
+    fetch(url).then(function(r){return r.json();}).then(function(d){
+        if(!d.success)return;
+        var records=d.data.records;
+        var el=document.getElementById('arrivalsTable');
+        if(!records.length){el.innerHTML='<div class="empty-state"><p>No arrival data found.</p></div>';return;}
+        var html='<table class="data-table"><thead><tr><th>Period</th><th>Country</th><th>Arrivals</th><th>Market Share</th><th>YoY Change</th></tr></thead><tbody>';
+        records.forEach(function(r){
+            var yoy=r.yoy_change_pct;var yoyStr=yoy!==null?(yoy>=0?'+':'')+yoy.toFixed(1)+'%':'—';
+            var yoyColor=yoy>0?'color:#059669':yoy<0?'color:#dc2626':'color:#64748b';
+            html+='<tr><td>'+r.report_period+'</td><td style="font-weight:600;">'+r.origin_country+'</td><td>'+r.arrivals.toLocaleString()+'</td><td>'+(r.market_share_pct?r.market_share_pct.toFixed(1)+'%':'—')+'</td><td style="'+yoyColor+'">'+yoyStr+'</td></tr>';
+        });
+        html+='</tbody></table>';el.innerHTML=html;
+    });
+}
+
+// =========================================================================
+// EVENTS
+// =========================================================================
+function showEventForm(){document.getElementById('eventForm').style.display='block';}
+
+function loadEvents(){
+    fetch('/platform/api/events/').then(function(r){return r.json();}).then(function(d){
+        if(!d.success)return;
+        var events=d.data.events;var el=document.getElementById('eventsTable');
+        if(!events.length){el.innerHTML='<div class="empty-state"><p>No events.</p></div>';return;}
+        var html='<table class="data-table"><thead><tr><th>Event</th><th>Type</th><th>Dates</th><th>Impact</th><th>Uplift</th><th>Recurring</th><th></th></tr></thead><tbody>';
+        events.forEach(function(e){
+            html+='<tr><td style="font-weight:600;">'+e.name+'</td><td><span class="badge badge-blue">'+e.event_type+'</span></td><td style="font-size:12px;">'+e.start_date+' → '+e.end_date+'</td><td><span class="badge '+(e.impact_level==='high'?'badge-red':e.impact_level==='medium'?'badge-yellow':'badge-gray')+'">'+e.impact_level+'</span></td><td>'+(e.demand_uplift_pct>0?'+'+e.demand_uplift_pct+'%':'—')+'</td><td>'+(e.recurring?'Yes':'No')+'</td><td><button onclick="deleteEvent('+e.id+',\''+e.name.replace(/'/g,"\\'")+'\')" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:12px;">Delete</button></td></tr>';
+        });
+        html+='</tbody></table>';el.innerHTML=html;
+    });
+}
+
+function createEvent(){
+    var name=document.getElementById('evName').value.trim();
+    if(!name){showToast('Enter event name','error');return;}
+    fetch('/platform/api/events/create/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({name:name,start_date:document.getElementById('evStart').value,end_date:document.getElementById('evEnd').value,event_type:document.getElementById('evType').value,impact_level:document.getElementById('evImpact').value,demand_uplift_pct:parseFloat(document.getElementById('evUplift').value)||0,country_code:document.getElementById('countryCode').value.toUpperCase()})})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);document.getElementById('eventForm').style.display='none';document.getElementById('evName').value='';loadEvents();}
+        else showToast(d.error||'Failed','error');
+    });
+}
+
+function deleteEvent(id,name){
+    if(!confirm('Delete "'+name+'"?'))return;
+    fetch('/platform/api/events/'+id+'/delete/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')}})
+    .then(function(r){return r.json();}).then(function(d){if(d.success){showToast(d.message);loadEvents();}else showToast(d.error,'error');});
+}
+</script>
+{% endblock %}

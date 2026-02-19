@@ -1,0 +1,35 @@
+{% extends "platform_data/base.html" %}
+
+{% block title %}{{ org.name }}{% endblock %}
+{% block page_title %}{{ org.name }}{% endblock %}
+{% block page_subtitle %}Code: {{ org.code }}{% endblock %}
+
+{% block content %}
+<div class="platform-card">
+    <div class="platform-card-header"><h3>Properties</h3></div>
+    <div class="platform-card-body">
+        {% if properties %}
+        <table class="data-table">
+            <thead><tr><th>Property</th><th>Code</th><th>Rooms</th><th>Reservations</th><th>Last Import</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for item in properties %}
+            <tr>
+                <td style="font-weight:600;">{{ item.property.name }}</td>
+                <td><span class="badge badge-gray">{{ item.property.code }}</span></td>
+                <td>{{ item.property.total_rooms }}</td>
+                <td>{{ item.reservation_count }}</td>
+                <td style="font-size:12px; color:#64748b;">{% if item.last_import %}{{ item.last_import.created_at|timesince }} ago{% else %}Never{% endif %}</td>
+                <td>
+                    <a href="/org/{{ org.code }}/{{ item.property.code }}/rates/" class="btn btn-sm btn-primary" style="margin-right:4px;">Rates</a>
+                    <a href="/{{ org.code }}/{{ item.property.code }}/manage/" class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;">Manage</a>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state"><p>No properties in this organization.</p></div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

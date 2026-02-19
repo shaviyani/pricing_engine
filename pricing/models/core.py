@@ -112,11 +112,18 @@ class Property(models.Model):
     )
     
     location = models.CharField(
-        max_length=255, 
-        blank=True, 
+        max_length=255,
+        blank=True,
         help_text="e.g., Maldives, Kaafu Atoll"
     )
-    
+
+    country_code = models.CharField(
+        max_length=2,
+        default='MV',
+        db_index=True,
+        help_text="ISO 3166-1 alpha-2 country code (e.g., 'MV' for Maldives)"
+    )
+
     # Capacity
     total_rooms = models.PositiveIntegerField(
         default=0,

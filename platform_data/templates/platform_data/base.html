@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Platform{% endblock %} — Pricing Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar { width:8px; height:8px; }
+        ::-webkit-scrollbar-track { background:#f1f5f9; }
+        ::-webkit-scrollbar-thumb { background:#94a3b8; border-radius:4px; }
+        
+        .platform-nav { background:#0f172a; color:#e2e8f0; min-height:100vh; width:220px; position:fixed; left:0; top:0; }
+        .platform-nav .nav-header { padding:20px; border-bottom:1px solid #1e293b; }
+        .platform-nav .nav-header h1 { font-size:15px; font-weight:700; color:#f8fafc; }
+        .platform-nav .nav-header p { font-size:11px; color:#64748b; margin-top:2px; }
+        .platform-nav .nav-link {
+            display:flex; align-items:center; gap:10px; padding:10px 20px;
+            font-size:13px; color:#94a3b8; text-decoration:none; transition:all 0.15s;
+        }
+        .platform-nav .nav-link:hover { background:#1e293b; color:#e2e8f0; }
+        .platform-nav .nav-link.active { background:#1e293b; color:#3b82f6; font-weight:600; }
+        .platform-nav .nav-link .icon { font-size:16px; width:20px; text-align:center; }
+        .platform-nav .nav-section { padding:10px 20px 4px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#475569; margin-top:8px; }
+        
+        .platform-main { margin-left:220px; padding:24px 32px; background:#f8fafc; min-height:100vh; }
+        
+        .platform-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; margin-bottom:20px; }
+        .platform-card-header { padding:16px 20px; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between; align-items:center; }
+        .platform-card-header h3 { font-size:15px; font-weight:700; color:#1e293b; }
+        .platform-card-body { padding:0; }
+        .platform-card-body-padded { padding:16px 20px; }
+        
+        .stat-row { display:flex; gap:16px; margin-bottom:20px; flex-wrap:wrap; }
+        .stat-box { flex:1; min-width:140px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:16px 20px; }
+        .stat-box .value { font-size:28px; font-weight:800; color:#1e293b; }
+        .stat-box .label { font-size:12px; color:#64748b; margin-top:2px; }
+        
+        .data-table { width:100%; border-collapse:collapse; font-size:13px; }
+        .data-table th { background:#f8fafc; padding:10px 14px; text-align:left; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#64748b; border-bottom:2px solid #e2e8f0; }
+        .data-table td { padding:10px 14px; border-bottom:1px solid #f1f5f9; color:#334155; }
+        .data-table tr:hover td { background:#f8fafc; }
+        
+        .badge { display:inline-flex; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+        .badge-green { background:#ecfdf5; color:#059669; }
+        .badge-red { background:#fef2f2; color:#dc2626; }
+        .badge-yellow { background:#fffbeb; color:#d97706; }
+        .badge-blue { background:#eff6ff; color:#2563eb; }
+        .badge-gray { background:#f1f5f9; color:#64748b; }
+        
+        .btn { padding:8px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; border:none; transition:all 0.15s; }
+        .btn-primary { background:#2563eb; color:#fff; }
+        .btn-primary:hover { background:#1d4ed8; }
+        .btn-sm { padding:5px 12px; font-size:12px; }
+        
+        .empty-state { padding:40px; text-align:center; color:#94a3b8; }
+        
+        {% block extra_css %}{% endblock %}
+    </style>
+</head>
+<body>
+
+<nav class="platform-nav">
+    <div class="nav-header">
+        <h1>⚡ Platform Admin</h1>
+        <p>Pricing Engine Operator</p>
+    </div>
+    
+    <div class="nav-section">Overview</div>
+    <a href="{% url 'platform:dashboard' %}" class="nav-link {% if active_section == 'dashboard' %}active{% endif %}">
+        <span class="icon">📊</span> Dashboard
+    </a>
+    
+    <div class="nav-section">Tenants</div>
+    <a href="{% url 'platform:organizations' %}" class="nav-link {% if active_section == 'organizations' %}active{% endif %}">
+        <span class="icon">🏢</span> Organizations
+    </a>
+    
+    <div class="nav-section">Market Intelligence</div>
+    <a href="{% url 'platform:signals' %}" class="nav-link {% if active_section == 'signals' %}active{% endif %}">
+        <span class="icon">📡</span> Signals & Data
+    </a>
+    
+    <div class="nav-section" style="margin-top:auto;"></div>
+    <a href="/admin/" class="nav-link" style="margin-top:16px;">
+        <span class="icon">⚙</span> Django Admin
+    </a>
+    <a href="/" class="nav-link">
+        <span class="icon">🏠</span> Tenant View
+    </a>
+
+    {% if user.is_authenticated %}
+    <div style="padding:12px 20px; border-top:1px solid #1e293b; margin-top:8px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:28px; height:28px; background:#1e40af; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#bfdbfe;">
+                {{ user.username|make_list|first|upper }}
+            </div>
+            <div>
+                <div style="font-size:12px; font-weight:600; color:#e2e8f0;">{{ user.username }}</div>
+                <div style="font-size:10px; color:#64748b;">{% if user.is_superuser %}Superuser{% elif user.is_staff %}Staff{% endif %}</div>
+            </div>
+        </div>
+        <form method="post" action="{% url 'logout' %}" style="margin-top:8px;">
+            {% csrf_token %}
+            <button type="submit" style="background:none; border:none; color:#f87171; font-size:12px; cursor:pointer; padding:0; font-weight:500;">
+                Sign Out
+            </button>
+        </form>
+    </div>
+    {% endif %}
+</nav>
+
+<main class="platform-main">
+    <div style="margin-bottom:20px;">
+        <h2 style="font-size:22px; font-weight:800; color:#0f172a;">{% block page_title %}Platform{% endblock %}</h2>
+        <p style="font-size:13px; color:#64748b; margin-top:4px;">{% block page_subtitle %}{% endblock %}</p>
+    </div>
+    
+    {% block content %}{% endblock %}
+</main>
+
+{% block extra_js %}{% endblock %}
+</body>
+</html>

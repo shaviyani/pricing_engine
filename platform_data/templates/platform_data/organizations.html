@@ -1,0 +1,213 @@
+{% extends "platform_data/base.html" %}
+
+{% block title %}Organizations{% endblock %}
+{% block page_title %}Organizations{% endblock %}
+{% block page_subtitle %}Manage all tenant organizations and their properties{% endblock %}
+
+{% block extra_css %}
+<style>
+.modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); z-index:100; display:none; align-items:center; justify-content:center; }
+.modal { background:#fff; border-radius:12px; width:500px; max-width:90vw; max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.2); }
+.modal-header { padding:16px 20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-size:16px; font-weight:700; color:#0f172a; }
+.modal-body { padding:20px; }
+.modal-footer { padding:12px 20px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:8px; }
+.form-group { margin-bottom:14px; }
+.form-group label { display:block; font-size:12px; font-weight:600; color:#64748b; margin-bottom:4px; }
+.form-group input, .form-group select { width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; }
+.form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.btn-danger { background:#dc2626; color:#fff; }
+.btn-danger:hover { background:#b91c1c; }
+.btn-outline { background:#fff; border:1px solid #e2e8f0; color:#475569; }
+.btn-outline:hover { background:#f8fafc; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="display:flex; justify-content:flex-end; margin-bottom:16px;">
+    <button class="btn btn-primary" onclick="showOrgModal()">+ New Organization</button>
+</div>
+
+{% for org_item in organizations %}
+<div class="platform-card" id="org-card-{{ org_item.org.pk }}">
+    <div class="platform-card-header">
+        <div>
+            <h3 style="display:inline;">{{ org_item.org.name }}</h3>
+            <span class="badge badge-gray" style="margin-left:6px;">{{ org_item.org.code }}</span>
+            <div style="font-size:12px; color:#64748b; margin-top:4px;">{{ org_item.property_count }} properties · {{ org_item.total_rooms }} rooms · {{ org_item.total_reservations }} reservations · {{ org_item.org.currency_symbol }} {{ org_item.org.default_currency }}</div>
+        </div>
+        <div style="display:flex; gap:8px;">
+            <button class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;" onclick="showPropertyModal({{ org_item.org.pk }},'{{ org_item.org.name|escapejs }}')">+ Property</button>
+            <button class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;" onclick="showOrgModal({{ org_item.org.pk }},'{{ org_item.org.name|escapejs }}','{{ org_item.org.default_currency|escapejs }}','{{ org_item.org.currency_symbol|escapejs }}')">Edit</button>
+            <a href="{% url 'platform:org_detail' pk=org_item.org.pk %}" class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;">Detail</a>
+        </div>
+    </div>
+    <div class="platform-card-body">
+        {% if org_item.properties %}
+        <table class="data-table">
+            <thead><tr><th>Property</th><th>Code</th><th>Location</th><th>Rooms</th><th>Base Rate</th><th>Country</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for prop in org_item.properties %}
+            <tr id="prop-row-{{ prop.pk }}">
+                <td style="font-weight:600;">{{ prop.name }}</td>
+                <td><span class="badge badge-gray">{{ prop.code }}</span></td>
+                <td style="font-size:12px; color:#64748b;">{{ prop.location }}</td>
+                <td>{{ prop.total_rooms }}</td>
+                <td>{{ prop.currency_symbol }}{{ prop.reference_base_rate }}</td>
+                <td><span class="badge badge-blue">{{ prop.country_code|default:"MV" }}</span></td>
+                <td style="white-space:nowrap;">
+                    <a href="/org/{{ org_item.org.code }}/{{ prop.code }}/rates/" class="btn btn-sm btn-primary" style="margin-right:2px;">Rates</a>
+                    <button class="btn btn-sm btn-outline" onclick="showPropertyModal({{ org_item.org.pk }},'{{ org_item.org.name|escapejs }}',{{ prop.pk }},'{{ prop.name|escapejs }}','{{ prop.code|escapejs }}','{{ prop.location|escapejs }}','{{ prop.reference_base_rate }}','{{ prop.currency_symbol|escapejs }}','{{ prop.total_rooms }}','{{ prop.service_charge_percent }}','{{ prop.tax_percent }}','{{ prop.country_code|default:"MV"|escapejs }}')">Edit</button>
+                    <button class="btn btn-sm" style="color:#dc2626; background:none; border:none; cursor:pointer;" onclick="deleteProperty({{ prop.pk }},'{{ prop.name|escapejs }}')">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state"><p>No properties yet. <button onclick="showPropertyModal({{ org_item.org.pk }},'{{ org_item.org.name|escapejs }}')" style="color:#2563eb; background:none; border:none; cursor:pointer; font-size:inherit;">Add one</button></p></div>
+        {% endif %}
+    </div>
+</div>
+{% empty %}
+<div class="platform-card">
+    <div class="empty-state">
+        <p style="font-size:20px; margin-bottom:8px;">🏢</p>
+        <p>No organizations yet. Create your first one to get started.</p>
+    </div>
+</div>
+{% endfor %}
+
+<!-- Organization Modal -->
+<div class="modal-overlay" id="orgModal">
+    <div class="modal">
+        <div class="modal-header"><h3 id="orgModalTitle">New Organization</h3><button onclick="closeModal('orgModal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8;">×</button></div>
+        <div class="modal-body">
+            <input type="hidden" id="orgEditId" value="">
+            <div class="form-group"><label>Name</label><input type="text" id="orgName" placeholder="e.g., Maldives Beach Resorts"></div>
+            <div class="form-row">
+                <div class="form-group"><label>Code (URL-friendly)</label><input type="text" id="orgCode" placeholder="e.g., maldives-beach"></div>
+                <div class="form-group"><label>Currency</label>
+                    <div class="form-row">
+                        <input type="text" id="orgCurrency" value="USD" maxlength="3" placeholder="USD">
+                        <input type="text" id="orgCurrencySymbol" value="$" maxlength="5" placeholder="$">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeModal('orgModal')">Cancel</button>
+            <span id="orgDeleteBtn" style="display:none;"><button class="btn btn-danger btn-sm" onclick="deleteOrg()">Delete Org</button></span>
+            <button class="btn btn-primary" onclick="saveOrg()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Property Modal -->
+<div class="modal-overlay" id="propModal">
+    <div class="modal" style="width:580px;">
+        <div class="modal-header"><h3 id="propModalTitle">New Property</h3><button onclick="closeModal('propModal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8;">×</button></div>
+        <div class="modal-body">
+            <input type="hidden" id="propEditId" value="">
+            <input type="hidden" id="propOrgId" value="">
+            <div class="form-row">
+                <div class="form-group"><label>Property Name</label><input type="text" id="propName" placeholder="e.g., Biosphere Inn"></div>
+                <div class="form-group"><label>Code</label><input type="text" id="propCode" placeholder="e.g., biosphere-inn"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Location</label><input type="text" id="propLocation" placeholder="e.g., Maldives, Kaafu Atoll"></div>
+                <div class="form-group"><label>Country Code</label><input type="text" id="propCountry" value="MV" maxlength="2" style="text-transform:uppercase;"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Reference Base Rate ($)</label><input type="number" id="propBaseRate" value="100.00" step="0.01"></div>
+                <div class="form-group"><label>Currency Symbol</label><input type="text" id="propCurrency" value="$" maxlength="5"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Total Rooms</label><input type="number" id="propRooms" value="0"></div>
+                <div class="form-group"><label>Service Charge %</label><input type="number" id="propSC" value="10.00" step="0.01"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Tax / GST %</label><input type="number" id="propTax" value="16.00" step="0.01"></div>
+                <div class="form-group"><label>Tax on Service Charge</label>
+                    <select id="propTaxOnSC"><option value="true">Yes</option><option value="false">No</option></select>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeModal('propModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveProp()">Save</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function getCookie(n){var v=document.cookie.match('(^|;)\\s*'+n+'\\s*=\\s*([^;]+)');return v?v.pop():'';}
+function showToast(msg,type){var t=document.createElement('div');t.textContent=msg;t.style.cssText='position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:8px;color:#fff;font-size:14px;z-index:9999;max-width:400px;'+(type==='error'?'background:#dc2626;':'background:#059669;');document.body.appendChild(t);setTimeout(function(){t.remove();},4000);}
+function closeModal(id){document.getElementById(id).style.display='none';}
+function postJSON(url,data){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify(data)}).then(function(r){return r.json();});}
+
+// =========================================================================
+// ORGANIZATION
+// =========================================================================
+function showOrgModal(id,name,currency,symbol){
+    document.getElementById('orgEditId').value=id||'';
+    document.getElementById('orgName').value=name||'';
+    document.getElementById('orgCode').value='';
+    document.getElementById('orgCurrency').value=currency||'USD';
+    document.getElementById('orgCurrencySymbol').value=symbol||'$';
+    document.getElementById('orgModalTitle').textContent=id?'Edit Organization':'New Organization';
+    document.getElementById('orgDeleteBtn').style.display=id?'inline':'none';
+    document.getElementById('orgCode').disabled=!!id;
+    document.getElementById('orgModal').style.display='flex';
+}
+
+function saveOrg(){
+    var id=document.getElementById('orgEditId').value;
+    var data={name:document.getElementById('orgName').value.trim(),code:document.getElementById('orgCode').value.trim(),default_currency:document.getElementById('orgCurrency').value.trim(),currency_symbol:document.getElementById('orgCurrencySymbol').value.trim()};
+    if(!data.name){showToast('Name required','error');return;}
+    var url=id?'/platform/api/organizations/'+id+'/update/':'/platform/api/organizations/create/';
+    postJSON(url,data).then(function(d){if(d.success){showToast(d.message);closeModal('orgModal');location.reload();}else showToast(d.error||'Failed','error');});
+}
+
+function deleteOrg(){
+    var id=document.getElementById('orgEditId').value;
+    if(!id||!confirm('Deactivate this organization and ALL its properties?'))return;
+    postJSON('/platform/api/organizations/'+id+'/delete/',{}).then(function(d){if(d.success){showToast(d.message);closeModal('orgModal');location.reload();}else showToast(d.error||'Failed','error');});
+}
+
+// =========================================================================
+// PROPERTY
+// =========================================================================
+function showPropertyModal(orgId,orgName,propId,name,code,location,baseRate,currency,rooms,sc,tax,country){
+    document.getElementById('propOrgId').value=orgId||'';
+    document.getElementById('propEditId').value=propId||'';
+    document.getElementById('propName').value=name||'';
+    document.getElementById('propCode').value=code||'';
+    document.getElementById('propCode').disabled=!!propId;
+    document.getElementById('propLocation').value=location||'';
+    document.getElementById('propCountry').value=country||'MV';
+    document.getElementById('propBaseRate').value=baseRate||'100.00';
+    document.getElementById('propCurrency').value=currency||'$';
+    document.getElementById('propRooms').value=rooms||'0';
+    document.getElementById('propSC').value=sc||'10.00';
+    document.getElementById('propTax').value=tax||'16.00';
+    document.getElementById('propModalTitle').textContent=(propId?'Edit':'New')+' Property — '+orgName;
+    document.getElementById('propModal').style.display='flex';
+}
+
+function saveProp(){
+    var id=document.getElementById('propEditId').value;
+    var data={organization_id:parseInt(document.getElementById('propOrgId').value),name:document.getElementById('propName').value.trim(),code:document.getElementById('propCode').value.trim(),location:document.getElementById('propLocation').value.trim(),country_code:document.getElementById('propCountry').value.trim().toUpperCase(),reference_base_rate:document.getElementById('propBaseRate').value,currency_symbol:document.getElementById('propCurrency').value.trim(),total_rooms:parseInt(document.getElementById('propRooms').value)||0,service_charge_percent:document.getElementById('propSC').value,tax_percent:document.getElementById('propTax').value,tax_on_service_charge:document.getElementById('propTaxOnSC').value==='true'};
+    if(!data.name){showToast('Name required','error');return;}
+    var url=id?'/platform/api/properties/'+id+'/update/':'/platform/api/properties/create/';
+    postJSON(url,data).then(function(d){if(d.success){showToast(d.message);closeModal('propModal');location.reload();}else showToast(d.error||'Failed','error');});
+}
+
+function deleteProperty(id,name){
+    if(!confirm('Deactivate property "'+name+'"?'))return;
+    postJSON('/platform/api/properties/'+id+'/delete/',{}).then(function(d){if(d.success){showToast(d.message);location.reload();}else showToast(d.error||'Failed','error');});
+}
+</script>
+{% endblock %}

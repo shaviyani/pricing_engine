@@ -224,6 +224,10 @@
             <span class="section-icon">📊</span> Reports
             <span class="hotkey">6</span>
         </a>
+        <a href="{% url 'pricing:manage_agents' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'agents' %}active{% endif %}">
+            <span class="section-icon">🤝</span> Agents
+            <span class="hotkey">7</span>
+        </a>
     </div>
 
     <!-- Section Content -->
@@ -414,7 +418,7 @@ document.addEventListener('keydown', function(e) {
         return;
     }
     var idx = parseInt(e.key);
-    if (!isNaN(idx) && idx >= 0 && idx <= 6 && sectionLinks[idx]) {
+    if (!isNaN(idx) && idx >= 0 && idx <= 7 && sectionLinks[idx]) {
         sectionLinks[idx].click();
     }
 });

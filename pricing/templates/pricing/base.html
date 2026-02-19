@@ -107,15 +107,10 @@
                             Organizations
                         </a>
                         {% endif %}
-
-                        <a href="{% url 'admin:index' %}"
-                            class="text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md text-sm font-medium transition">
-                            Admin
-                        </a>
                     </div>
                 </div>
 
-                <!-- Right side: Context breadcrumb -->
+                <!-- Right side: Context breadcrumb + User menu -->
                 <div class="flex items-center space-x-4">
                     {% if org and prop %}
                     <!-- Property context -->
@@ -177,6 +172,52 @@
                     {% else %}
                     <span class="text-sm text-gray-500">Revenue Management System</span>
                     {% endif %}
+
+                    <!-- User menu -->
+                    {% if user.is_authenticated %}
+                    <div class="relative border-l border-gray-200 pl-4 ml-2">
+                        <button onclick="toggleUserDropdown()"
+                            class="flex items-center space-x-2 text-sm text-gray-600 hover:text-gray-900 transition">
+                            <div class="w-7 h-7 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-semibold text-xs">
+                                {{ user.username|make_list|first|upper }}
+                            </div>
+                            <span class="hidden sm:inline font-medium">{{ user.username }}</span>
+                            <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </button>
+                        <div id="userDropdown"
+                            class="hidden absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg border border-gray-200 z-50">
+                            <div class="py-1">
+                                <div class="px-4 py-2 border-b border-gray-100">
+                                    <p class="text-sm font-medium text-gray-900">{{ user.username }}</p>
+                                    {% if user.is_superuser %}
+                                    <p class="text-xs text-blue-600">Superuser</p>
+                                    {% elif user.is_staff %}
+                                    <p class="text-xs text-gray-500">Staff</p>
+                                    {% endif %}
+                                </div>
+                                {% if user.is_superuser %}
+                                <a href="{% url 'platform:dashboard' %}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                    Platform Admin
+                                </a>
+                                {% endif %}
+                                <a href="{% url 'admin:index' %}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                    Django Admin
+                                </a>
+                                <hr class="my-1">
+                                <form method="post" action="{% url 'logout' %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                                        Sign Out
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <a href="{% url 'login' %}" class="text-sm text-blue-600 hover:text-blue-700 font-medium ml-4">Sign In</a>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -210,10 +251,21 @@
                     Rate Calendar
                 </a>
                 {% endif %}
-                <a href="{% url 'admin:index' %}"
-                    class="block text-gray-700 hover:bg-gray-100 px-3 py-2 rounded-md text-base font-medium">
-                    Admin
+                {% if user.is_authenticated %}
+                <hr class="my-2">
+                <div class="px-3 py-2 text-sm text-gray-500">Signed in as <strong>{{ user.username }}</strong></div>
+                <form method="post" action="{% url 'logout' %}">
+                    {% csrf_token %}
+                    <button type="submit" class="block w-full text-left text-red-600 hover:bg-red-50 px-3 py-2 rounded-md text-base font-medium">
+                        Sign Out
+                    </button>
+                </form>
+                {% else %}
+                <a href="{% url 'login' %}"
+                    class="block text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-md text-base font-medium">
+                    Sign In
                 </a>
+                {% endif %}
             </div>
         </div>
     </nav>
@@ -241,21 +293,31 @@
         </div>
     </footer>
 
-    <!-- Property dropdown toggle script -->
+    <!-- Dropdown toggle scripts -->
     <script>
         function togglePropertyDropdown() {
-            var dropdown = document.getElementById('propertyDropdown');
-            dropdown.classList.toggle('hidden');
+            document.getElementById('propertyDropdown').classList.toggle('hidden');
+            var userDd = document.getElementById('userDropdown');
+            if (userDd) userDd.classList.add('hidden');
         }
 
-        // Close dropdown when clicking outside
-        document.addEventListener('click', function (event) {
-            var dropdown = document.getElementById('propertyDropdown');
-            var button = event.target.closest('button');
+        function toggleUserDropdown() {
+            document.getElementById('userDropdown').classList.toggle('hidden');
+            var propDd = document.getElementById('propertyDropdown');
+            if (propDd) propDd.classList.add('hidden');
+        }
 
-            if (dropdown && !dropdown.contains(event.target) && !button) {
-                dropdown.classList.add('hidden');
-            }
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', function (event) {
+            var dropdowns = ['propertyDropdown', 'userDropdown'];
+            var clickedButton = event.target.closest('button');
+
+            dropdowns.forEach(function(id) {
+                var dd = document.getElementById(id);
+                if (dd && !dd.contains(event.target) && !clickedButton) {
+                    dd.classList.add('hidden');
+                }
+            });
         });
     </script>
 

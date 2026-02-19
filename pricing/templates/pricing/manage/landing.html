@@ -95,7 +95,17 @@
         </div>
     </a>
 
+    <a href="{% url 'pricing:manage_agents' org_code=org.code prop_code=prop_code %}" class="landing-card">
+        <span class="landing-card-key">7</span>
+        <div class="landing-card-icon">🤝</div>
+        <div class="landing-card-title">Travel Agents</div>
+        <div class="landing-card-desc">Manage travel agent companies and their unique rate card URLs for sharing.</div>
+        <div class="landing-card-stats">
+            <span class="landing-card-stat"><strong>{{ agent_count }}</strong> agents</span>
+        </div>
+    </a>
+
 </div>
 
-<p class="text-center text-xs text-gray-400 mt-6">Press <kbd class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-gray-500">1</kbd>–<kbd class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-gray-500">6</kbd> to jump to a section</p>
+<p class="text-center text-xs text-gray-400 mt-6">Press <kbd class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-gray-500">1</kbd>–<kbd class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-gray-500">7</kbd> to jump to a section</p>
 {% endblock %}

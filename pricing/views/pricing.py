@@ -35,9 +35,10 @@ from reportlab.graphics.widgets.markers import makeMarker
 
 from pricing.models import (
     Organization, Property, Season, RoomType, RatePlan, Channel,
-    RateModifier, SeasonModifierOverride, Reservation,
+    TravelAgent, RateModifier, SeasonModifierOverride, Reservation,
     DateRateOverride, DateRateOverridePeriod,
     ModifierTemplate, PropertyModifier, ModifierRule,
+    PricingMatrixVersion,
 )
 from pricing.services import PricingService
 
@@ -2939,6 +2940,156 @@ class AgentRatesView(PropertyMixin, TemplateView):
                         channel_base_discount=agent_channel.base_discount_percent,
                         modifier_discount=modifier_discount,
                         commission_percent=Decimal('0'),  # Show net rate before commission
+                        occupancy=2,
+                        apply_ceiling=True,
+                        ceiling_increment=5,
+                        room_type_season_modifier=rt_season_mod,
+                    )
+                    season_rates.append({
+                        'season_id': season.id,
+                        'final_rate': float(final_rate),
+                    })
+                room_plans.append({
+                    'rate_plan_id': rp.id,
+                    'rate_plan_name': rp.name,
+                    'meal_supplement': float(rp.meal_supplement),
+                    'season_rates': season_rates,
+                })
+            matrix.append({
+                'room_type_id': room.id,
+                'room_type_name': room.name,
+                'number_of_rooms': room.number_of_rooms,
+                'base_rate': float(room.get_effective_base_rate()),
+                'rate_plans': room_plans,
+            })
+
+        # Last updated
+        last_updated = None
+        if version:
+            last_updated = version.updated_at if hasattr(version, 'updated_at') else version.created_at if hasattr(version, 'created_at') else None
+        if not last_updated:
+            last_updated = timezone.now()
+
+        context['agent_channel'] = agent_channel
+        context['seasons'] = seasons
+        context['rooms'] = rooms
+        context['rate_plans'] = rate_plans
+        context['matrix'] = matrix
+        context['matrix_json'] = json.dumps(matrix)
+        context['seasons_json'] = json.dumps([{
+            'id': s.id, 'name': s.name, 'type': s.season_type,
+            'start_date': s.start_date.isoformat(), 'end_date': s.end_date.isoformat(),
+        } for s in seasons])
+        context['rate_plans_json'] = json.dumps([{
+            'id': rp.id, 'name': rp.name, 'meal_supplement': float(rp.meal_supplement),
+        } for rp in rate_plans])
+        context['last_updated'] = last_updated
+        context['current_year'] = selected_year
+        context['available_years'] = available_years
+
+        return context
+
+
+class AgentRateCardView(TemplateView):
+    """
+    Public agent rate card accessed via unique token URL.
+
+    URL: /agent/<token>/
+
+    Looks up TravelAgent by token, resolves property and channel,
+    then builds the same rate matrix as AgentRatesView.
+    """
+    template_name = 'pricing/rates/agent_rate_card.html'
+
+    def get_context_data(self, **kwargs):
+        from pricing.services import calculate_final_rate
+
+        context = super().get_context_data(**kwargs)
+        token = self.kwargs.get('token')
+
+        agent = get_object_or_404(
+            TravelAgent.objects.select_related('property', 'property__organization', 'channel'),
+            token=token,
+            is_active=True,
+        )
+
+        prop = agent.property
+        org = prop.organization
+        context['agent'] = agent
+        context['property'] = prop
+        context['prop'] = prop
+        context['organization'] = org
+        context['org'] = org
+
+        # Get published version
+        version = PricingMatrixVersion.get_published(prop)
+
+        # Version-scoped querysets
+        version_filter = {'hotel': prop}
+        if version:
+            version_filter['version'] = version
+
+        all_seasons = list(Season.objects.filter(**version_filter).order_by('start_date'))
+        rooms = list(RoomType.objects.filter(**version_filter).order_by('sort_order'))
+        rate_plans = list(RatePlan.objects.filter(**version_filter).order_by('sort_order'))
+
+        # Year filter
+        available_years = sorted({
+            y for s in all_seasons
+            for y in range(s.start_date.year, s.end_date.year + 1)
+        })
+        selected_year = self.request.GET.get('year')
+        try:
+            selected_year = int(selected_year)
+            if selected_year not in available_years:
+                selected_year = date.today().year
+        except (TypeError, ValueError):
+            selected_year = date.today().year
+
+        seasons = [
+            s for s in all_seasons
+            if s.start_date.year == selected_year or s.end_date.year == selected_year
+        ]
+
+        # Resolve channel
+        agent_channel = agent.get_channel()
+
+        if not agent_channel or not seasons or not rooms:
+            context['has_data'] = False
+            return context
+
+        context['has_data'] = True
+
+        # Get active modifiers for agent channel
+        modifiers = RateModifier.objects.filter(
+            channel=agent_channel, active=True
+        ).order_by('sort_order')
+        standard_modifier = modifiers.filter(discount_percent=0).first()
+        if not standard_modifier:
+            standard_modifier = modifiers.filter(name__icontains='standard').first()
+        if not standard_modifier:
+            standard_modifier = modifiers.first()
+
+        # Build rate matrix
+        matrix = []
+        for room in rooms:
+            room_plans = []
+            for rp in rate_plans:
+                season_rates = []
+                for season in seasons:
+                    modifier_discount = Decimal('0')
+                    if standard_modifier:
+                        modifier_discount = standard_modifier.get_discount_for_season(season)
+
+                    rt_season_mod = room.get_season_modifier(season)
+
+                    final_rate, breakdown = calculate_final_rate(
+                        room_base_rate=room.get_effective_base_rate(),
+                        season_index=season.season_index,
+                        meal_supplement=rp.meal_supplement,
+                        channel_base_discount=agent_channel.base_discount_percent,
+                        modifier_discount=modifier_discount,
+                        commission_percent=Decimal('0'),
                         occupancy=2,
                         apply_ceiling=True,
                         ceiling_increment=5,

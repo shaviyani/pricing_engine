@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.humanize',
     'pricing',
+    'platform_data',
 ]
 
 MIDDLEWARE = [
@@ -92,3 +93,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CURRENCY_SYMBOL = '$'
 
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 500000
+
+# Authentication
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/login/'

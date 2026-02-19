@@ -22,6 +22,7 @@ from .pricing import (
     RoomType,
     RatePlan,
     Channel,
+    TravelAgent,
     RateModifier,
     SeasonModifierOverride,
     RoomTypeSeasonModifier,
@@ -58,7 +59,7 @@ __all__ = [
     'Organization', 'Property', 'ModifierTemplate', 'PropertyModifier', 'ModifierRule',
     # Pricing
     'PricingMatrixVersion',
-    'Season', 'RoomType', 'RatePlan', 'Channel', 'RateModifier',
+    'Season', 'RoomType', 'RatePlan', 'Channel', 'TravelAgent', 'RateModifier',
     'SeasonModifierOverride', 'RoomTypeSeasonModifier',
     'DateRateOverride', 'DateRateOverridePeriod',
     'BookingWindowConfig', 'BookingWindowBand',

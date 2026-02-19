@@ -1,0 +1,265 @@
+{% extends "pricing/manage/_base.html" %}
+
+{% block section_title %}Travel Agents{% endblock %}
+{% block page_heading %}Travel Agents{% endblock %}
+
+{% block section_css %}
+    .url-cell { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+    .copy-btn {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 3px 10px; font-size: 11px; font-weight: 600;
+        background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px;
+        cursor: pointer; color: #6b7280; transition: all 0.15s;
+    }
+    .copy-btn:hover { background: #e5e7eb; color: #374151; }
+    .copy-btn.copied { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .status-active { color: #059669; }
+    .status-inactive { color: #dc2626; }
+{% endblock %}
+
+{% block section_content %}
+
+<div class="mgmt-card">
+    <div class="mgmt-card-header">
+        <div>
+            <h3 class="mgmt-card-title">Travel Agents</h3>
+            <p class="text-sm text-gray-500 mt-1">Each agent gets a unique URL to view their rate card and build quotes.</p>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openModal('agentModal')">+ Add Agent</button>
+    </div>
+    <div class="mgmt-card-body">
+        {% if agents %}
+        <table class="mgmt-table">
+            <thead>
+                <tr>
+                    <th>Agent Name</th>
+                    <th>Email</th>
+                    <th>Channel</th>
+                    <th>Status</th>
+                    <th>Unique URL</th>
+                    <th>Created</th>
+                    <th style="width:60px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for agent in agents %}
+                <tr data-id="{{ agent.id }}">
+                    <td>
+                        <input type="text" class="editable-input" style="font-weight:600;"
+                               value="{{ agent.name }}"
+                               data-field="name" data-id="{{ agent.id }}" data-type="travel-agent"
+                               onchange="updateAgentField(this)">
+                    </td>
+                    <td>
+                        <input type="text" class="editable-input"
+                               value="{{ agent.email }}"
+                               data-field="email" data-id="{{ agent.id }}" data-type="travel-agent"
+                               onchange="updateAgentField(this)"
+                               placeholder="email@example.com">
+                    </td>
+                    <td>
+                        <select class="editable-input" style="padding:4px 6px; font-size:13px;"
+                                data-field="channel_id" data-id="{{ agent.id }}" data-type="travel-agent"
+                                onchange="updateAgentField(this)">
+                            <option value="">Default</option>
+                            {% for ch in channels %}
+                            <option value="{{ ch.id }}" {% if agent.channel_id == ch.id %}selected{% endif %}>{{ ch.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td>
+                        <label class="toggle">
+                            <input type="checkbox" {% if agent.is_active %}checked{% endif %}
+                                   onchange="toggleAgentStatus({{ agent.id }}, this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </td>
+                    <td class="url-cell">
+                        <span id="url-{{ agent.id }}">/agent/{{ agent.token }}/</span>
+                        <button class="copy-btn" onclick="copyAgentUrl({{ agent.id }}, '{{ agent.token }}')">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                            </svg>
+                            Copy
+                        </button>
+                    </td>
+                    <td style="font-size:13px; color:#6b7280;">{{ agent.created_at|date:"M d, Y" }}</td>
+                    <td>
+                        <div class="row-actions">
+                            <button class="action-btn danger" onclick="deleteAgent({{ agent.id }}, '{{ agent.name|escapejs }}')">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <p>No travel agents configured yet.</p>
+            <button class="btn btn-primary mt-4" onclick="openModal('agentModal')">Add Your First Agent</button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
+
+{% block section_modals %}
+<!-- Add Agent Modal -->
+<div id="agentModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <form id="agentForm" onsubmit="createAgent(event)">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Travel Agent</h3>
+                <button type="button" class="modal-close" onclick="closeModal('agentModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Agent Name *</label>
+                    <input type="text" name="name" class="form-input" required placeholder="e.g. Sun Travels Maldives">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="email" name="email" class="form-input" placeholder="agent@example.com">
+                    <p class="form-hint">For your reference only — not shown on the rate card.</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Channel</label>
+                    <select name="channel_id" class="form-select">
+                        <option value="">Default (Agent channel)</option>
+                        {% for ch in channels %}
+                        <option value="{{ ch.id }}">{{ ch.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="form-hint">Leave as Default unless this agent has special rates.</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notes</label>
+                    <textarea name="notes" class="form-input" rows="2" placeholder="Internal notes about this agent..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('agentModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Agent</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block section_js %}
+function createAgent(event) {
+    event.preventDefault();
+    var form = event.target;
+    var data = {};
+    new FormData(form).forEach(function(v, k) { data[k] = v; });
+
+    fetch(API_BASE + '/api/travel-agents/create/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(data)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+        if (resp.success) {
+            showToast(resp.message || 'Agent created');
+            closeModal('agentModal');
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(resp.error || 'Failed to create agent', 'error');
+        }
+    })
+    .catch(function() { showToast('Network error', 'error'); });
+}
+
+function updateAgentField(input) {
+    var id = input.dataset.id;
+    var field = input.dataset.field;
+    var value = input.value;
+    input.classList.add('saving');
+
+    var data = {};
+    data[field] = value;
+
+    fetch(API_BASE + '/api/travel-agents/' + id + '/update/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(data)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+        input.classList.remove('saving');
+        if (resp.success) {
+            input.classList.add('saved');
+            setTimeout(function() { input.classList.remove('saved'); }, 1000);
+        } else {
+            input.classList.add('error');
+            showToast(resp.error || 'Failed', 'error');
+            setTimeout(function() { input.classList.remove('error'); }, 2000);
+        }
+    })
+    .catch(function() {
+        input.classList.remove('saving');
+        input.classList.add('error');
+        showToast('Network error', 'error');
+    });
+}
+
+function toggleAgentStatus(id, isActive) {
+    fetch(API_BASE + '/api/travel-agents/' + id + '/update/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ is_active: isActive })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+        if (resp.success) showToast(isActive ? 'Agent activated' : 'Agent deactivated');
+        else showToast(resp.error || 'Failed', 'error');
+    })
+    .catch(function() { showToast('Network error', 'error'); });
+}
+
+function copyAgentUrl(id, token) {
+    var fullUrl = window.location.origin + '/agent/' + token + '/';
+    navigator.clipboard.writeText(fullUrl).then(function() {
+        var btn = document.querySelector('#url-' + id).nextElementSibling;
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!';
+        setTimeout(function() {
+            btn.classList.remove('copied');
+            btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path></svg> Copy';
+        }, 2000);
+    });
+}
+
+function deleteAgent(id, name) {
+    deleteType = 'travel-agent';
+    deleteId = id;
+    document.getElementById('deleteItemName').textContent = name;
+    document.getElementById('confirmDeleteBtn').onclick = function() {
+        fetch(API_BASE + '/api/travel-agents/' + id + '/delete/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') }
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+            if (resp.success) {
+                showToast(resp.message || 'Deleted');
+                closeModal('deleteModal');
+                var row = document.querySelector('tr[data-id="' + id + '"]');
+                if (row) row.remove();
+            } else {
+                showToast(resp.error || 'Failed', 'error');
+            }
+        })
+        .catch(function() { showToast('Network error', 'error'); });
+    };
+    openModal('deleteModal');
+}
+{% endblock %}

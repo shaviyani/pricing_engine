@@ -31,6 +31,7 @@ from .pricing import (
     RateLookupAPIView,
     ItineraryQuoteAPIView,
     AgentRatesView,
+    AgentRateCardView,
     DateRateOverrideCalendarView,
     parity_data_ajax,
     update_room,
@@ -127,4 +128,10 @@ from .admin_views import (
     # Room Type Mapping
     RoomTypeMappingListView,
     RoomTypeMappingUpdateView,
+    # Travel Agents
+    ManageAgentsView,
+    TravelAgentListView,
+    TravelAgentCreateView,
+    TravelAgentUpdateView,
+    TravelAgentDeleteView,
 )

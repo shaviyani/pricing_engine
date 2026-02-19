@@ -24,6 +24,8 @@ from pricing.views import (
     ReservationListView, ReservationUpdateView, ReservationDeleteView,
     ReservationBulkDeleteView,
     RoomTypeMappingListView, RoomTypeMappingUpdateView,
+    ManageAgentsView,
+    TravelAgentListView, TravelAgentCreateView, TravelAgentUpdateView, TravelAgentDeleteView,
 )
 
 # Property-scoped management URLs
@@ -121,6 +123,18 @@ urlpatterns = [
          RoomTypeMappingListView.as_view(), name='api_room_type_mapping_list'),
     path('<slug:org_code>/<slug:prop_code>/api/reservations/room-type-mapping/update/',
          RoomTypeMappingUpdateView.as_view(), name='api_room_type_mapping_update'),
+
+    # Travel Agents
+    path('<slug:org_code>/<slug:prop_code>/manage/agents/',
+         ManageAgentsView.as_view(), name='manage_agents'),
+    path('<slug:org_code>/<slug:prop_code>/api/travel-agents/',
+         TravelAgentListView.as_view(), name='api_travel_agent_list'),
+    path('<slug:org_code>/<slug:prop_code>/api/travel-agents/create/',
+         TravelAgentCreateView.as_view(), name='api_travel_agent_create'),
+    path('<slug:org_code>/<slug:prop_code>/api/travel-agents/<int:pk>/update/',
+         TravelAgentUpdateView.as_view(), name='api_travel_agent_update'),
+    path('<slug:org_code>/<slug:prop_code>/api/travel-agents/<int:pk>/delete/',
+         TravelAgentDeleteView.as_view(), name='api_travel_agent_delete'),
 ]
 
 # Shared (org-level or global) URLs
