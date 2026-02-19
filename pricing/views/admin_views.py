@@ -2317,3 +2317,79 @@ class ReservationBulkDeleteView(PricingManagementMixin, View):
             data={'deleted_count': count},
             message=f'{count} reservation{"s" if count != 1 else ""} deleted'
         )
+
+
+class RoomTypeMappingListView(PricingManagementMixin, View):
+    """GET: List distinct room_type_name values with their mapping status."""
+
+    def get(self, request, *args, **kwargs):
+        from pricing.models import Reservation, RoomType
+        from django.db.models import Count
+
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        mappings_qs = Reservation.objects.filter(hotel=hotel).values(
+            'room_type_name', 'room_type', 'room_type__name'
+        ).annotate(count=Count('id')).order_by('-count')
+
+        mappings = []
+        for m in mappings_qs:
+            mappings.append({
+                'room_type_name': m['room_type_name'] or '',
+                'count': m['count'],
+                'mapped_to_id': m['room_type'],
+                'mapped_to_name': m['room_type__name'] or None,
+            })
+
+        room_types = [
+            {'id': rt.id, 'name': rt.name}
+            for rt in RoomType.objects.filter(hotel=hotel).order_by('sort_order')
+        ]
+        unmapped_count = Reservation.objects.filter(hotel=hotel, room_type__isnull=True).count()
+
+        return self.success_response(data={
+            'mappings': mappings,
+            'room_types': room_types,
+            'unmapped_count': unmapped_count,
+        })
+
+
+class RoomTypeMappingUpdateView(PricingManagementMixin, View):
+    """POST: Bulk-update room_type FK for all reservations matching a room_type_name."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import Reservation, RoomType
+
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return self.error_response('Invalid JSON')
+
+        room_type_name = data.get('room_type_name', '')
+        room_type_id = data.get('room_type_id')
+
+        if not room_type_name:
+            return self.error_response('room_type_name is required')
+
+        qs = Reservation.objects.filter(hotel=hotel, room_type_name=room_type_name)
+        count = qs.count()
+
+        if room_type_id:
+            room_type = RoomType.objects.filter(pk=room_type_id, hotel=hotel).first()
+            if not room_type:
+                return self.error_response('Room type not found', 404)
+            qs.update(room_type=room_type)
+            return self.success_response(
+                message=f'{count} reservations mapped to "{room_type.name}"'
+            )
+        else:
+            qs.update(room_type=None)
+            return self.success_response(
+                message=f'{count} reservations unmapped'
+            )

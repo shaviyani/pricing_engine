@@ -23,6 +23,7 @@ from pricing.views import (
     ImportTemplateUpdateView, ImportTemplateDeleteView,
     ReservationListView, ReservationUpdateView, ReservationDeleteView,
     ReservationBulkDeleteView,
+    RoomTypeMappingListView, RoomTypeMappingUpdateView,
 )
 
 # Property-scoped management URLs
@@ -116,6 +117,10 @@ urlpatterns = [
          ReservationDeleteView.as_view(), name='api_reservation_delete'),
     path('<slug:org_code>/<slug:prop_code>/api/reservations/bulk-delete/',
          ReservationBulkDeleteView.as_view(), name='api_reservation_bulk_delete'),
+    path('<slug:org_code>/<slug:prop_code>/api/reservations/room-type-mapping/',
+         RoomTypeMappingListView.as_view(), name='api_room_type_mapping_list'),
+    path('<slug:org_code>/<slug:prop_code>/api/reservations/room-type-mapping/update/',
+         RoomTypeMappingUpdateView.as_view(), name='api_room_type_mapping_update'),
 ]
 
 # Shared (org-level or global) URLs

@@ -34,6 +34,15 @@
                 <button id="bulkDeleteBtn" class="btn btn-sm" style="display:none;background:#fef2f2;color:#dc2626;border:1px solid #fca5a5;font-weight:600;padding:8px 14px;font-size:13px;" onclick="bulkDeleteReservations()">Delete Selected (<span id="bulkDeleteCount">0</span>)</button>
             </div>
         </div>
+        <div id="roomTypeMappingBar" style="display:none;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;background:#fffbeb;">
+            <div id="roomTypeMappingHeader" style="padding:12px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;" onclick="toggleRoomTypeMapping()">
+                <span id="roomTypeMappingStatus" style="font-size:13px;font-weight:600;"></span>
+                <span id="roomTypeMappingToggle" style="font-size:12px;color:#6b7280;text-decoration:underline;">Show mapping</span>
+            </div>
+            <div id="roomTypeMappingBody" style="display:none;padding:0 16px 16px;">
+                <table class="mgmt-table" style="font-size:13px;" id="roomTypeMappingTable"></table>
+            </div>
+        </div>
         <div class="mgmt-card-body" id="reservationTableWrap">
             <div class="empty-state"><p>Loading reservations...</p></div>
         </div>
@@ -341,6 +350,78 @@ function escHtml(s) {
 function debounceResSearch() {
     clearTimeout(resSearchTimer);
     resSearchTimer = setTimeout(function() { loadReservations(1); }, 300);
+}
+
+// =========================================================================
+// ROOM TYPE MAPPING
+// =========================================================================
+var roomTypeMappingOpen = false;
+
+function loadRoomTypeMapping() {
+    fetch(API_BASE + '/api/reservations/room-type-mapping/')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.success) { console.error('Room type mapping API error:', d.error); return; }
+        var data = d.data;
+        var bar = document.getElementById('roomTypeMappingBar');
+        var status = document.getElementById('roomTypeMappingStatus');
+
+        if (!data.mappings.length) { bar.style.display = 'none'; return; }
+        bar.style.display = 'block';
+
+        if (data.unmapped_count > 0) {
+            status.textContent = '\u26A0 ' + data.unmapped_count + ' unmapped reservation' + (data.unmapped_count > 1 ? 's' : '') + ' — click to assign room types';
+            status.style.color = '#d97706';
+            bar.style.background = '#fffbeb';
+        } else {
+            status.textContent = '\u2713 All room types mapped';
+            status.style.color = '#059669';
+            bar.style.background = '#ecfdf5';
+        }
+
+        var html = '<thead><tr><th>Room Type (from CSV)</th><th style="text-align:center;">Count</th><th>Mapped To</th></tr></thead><tbody>';
+        data.mappings.forEach(function(m) {
+            var isMapped = m.mapped_to_id !== null;
+            html += '<tr style="' + (!isMapped ? 'background:#fffbeb;' : '') + '">';
+            html += '<td class="font-medium">' + escHtml(m.room_type_name || '(empty)') + '</td>';
+            html += '<td style="text-align:center;">' + m.count + '</td>';
+            html += '<td><select style="padding:4px 8px;border:1px solid ' + (isMapped ? '#a7f3d0' : '#fde68a') + ';border-radius:4px;font-size:12px;background:' + (isMapped ? '#ecfdf5' : '#fffbeb') + ';" onchange="updateRoomTypeMapping(\'' + escHtml(m.room_type_name).replace(/'/g, "\\'") + '\', this.value)">';
+            html += '<option value="">— Not mapped —</option>';
+            data.room_types.forEach(function(rt) {
+                html += '<option value="' + rt.id + '"' + (m.mapped_to_id === rt.id ? ' selected' : '') + '>' + escHtml(rt.name) + '</option>';
+            });
+            html += '</select></td>';
+            html += '</tr>';
+        });
+        html += '</tbody>';
+        document.getElementById('roomTypeMappingTable').innerHTML = html;
+    })
+    .catch(function(err) { console.error('Room type mapping load error:', err); });
+}
+
+function updateRoomTypeMapping(roomTypeName, roomTypeId) {
+    fetch(API_BASE + '/api/reservations/room-type-mapping/update/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ room_type_name: roomTypeName, room_type_id: roomTypeId ? parseInt(roomTypeId) : null })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            showToast(d.message);
+            loadRoomTypeMapping();
+            loadReservations(resCurrentPage);
+        } else {
+            showToast(d.error || 'Mapping failed', 'error');
+        }
+    })
+    .catch(function(err) { showToast('Error: ' + err, 'error'); });
+}
+
+function toggleRoomTypeMapping() {
+    roomTypeMappingOpen = !roomTypeMappingOpen;
+    document.getElementById('roomTypeMappingBody').style.display = roomTypeMappingOpen ? 'block' : 'none';
+    document.getElementById('roomTypeMappingToggle').textContent = roomTypeMappingOpen ? 'Hide mapping' : 'Show mapping';
 }
 
 function toggleSelectAll(el) {
@@ -708,9 +789,10 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) { btn.addEventListen
     document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
     this.classList.add('active'); document.getElementById('tab-' + this.dataset.tab).classList.add('active');
     if (this.dataset.tab === 'import-templates') loadTemplates();
-    if (this.dataset.tab === 'import-reservations') loadReservations(resCurrentPage);
+    if (this.dataset.tab === 'import-reservations') { loadReservations(resCurrentPage); loadRoomTypeMapping(); }
 }); });
 
-// Load reservations on page load
+// Load reservations and room type mapping on page load
 loadReservations(1);
+loadRoomTypeMapping();
 {% endblock %}

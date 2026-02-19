@@ -5,6 +5,7 @@ from pricing.views import (
     PickupDashboardView,
     revenue_forecast_ajax,
     pickup_summary_ajax,
+    occupancy_calendar_ajax,
 )
 
 urlpatterns = [
@@ -14,4 +15,6 @@ urlpatterns = [
          revenue_forecast_ajax, name='revenue_forecast_ajax'),
     path('org/<slug:org_code>/<slug:prop_code>/api/pickup-summary/',
          pickup_summary_ajax, name='pickup_summary_ajax'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/occupancy-calendar/',
+         occupancy_calendar_ajax, name='occupancy_calendar_ajax'),
 ]

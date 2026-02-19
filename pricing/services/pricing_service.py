@@ -465,6 +465,177 @@ class PricingService:
         }
 
 
+    def get_rate_card(self, target_date, pax=2):
+        """
+        Get complete rate card for a specific date.
+
+        Returns rates for all room types × channels × rate plans,
+        including dynamic pricing multiplier and season info.
+
+        Args:
+            target_date: date to calculate rates for
+            pax: number of guests (default 2)
+
+        Returns:
+            dict with:
+                - target_date
+                - season: {name, type, index, start_date, end_date}
+                - occupancy: {booked, total, pct}
+                - dynamic_pricing: {multiplier, occupancy_mult, event_mult, event_name, ...}
+                - room_types: [{name, base_rate, channels: [{name, rate_plans: [{name, rate}]}]}]
+                - service_charge_percent, tax_percent
+        """
+        from pricing.models import (
+            Season, RoomType, RatePlan, Channel, PricingMatrixVersion, Reservation
+        )
+        from pricing.services.version_service import DynamicPricingService
+
+        version = PricingMatrixVersion.get_published(self.hotel)
+        version_filter = {'hotel': self.hotel}
+        if version:
+            version_filter['version'] = version
+
+        seasons = Season.objects.filter(**version_filter)
+        room_types = RoomType.objects.filter(**version_filter).order_by('sort_order')
+        rate_plans = RatePlan.objects.filter(**version_filter).order_by('sort_order')
+        channels = Channel.objects.filter(**version_filter).order_by('sort_order')
+
+        # Find season for this date
+        season = seasons.filter(
+            start_date__lte=target_date, end_date__gte=target_date
+        ).first()
+
+        season_info = None
+        if season:
+            season_info = {
+                'name': season.name,
+                'type': season.season_type,
+                'index': float(season.season_index),
+                'start_date': season.start_date.isoformat(),
+                'end_date': season.end_date.isoformat(),
+                'date_range_display': season.date_range_display(),
+            }
+
+        # Occupancy
+        total_rooms = sum(rt.number_of_rooms for rt in room_types) or 0
+        booked = Reservation.objects.filter(
+            hotel=self.hotel,
+            arrival_date__lte=target_date,
+            departure_date__gt=target_date,
+            status__in=['confirmed', 'checked_in']
+        ).count() if total_rooms > 0 else 0
+        occ_pct = round(booked / total_rooms * 100, 1) if total_rooms > 0 else 0
+
+        # Dynamic pricing multiplier
+        dp_info = {'combined_multiplier': 1.0, 'occupancy_multiplier': 1.0,
+                   'event_multiplier': 1.0, 'event_name': None}
+        try:
+            dp_svc = DynamicPricingService(self.hotel)
+            dp_result = dp_svc.get_multiplier(target_date, version)
+            dp_info = {
+                'combined_multiplier': float(dp_result.get('combined_multiplier', 1)),
+                'occupancy_multiplier': float(dp_result.get('occupancy_multiplier', 1)),
+                'event_multiplier': float(dp_result.get('event_multiplier', 1)),
+                'event_name': dp_result.get('event_name'),
+                'band_label': dp_result.get('band_label', ''),
+                'window_label': dp_result.get('window_label', ''),
+                'days_out': dp_result.get('days_out', 0),
+            }
+        except Exception:
+            pass
+
+        dp_multiplier = Decimal(str(dp_info['combined_multiplier']))
+
+        # Build rate card
+        rate_card = []
+
+        for room in room_types:
+            room_base = room.get_effective_base_rate()
+
+            # Apply season index + room type season modifier
+            if season:
+                effective_season_index = room.get_effective_season_index(season)
+                seasonal_rate = (room_base * effective_season_index).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP)
+            else:
+                effective_season_index = Decimal('1.00')
+                seasonal_rate = room_base
+
+            # Apply dynamic pricing multiplier
+            dp_rate = (seasonal_rate * dp_multiplier).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+            room_channels = []
+            for channel in channels:
+                channel_rate_plans = []
+
+                for rp in rate_plans:
+                    # Build context for modifier lookup
+                    context = {
+                        'season': season,
+                        'season_id': season.id if season else None,
+                        'room_type': room,
+                        'room_type_id': room.id,
+                        'channel': channel,
+                        'channel_id': channel.id,
+                    }
+
+                    modifiers = self.get_applicable_modifiers(context)
+
+                    result = self.calculate_rate(
+                        bar_rate=dp_rate,
+                        modifiers=modifiers,
+                        meal_plan_amount=rp.meal_supplement,
+                        pax=pax,
+                    )
+
+                    channel_rate_plans.append({
+                        'rate_plan_id': rp.id,
+                        'rate_plan_name': rp.name,
+                        'meal_supplement': float(rp.meal_supplement),
+                        'room_rate': float(result['adjusted_room_rate']),
+                        'meal_total': float(result['meal_plan_total']),
+                        'subtotal': float(result['subtotal']),
+                        'service_charge': float(result['service_charge']),
+                        'tax': float(result['tax_amount']),
+                        'final_rate': float(result['final_rate']),
+                        'warnings': result['warnings'],
+                    })
+
+                room_channels.append({
+                    'channel_id': channel.id,
+                    'channel_name': channel.name,
+                    'rate_plans': channel_rate_plans,
+                })
+
+            rate_card.append({
+                'room_type_id': room.id,
+                'room_type_name': room.name,
+                'number_of_rooms': room.number_of_rooms,
+                'base_rate': float(room_base),
+                'seasonal_rate': float(seasonal_rate),
+                'dp_rate': float(dp_rate),
+                'season_index': float(effective_season_index),
+                'channels': room_channels,
+            })
+
+        return {
+            'target_date': target_date.isoformat(),
+            'season': season_info,
+            'occupancy': {
+                'booked': booked,
+                'total': total_rooms,
+                'pct': occ_pct,
+            },
+            'dynamic_pricing': dp_info,
+            'room_types': rate_card,
+            'channels': [{'id': c.id, 'name': c.name} for c in channels],
+            'rate_plans': [{'id': rp.id, 'name': rp.name, 'meal_supplement': float(rp.meal_supplement)} for rp in rate_plans],
+            'service_charge_percent': float(self.service_charge_percent),
+            'tax_percent': float(self.tax_percent),
+            'currency': self.hotel.currency_symbol,
+        }
+
     # =============================================================================
     # HELPER FUNCTIONS
     # =============================================================================

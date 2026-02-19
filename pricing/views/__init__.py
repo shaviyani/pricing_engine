@@ -27,6 +27,10 @@ from .pricing import (
     PricingMatrixView,
     PricingMatrixPDFView,
     PricingMatrixChannelView,
+    RateLookupView,
+    RateLookupAPIView,
+    ItineraryQuoteAPIView,
+    AgentRatesView,
     DateRateOverrideCalendarView,
     parity_data_ajax,
     update_room,
@@ -49,6 +53,7 @@ from .forecasts import (
     forecast_month_detail_ajax,
     revenue_forecast_ajax,
     pickup_summary_ajax,
+    occupancy_calendar_ajax,
 )
 
 # Admin / Management views
@@ -119,4 +124,7 @@ from .admin_views import (
     ReservationUpdateView,
     ReservationDeleteView,
     ReservationBulkDeleteView,
+    # Room Type Mapping
+    RoomTypeMappingListView,
+    RoomTypeMappingUpdateView,
 )

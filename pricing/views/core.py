@@ -265,122 +265,72 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
         context['recent_reservations'] = Reservation.objects.filter(
             hotel=prop
         ).select_related('guest', 'room_type', 'channel').order_by('-booking_date')[:10]
-        
-        # Rate parity summary
-        self._add_parity_context(context, prop, qs)
-        
+
+        # Monthly Revenue & Occupancy Snapshot (next 12 months)
+        today = date.today()
+        total_rooms = sum(rt.number_of_rooms for rt in qs['rooms'])
+        monthly_snapshot = []
+        snapshot_totals = {'revenue': 0, 'room_nights': 0, 'available': 0, 'bookings': 0}
+
+        for i in range(12):
+            m = today.month + i
+            y = today.year + (m - 1) // 12
+            m = ((m - 1) % 12) + 1
+            _, days = calendar.monthrange(y, m)
+            month_start = date(y, m, 1)
+            month_end = date(y, m, days)
+
+            stats = Reservation.objects.filter(
+                hotel=prop,
+                arrival_date__gte=month_start,
+                arrival_date__lte=month_end,
+                status__in=['confirmed', 'checked_in', 'checked_out']
+            ).aggregate(
+                room_nights=Sum('nights'),
+                revenue=Sum('total_amount'),
+                bookings=Count('id'),
+            )
+
+            rn = stats['room_nights'] or 0
+            rev = float(stats['revenue'] or 0)
+            bk = stats['bookings'] or 0
+            available = total_rooms * days
+            occ = round(rn / available * 100, 1) if available > 0 else 0
+            adr = round(rev / rn, 2) if rn > 0 else 0
+
+            monthly_snapshot.append({
+                'month_name': month_start.strftime('%b'),
+                'month_full': month_start.strftime('%B %Y'),
+                'year': y,
+                'month': m,
+                'revenue': rev,
+                'room_nights': rn,
+                'available': available,
+                'occupancy': occ,
+                'adr': adr,
+                'bookings': bk,
+            })
+            snapshot_totals['revenue'] += rev
+            snapshot_totals['room_nights'] += rn
+            snapshot_totals['available'] += available
+            snapshot_totals['bookings'] += bk
+
+        snapshot_totals['occupancy'] = round(
+            snapshot_totals['room_nights'] / snapshot_totals['available'] * 100, 1
+        ) if snapshot_totals['available'] > 0 else 0
+        snapshot_totals['adr'] = round(
+            snapshot_totals['revenue'] / snapshot_totals['room_nights'], 2
+        ) if snapshot_totals['room_nights'] > 0 else 0
+
+        context['monthly_snapshot'] = monthly_snapshot
+        context['snapshot_totals'] = snapshot_totals
+        context['total_rooms'] = total_rooms
+        context['snapshot_json'] = json.dumps(monthly_snapshot)
+        context['today_year'] = today.year
+        context['today_month'] = today.month
+
         return context
     
-    def _add_parity_context(self, context, prop, qs):
-        """Calculate rate parity summary for the property."""
-        parity_data = []
-        parity_season = None
-        parity_room = None
-        parity_rate_plan = None
-        bar_rate = None
-        
-        try:
-            seasons = qs['seasons']
-            rooms = qs['rooms']
-            channels = qs['channels']
-            rate_plans = qs['rate_plans']
-            
-            all_seasons = list(seasons)
-            context['all_seasons'] = all_seasons
-            
-            # Check we have data
-            if not all([seasons.exists(), rooms.exists(), channels.exists(), rate_plans.exists()]):
-                context['parity_data'] = []
-                return
-            
-            # Get selected or default season
-            selected_season_id = self.request.GET.get('parity_season')
-            if selected_season_id:
-                try:
-                    parity_season = seasons.get(id=selected_season_id)
-                except (Season.DoesNotExist, ValueError):
-                    parity_season = seasons.first()
-            else:
-                parity_season = seasons.first()
-            
-            parity_room = rooms.first()
-            parity_rate_plan = rate_plans.first()
-            
-            # Calculate BAR (Best Available Rate - no discounts)
-            bar_rate, _ = calculate_final_rate_with_modifier(
-                room_base_rate=parity_room.get_effective_base_rate(),
-                season_index=parity_season.season_index,
-                meal_supplement=parity_rate_plan.meal_supplement,
-                channel_base_discount=Decimal('0.00'),
-                modifier_discount=Decimal('0.00'),
-                commission_percent=Decimal('0.00'),
-                occupancy=2,
-                apply_ceiling=True,
-                ceiling_increment=5
-            )
-            
-            # Calculate rate for each channel
-            for channel in channels:
-                # Get standard modifier discount for this channel/season
-                # RateModifier is shared (linked to global Channel)
-                season_discount = Decimal('0.00')
-                modifiers = RateModifier.objects.filter(
-                    channel=channel,
-                    active=True
-                )
-                if modifiers.exists():
-                    # Try to get standard (0% discount) modifier first
-                    modifier = modifiers.filter(discount_percent=0).first()
-                    if not modifier:
-                        modifier = modifiers.first()
-                    season_discount = modifier.get_discount_for_season(parity_season)
-                
-                channel_rate, breakdown = calculate_final_rate_with_modifier(
-                    room_base_rate=parity_room.get_effective_base_rate(),
-                    season_index=parity_season.season_index,
-                    meal_supplement=parity_rate_plan.meal_supplement,
-                    channel_base_discount=channel.base_discount_percent,
-                    modifier_discount=season_discount,
-                    commission_percent=channel.commission_percent,
-                    occupancy=2,
-                    apply_ceiling=True,
-                    ceiling_increment=5
-                )
-                
-                difference = channel_rate - bar_rate
-                difference_percent = (difference / bar_rate * 100) if bar_rate > 0 else Decimal('0.00')
-                
-                # Determine parity status
-                if abs(difference_percent) < Decimal('1.0'):
-                    status = 'good'
-                    status_text = 'At Parity'
-                elif difference_percent < 0:
-                    status = 'warning'
-                    status_text = 'Below BAR'
-                else:
-                    status = 'info'
-                    status_text = 'Above BAR'
-                
-                parity_data.append({
-                    'channel': channel,
-                    'rate': channel_rate,
-                    'bar_rate': bar_rate,
-                    'difference': difference,
-                    'difference_percent': difference_percent,
-                    'status': status,
-                    'status_text': status_text,
-                    'net_revenue': breakdown['net_revenue'],
-                })
-        
-        except Exception as e:
-            logger.exception("Error calculating rate parity")
-            parity_data = []
-        
-        context['parity_data'] = parity_data
-        context['parity_season'] = parity_season
-        context['parity_room'] = parity_room
-        context['parity_rate_plan'] = parity_rate_plan
-        context['bar_rate'] = bar_rate
 
 
 # =============================================================================

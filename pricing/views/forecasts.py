@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.shortcuts import render, redirect, get_object_or_404
+from django.template.loader import render_to_string
 from django.views.generic import TemplateView, View
 from django.views.decorators.http import require_GET
 from django.http import JsonResponse
@@ -562,9 +563,10 @@ def pickup_summary_ajax(request, org_code, prop_code):
         org = get_object_or_404(Organization, code=org_code, is_active=True)
         prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
         
-        service = PickupAnalysisService(hotel=prop)
-        
-        has_data = MonthlyPickupSnapshot.objects.filter(hotel=prop).exists()
+        service = PickupAnalysisService(property=prop)
+
+        has_data = (MonthlyPickupSnapshot.objects.filter(hotel=prop).exists()
+                    or Reservation.objects.filter(hotel=prop).exists())
         
         if not has_data:
             html = render_to_string('pricing/partials/pickup_summary.html', {
@@ -613,3 +615,135 @@ def pickup_summary_ajax(request, org_code, prop_code):
         logger.exception("Pickup summary AJAX error")
         return JsonResponse({'success': False, 'message': str(e)}, status=500)
 
+
+@require_GET
+def occupancy_calendar_ajax(request, org_code, prop_code):
+    """
+    AJAX endpoint for per-day occupancy calendar data.
+
+    Query params: year (int), month (int 1-12)
+    Returns JSON with per-day rooms occupied, occupancy %, season info,
+    plus monthly forecast occupancy as a header reference.
+    """
+    try:
+        org = get_object_or_404(Organization, code=org_code, is_active=True)
+        prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+
+        today = date.today()
+
+        try:
+            year = int(request.GET.get('year', today.year))
+            month = int(request.GET.get('month', today.month))
+            if month < 1 or month > 12:
+                month = today.month
+        except (ValueError, TypeError):
+            year, month = today.year, today.month
+
+        # Month boundaries
+        _, last_day = calendar.monthrange(year, month)
+        first_date = date(year, month, 1)
+        last_date = date(year, month, last_day)
+
+        # Total rooms from RoomType sum
+        total_rooms = sum(
+            rt.number_of_rooms
+            for rt in RoomType.objects.filter(hotel=prop)
+        )
+        if total_rooms == 0:
+            total_rooms = prop.total_rooms or 1
+
+        # Build per-day occupancy map (same logic as calendar_rates_ajax)
+        occupancy_map = {}
+        reservations = Reservation.objects.filter(
+            hotel=prop,
+            status__in=['confirmed', 'checked_in', 'checked_out'],
+            arrival_date__lte=last_date,
+            departure_date__gt=first_date,
+        ).values('arrival_date', 'departure_date')
+
+        for res in reservations:
+            current = res['arrival_date']
+            while current < res['departure_date']:
+                if first_date <= current <= last_date:
+                    occupancy_map[current] = occupancy_map.get(current, 0) + 1
+                current += timedelta(days=1)
+
+        # Build season map for the month
+        seasons = Season.objects.filter(
+            hotel=prop,
+            start_date__lte=last_date,
+            end_date__gte=first_date,
+        )
+        season_map = {}
+        for season in seasons:
+            s_start = max(season.start_date, first_date)
+            s_end = min(season.end_date, last_date)
+            cur = s_start
+            while cur <= s_end:
+                season_map[cur] = {
+                    'name': season.name,
+                    'type': season.season_type,
+                }
+                cur += timedelta(days=1)
+
+        # Build per-day response
+        days_data = {}
+        current_date = first_date
+        while current_date <= last_date:
+            date_str = current_date.strftime('%Y-%m-%d')
+            rooms_occupied = occupancy_map.get(current_date, 0)
+            occupancy_pct = round(rooms_occupied / total_rooms * 100, 1) if total_rooms > 0 else 0
+            season_info = season_map.get(current_date)
+
+            days_data[date_str] = {
+                'day': current_date.day,
+                'weekday': current_date.weekday(),  # 0=Monday
+                'rooms_occupied': rooms_occupied,
+                'total_rooms': total_rooms,
+                'occupancy_percent': occupancy_pct,
+                'season_name': season_info['name'] if season_info else None,
+                'season_type': season_info['type'] if season_info else None,
+                'is_today': current_date == today,
+                'is_past': current_date < today,
+            }
+            current_date += timedelta(days=1)
+
+        # Monthly forecast (optional — shown in header)
+        forecast_occupancy = None
+        forecast_room_nights = None
+        try:
+            service = PickupAnalysisService(property=prop)
+            target_month = date(year, month, 1)
+            forecast = service.generate_forecast(target_month)
+            if forecast:
+                forecast_occupancy = forecast.get('forecast_occupancy')
+                forecast_room_nights = forecast.get('forecast_room_nights')
+        except Exception:
+            pass
+
+        # Prev / next month
+        if month == 1:
+            prev_year, prev_month = year - 1, 12
+        else:
+            prev_year, prev_month = year, month - 1
+        if month == 12:
+            next_year, next_month = year + 1, 1
+        else:
+            next_year, next_month = year, month + 1
+
+        return JsonResponse({
+            'success': True,
+            'year': year,
+            'month': month,
+            'month_name': first_date.strftime('%B %Y'),
+            'total_rooms': total_rooms,
+            'forecast_occupancy': forecast_occupancy,
+            'forecast_room_nights': forecast_room_nights,
+            'days': days_data,
+            'prev': {'year': prev_year, 'month': prev_month},
+            'next': {'year': next_year, 'month': next_month},
+        })
+
+    except Exception as e:
+        logger.exception("Occupancy calendar AJAX error")
+        return JsonResponse({'success': False, 'message': str(e)}, status=500)

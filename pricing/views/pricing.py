@@ -2654,3 +2654,336 @@ from datetime import datetime
 import json
 
 
+# =============================================================================
+# RATE LOOKUP (Operational - Front Desk / Sales)
+# =============================================================================
+
+class RateLookupView(PropertyMixin, TemplateView):
+    """
+    Read-only rate card for a specific date.
+
+    Shows all room types × channels × rate plans with final rates
+    including dynamic pricing, seasonal adjustments, and taxes.
+
+    URL: /org/{org_code}/{prop_code}/rates/
+    """
+    template_name = 'pricing/rates/lookup.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        prop = context['property']
+
+        # Get target date from query param or default to today
+        date_str = self.request.GET.get('date')
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                target_date = date.today()
+        else:
+            target_date = date.today()
+
+        context['target_date'] = target_date
+
+        service = PricingService(prop)
+        rate_card = service.get_rate_card(target_date)
+
+        context['rate_card'] = rate_card
+        context['rate_card_json'] = json.dumps(rate_card)
+
+        return context
+
+
+class RateLookupAPIView(PropertyMixin, View):
+    """
+    AJAX endpoint for rate card data.
+
+    GET /org/{org_code}/{prop_code}/api/rate-card/?date=2026-03-15
+    """
+
+    def get(self, request, *args, **kwargs):
+        prop = self.get_property()
+
+        date_str = request.GET.get('date')
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return JsonResponse({'error': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
+        else:
+            target_date = date.today()
+
+        service = PricingService(prop)
+        rate_card = service.get_rate_card(target_date)
+
+        return JsonResponse({'success': True, 'data': rate_card})
+
+
+class ItineraryQuoteAPIView(PropertyMixin, View):
+    """
+    AJAX endpoint for multi-night itinerary quote.
+
+    GET /org/{org_code}/{prop_code}/api/itinerary-quote/
+        ?checkin=2026-02-17&checkout=2026-02-20&room_type=1&channel=1&rate_plan=1&pax=2
+    """
+
+    def get(self, request, *args, **kwargs):
+        prop = self.get_property()
+
+        # Parse and validate inputs
+        checkin_str = request.GET.get('checkin')
+        checkout_str = request.GET.get('checkout')
+        room_type_id = request.GET.get('room_type')
+        channel_id = request.GET.get('channel')
+        rate_plan_id = request.GET.get('rate_plan')
+        pax = int(request.GET.get('pax', 2))
+
+        if not all([checkin_str, checkout_str, room_type_id, channel_id, rate_plan_id]):
+            return JsonResponse({'error': 'Missing required parameters.'}, status=400)
+
+        try:
+            checkin = datetime.strptime(checkin_str, '%Y-%m-%d').date()
+            checkout = datetime.strptime(checkout_str, '%Y-%m-%d').date()
+        except ValueError:
+            return JsonResponse({'error': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
+
+        if checkout <= checkin:
+            return JsonResponse({'error': 'Check-out must be after check-in.'}, status=400)
+
+        num_nights = (checkout - checkin).days
+        if num_nights > 30:
+            return JsonResponse({'error': 'Maximum 30 nights per quote.'}, status=400)
+
+        room_type_id = int(room_type_id)
+        channel_id = int(channel_id)
+        rate_plan_id = int(rate_plan_id)
+
+        service = PricingService(prop)
+        nights = []
+        totals = {
+            'room_total': 0, 'meal_total': 0, 'sc_total': 0,
+            'tax_total': 0, 'grand_total': 0,
+        }
+        room_type_name = ''
+        channel_name = ''
+        rate_plan_name = ''
+
+        current = checkin
+        while current < checkout:
+            card = service.get_rate_card(current, pax=pax)
+
+            # Find matching room type
+            room_data = None
+            for rt in card['room_types']:
+                if rt['room_type_id'] == room_type_id:
+                    room_data = rt
+                    room_type_name = rt['room_type_name']
+                    break
+
+            if not room_data:
+                return JsonResponse({
+                    'error': f'Room type {room_type_id} not found.'
+                }, status=400)
+
+            # Find matching channel
+            ch_data = None
+            for ch in room_data['channels']:
+                if ch['channel_id'] == channel_id:
+                    ch_data = ch
+                    channel_name = ch['channel_name']
+                    break
+
+            if not ch_data:
+                return JsonResponse({
+                    'error': f'Channel {channel_id} not found.'
+                }, status=400)
+
+            # Find matching rate plan
+            rp_data = None
+            for rp in ch_data['rate_plans']:
+                if rp['rate_plan_id'] == rate_plan_id:
+                    rp_data = rp
+                    rate_plan_name = rp['rate_plan_name']
+                    break
+
+            if not rp_data:
+                return JsonResponse({
+                    'error': f'Rate plan {rate_plan_id} not found.'
+                }, status=400)
+
+            night_info = {
+                'date': current.isoformat(),
+                'date_display': current.strftime('%a, %b %d'),
+                'season': card['season']['name'] if card['season'] else 'No season',
+                'dp_multiplier': card['dynamic_pricing']['combined_multiplier'],
+                'room_rate': rp_data['room_rate'],
+                'meal': rp_data['meal_total'],
+                'service_charge': rp_data['service_charge'],
+                'tax': rp_data['tax'],
+                'final_rate': rp_data['final_rate'],
+            }
+            nights.append(night_info)
+
+            totals['room_total'] += rp_data['room_rate']
+            totals['meal_total'] += rp_data['meal_total']
+            totals['sc_total'] += rp_data['service_charge']
+            totals['tax_total'] += rp_data['tax']
+            totals['grand_total'] += rp_data['final_rate']
+
+            current += timedelta(days=1)
+
+        # Round totals
+        for k in totals:
+            totals[k] = round(totals[k], 2)
+
+        totals['nights'] = num_nights
+
+        return JsonResponse({
+            'success': True,
+            'data': {
+                'checkin': checkin.isoformat(),
+                'checkout': checkout.isoformat(),
+                'room_type_name': room_type_name,
+                'channel_name': channel_name,
+                'rate_plan_name': rate_plan_name,
+                'pax': pax,
+                'nights': nights,
+                'totals': totals,
+                'currency': prop.currency_symbol,
+                'service_charge_percent': float(prop.service_charge_percent),
+                'tax_percent': float(prop.tax_percent),
+            }
+        })
+
+
+class AgentRatesView(PropertyMixin, TemplateView):
+    """
+    Agent rate card for the full year, organized by season.
+
+    Shows all room types × rate plans with agent-specific rates per season,
+    terms & conditions, last update date, and an itinerary builder.
+
+    URL: /org/{org_code}/{prop_code}/agent-rates/
+    """
+    template_name = 'pricing/rates/agent_rates.html'
+
+    def get_context_data(self, **kwargs):
+        from pricing.services import calculate_final_rate
+
+        context = super().get_context_data(**kwargs)
+        prop = context['property']
+
+        qs = self.get_property_querysets(prop)
+        all_seasons = list(qs['seasons'])
+        rooms = list(qs['rooms'])
+        rate_plans = list(qs['rate_plans'])
+        channels = qs['channels']
+        version = qs['version']
+
+        # Determine selected year and filter seasons that overlap with it
+        available_years = sorted({
+            y for s in all_seasons
+            for y in range(s.start_date.year, s.end_date.year + 1)
+        })
+        selected_year = self.request.GET.get('year')
+        try:
+            selected_year = int(selected_year)
+            if selected_year not in available_years:
+                selected_year = date.today().year
+        except (TypeError, ValueError):
+            selected_year = date.today().year
+
+        seasons = [
+            s for s in all_seasons
+            if s.start_date.year == selected_year or s.end_date.year == selected_year
+        ]
+
+        # Find agent channel
+        agent_channel = channels.filter(name__icontains='agent').first()
+        if not agent_channel:
+            agent_channel = channels.order_by('-commission_percent').first()
+
+        if not agent_channel or not seasons or not rooms:
+            context['has_data'] = False
+            return context
+
+        context['has_data'] = True
+
+        # Get active modifiers for agent channel
+        modifiers = RateModifier.objects.filter(
+            channel=agent_channel, active=True
+        ).order_by('sort_order')
+        standard_modifier = modifiers.filter(discount_percent=0).first()
+        if not standard_modifier:
+            standard_modifier = modifiers.filter(name__icontains='standard').first()
+        if not standard_modifier:
+            standard_modifier = modifiers.first()
+
+        # Build rate matrix: room → rate_plan → season → rate
+        matrix = []
+        for room in rooms:
+            room_plans = []
+            for rp in rate_plans:
+                season_rates = []
+                for season in seasons:
+                    modifier_discount = Decimal('0')
+                    if standard_modifier:
+                        modifier_discount = standard_modifier.get_discount_for_season(season)
+
+                    rt_season_mod = room.get_season_modifier(season)
+
+                    final_rate, breakdown = calculate_final_rate(
+                        room_base_rate=room.get_effective_base_rate(),
+                        season_index=season.season_index,
+                        meal_supplement=rp.meal_supplement,
+                        channel_base_discount=agent_channel.base_discount_percent,
+                        modifier_discount=modifier_discount,
+                        commission_percent=Decimal('0'),  # Show net rate before commission
+                        occupancy=2,
+                        apply_ceiling=True,
+                        ceiling_increment=5,
+                        room_type_season_modifier=rt_season_mod,
+                    )
+                    season_rates.append({
+                        'season_id': season.id,
+                        'final_rate': float(final_rate),
+                    })
+                room_plans.append({
+                    'rate_plan_id': rp.id,
+                    'rate_plan_name': rp.name,
+                    'meal_supplement': float(rp.meal_supplement),
+                    'season_rates': season_rates,
+                })
+            matrix.append({
+                'room_type_id': room.id,
+                'room_type_name': room.name,
+                'number_of_rooms': room.number_of_rooms,
+                'base_rate': float(room.get_effective_base_rate()),
+                'rate_plans': room_plans,
+            })
+
+        # Last updated
+        last_updated = None
+        if version:
+            last_updated = version.updated_at if hasattr(version, 'updated_at') else version.created_at if hasattr(version, 'created_at') else None
+        if not last_updated:
+            last_updated = timezone.now()
+
+        context['agent_channel'] = agent_channel
+        context['seasons'] = seasons
+        context['rooms'] = rooms
+        context['rate_plans'] = rate_plans
+        context['matrix'] = matrix
+        context['matrix_json'] = json.dumps(matrix)
+        context['seasons_json'] = json.dumps([{
+            'id': s.id, 'name': s.name, 'type': s.season_type,
+            'start_date': s.start_date.isoformat(), 'end_date': s.end_date.isoformat(),
+        } for s in seasons])
+        context['rate_plans_json'] = json.dumps([{
+            'id': rp.id, 'name': rp.name, 'meal_supplement': float(rp.meal_supplement),
+        } for rp in rate_plans])
+        context['last_updated'] = last_updated
+        context['current_year'] = selected_year
+        context['available_years'] = available_years
+
+        return context

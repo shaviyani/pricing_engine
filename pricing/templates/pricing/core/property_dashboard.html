@@ -5,18 +5,18 @@
 
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-    
+
     <!-- Header -->
     <div class="mb-8">
         <div class="flex items-center justify-between">
             <div>
                 <h1 class="text-3xl font-bold text-gray-900">{{ prop.name }}</h1>
                 <p class="mt-1 text-sm text-gray-500">
-                    {{ prop.location|default:"Property Dashboard" }} • {{ prop.total_rooms }} rooms
+                    {{ prop.location|default:"Property Dashboard" }} • {{ total_rooms }} rooms
                 </p>
             </div>
             <div class="flex items-center space-x-3">
-                <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}" 
+                <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}"
                    class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
@@ -57,7 +57,7 @@
                     </svg>
                 </div>
             </div>
-            <p class="mt-2 text-xs text-gray-500">{{ stats.room_inventory|intcomma }} total rooms</p>
+            <p class="mt-2 text-xs text-gray-500">{{ total_rooms|intcomma }} total rooms</p>
         </div>
 
         <!-- Rate Plans -->
@@ -91,129 +91,165 @@
         </div>
     </div>
 
-    <!-- Main Content Grid -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        <!-- Left Column: Rate Parity & Quick Links -->
-        <div class="lg:col-span-2 space-y-6">
-            
-            <!-- Rate Parity Card -->
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200">
-                <div class="px-6 py-4 border-b border-gray-100">
-                    <div class="flex items-center justify-between">
-                        <h2 class="text-lg font-semibold text-gray-900">Rate Parity</h2>
-                        {% if all_seasons %}
-                        <select id="parity-season-select" 
-                                class="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                                onchange="loadParityData()">
-                            {% for season in all_seasons %}
-                            <option value="{{ season.id }}" {% if season.id == parity_season.id %}selected{% endif %}>
-                                {{ season.name }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                        {% endif %}
-                    </div>
-                    {% if parity_season and parity_room and parity_rate_plan %}
-                    <p class="mt-1 text-sm text-gray-500">
-                        {{ parity_room.name }} • {{ parity_rate_plan.name }} • BAR: ${{ bar_rate|floatformat:2|intcomma }}
-                    </p>
-                    {% endif %}
+    <!-- 12-Month Revenue & Occupancy Snapshot -->
+    {% if monthly_snapshot %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-8">
+        <div class="px-6 py-4 border-b border-gray-100">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">12-Month Revenue & Occupancy</h2>
+                    <p class="mt-1 text-sm text-gray-500">On-the-books for the next 12 months ({{ total_rooms }} rooms)</p>
                 </div>
-                
-                <div id="parity-content" class="p-6">
-                    {% if parity_data %}
-                    <div class="overflow-x-auto">
-                        <table class="min-w-full">
-                            <thead>
-                                <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    <th class="pb-3">Channel</th>
-                                    <th class="pb-3 text-right">Rate</th>
-                                    <th class="pb-3 text-right">vs BAR</th>
-                                    <th class="pb-3 text-right">Net Revenue</th>
-                                    <th class="pb-3 text-center">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-100">
-                                {% for item in parity_data %}
-                                <tr class="hover:bg-gray-50">
-                                    <td class="py-3">
-                                        <span class="font-medium text-gray-900">{{ item.channel.name }}</span>
-                                    </td>
-                                    <td class="py-3 text-right">
-                                        <span class="font-semibold text-gray-900">${{ item.rate|floatformat:2|intcomma }}</span>
-                                    </td>
-                                    <td class="py-3 text-right">
-                                        {% if item.difference < 0 %}
-                                        <span class="text-red-600">-${{ item.abs_difference|floatformat:2|intcomma }}</span>
-                                        {% elif item.difference > 0 %}
-                                        <span class="text-green-600">+${{ item.difference|floatformat:2|intcomma }}</span>
-                                        {% else %}
-                                        <span class="text-gray-500">$0.00</span>
-                                        {% endif %}
-                                        <span class="text-xs text-gray-400 ml-1">
-                                            ({% if item.difference_percent >= 0 %}+{% endif %}{{ item.difference_percent|floatformat:1 }}%)
-                                        </span>
-                                    </td>
-                                    <td class="py-3 text-right">
-                                        <span class="text-gray-600">${{ item.net_revenue|floatformat:2|intcomma }}</span>
-                                    </td>
-                                    <td class="py-3 text-center">
-                                        {% if item.status == 'good' %}
-                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                            {{ item.status_text }}
-                                        </span>
-                                        {% elif item.status == 'warning' %}
-                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                            {{ item.status_text }}
-                                        </span>
-                                        {% else %}
-                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                            {{ item.status_text }}
-                                        </span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    {% else %}
-                    <div class="text-center py-8">
-                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
-                        </svg>
-                        <p class="mt-2 text-sm text-gray-500">No rate data available. Please set up seasons, rooms, rate plans, and channels.</p>
-                    </div>
-                    {% endif %}
+                <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}"
+                   class="text-sm text-blue-600 hover:text-blue-800">Full Analysis &rarr;</a>
+            </div>
+        </div>
+
+        <!-- Chart -->
+        <div class="px-6 pt-4 pb-2">
+            <div style="height: 240px;">
+                <canvas id="snapshotChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="overflow-x-auto">
+            <table class="min-w-full">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Month</th>
+                        <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Revenue</th>
+                        <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Room Nights</th>
+                        <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Occupancy</th>
+                        <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">ADR</th>
+                        <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Bookings</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for m in monthly_snapshot %}
+                    <tr class="{% if m.room_nights > 0 %}hover:bg-gray-50{% else %}text-gray-400{% endif %}">
+                        <td class="px-4 py-3 text-sm font-medium {% if m.room_nights > 0 %}text-gray-900{% endif %}">{{ m.month_full }}</td>
+                        <td class="px-4 py-3 text-sm text-right">
+                            {% if m.revenue > 0 %}
+                            <span class="font-medium text-gray-900">${{ m.revenue|floatformat:0|intcomma }}</span>
+                            {% else %}<span class="text-gray-400">&mdash;</span>{% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-right">
+                            {% if m.room_nights > 0 %}
+                            <span class="text-gray-900">{{ m.room_nights }}</span>
+                            <span class="text-gray-400 text-xs">/ {{ m.available }}</span>
+                            {% else %}<span class="text-gray-400">&mdash;</span>{% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-right">
+                            {% if m.occupancy > 0 %}
+                            <span class="font-medium {% if m.occupancy >= 70 %}text-green-600{% elif m.occupancy >= 40 %}text-amber-600{% else %}text-gray-600{% endif %}">
+                                {{ m.occupancy }}%
+                            </span>
+                            {% else %}<span class="text-gray-400">&mdash;</span>{% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-right">
+                            {% if m.adr > 0 %}
+                            <span class="text-gray-900">${{ m.adr|floatformat:2 }}</span>
+                            {% else %}<span class="text-gray-400">&mdash;</span>{% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-right">
+                            {% if m.bookings > 0 %}
+                            <span class="text-gray-600">{{ m.bookings }}</span>
+                            {% else %}<span class="text-gray-400">&mdash;</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    <!-- Total Row -->
+                    <tr class="bg-gray-50 font-semibold">
+                        <td class="px-4 py-3 text-sm text-gray-900">TOTAL</td>
+                        <td class="px-4 py-3 text-sm text-right text-green-600">${{ snapshot_totals.revenue|floatformat:0|intcomma }}</td>
+                        <td class="px-4 py-3 text-sm text-right text-gray-900">{{ snapshot_totals.room_nights|intcomma }}</td>
+                        <td class="px-4 py-3 text-sm text-right text-gray-900">{{ snapshot_totals.occupancy }}%</td>
+                        <td class="px-4 py-3 text-sm text-right text-gray-900">${{ snapshot_totals.adr|floatformat:2 }}</td>
+                        <td class="px-4 py-3 text-sm text-right text-gray-600">{{ snapshot_totals.bookings|intcomma }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Occupancy Calendar -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-8" id="occupancy-calendar-card">
+        <div class="px-6 py-4 border-b border-gray-100">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">Occupancy Calendar</h2>
+                    <p class="mt-1 text-sm text-gray-500" id="occ-cal-subtitle">Daily room occupancy</p>
+                </div>
+                <span id="occ-cal-forecast-badge" class="hidden inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"></span>
+            </div>
+        </div>
+
+        <div class="p-4 sm:p-6">
+            <!-- Month Navigation -->
+            <div class="flex items-center justify-between mb-4">
+                <button onclick="navigateOccCal('prev')"
+                        class="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                    <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                    </svg>
+                </button>
+                <h3 class="text-lg font-bold text-gray-900" id="occ-cal-month-title">Loading...</h3>
+                <button onclick="navigateOccCal('next')"
+                        class="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                    <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Legend -->
+            <div class="flex items-center gap-4 mb-4 text-xs text-gray-500 flex-wrap">
+                <div class="flex items-center gap-1">
+                    <span class="inline-block w-3 h-3 rounded-sm bg-red-500"></span> &lt;50%
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="inline-block w-3 h-3 rounded-sm bg-amber-500"></span> 50-80%
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="inline-block w-3 h-3 rounded-sm bg-green-500"></span> &gt;80%
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="inline-block w-3 h-3 rounded-sm bg-green-700"></span> Full
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="inline-block w-3 h-3 rounded-sm border-2 border-blue-500 bg-blue-50"></span> Today
                 </div>
             </div>
 
-            <!-- Revenue Forecast Card -->
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200">
-                <div class="px-6 py-4 border-b border-gray-100">
-                    <h2 class="text-lg font-semibold text-gray-900">Revenue Forecast</h2>
-                    <p class="mt-1 text-sm text-gray-500">Projected revenue based on channel distribution</p>
-                </div>
-                <div id="revenue-forecast-content" class="p-6">
-                    <div class="flex items-center justify-center py-8">
-                        <svg class="animate-spin h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <span class="ml-3 text-gray-500">Loading forecast...</span>
-                    </div>
+            <!-- Calendar Grid -->
+            <div id="occ-cal-grid" class="overflow-hidden rounded-lg border border-gray-200">
+                <div class="flex items-center justify-center py-12">
+                    <svg class="animate-spin h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="ml-3 text-gray-500">Loading calendar...</span>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Left Column -->
+        <div class="lg:col-span-2 space-y-6">
 
             <!-- Pickup Summary Card -->
             <div class="bg-white rounded-xl shadow-sm border border-gray-200">
                 <div class="px-6 py-4 border-b border-gray-100">
                     <div class="flex items-center justify-between">
                         <h2 class="text-lg font-semibold text-gray-900">Pickup Summary</h2>
-                        <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}" 
+                        <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}"
                            class="text-sm text-blue-600 hover:text-blue-800">
-                            View Details →
+                            View Details &rarr;
                         </a>
                     </div>
                 </div>
@@ -231,12 +267,12 @@
 
         <!-- Right Column: Quick Actions & Recent Reservations -->
         <div class="space-y-6">
-            
+
             <!-- Quick Actions -->
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h2 class="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
                 <div class="space-y-3">
-                    <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}" 
+                    <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}"
                        class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-blue-300 transition">
                         <div class="p-2 bg-blue-100 rounded-lg mr-3">
                             <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -248,8 +284,8 @@
                             <p class="text-xs text-gray-500">View all rates</p>
                         </div>
                     </a>
-                    
-                    <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" 
+
+                    <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}"
                        class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-green-300 transition">
                         <div class="p-2 bg-green-100 rounded-lg mr-3">
                             <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -261,8 +297,8 @@
                             <p class="text-xs text-gray-500">Revenue & occupancy</p>
                         </div>
                     </a>
-                    
-                    <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}" 
+
+                    <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}"
                        class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-purple-300 transition">
                         <div class="p-2 bg-purple-100 rounded-lg mr-3">
                             <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -274,8 +310,21 @@
                             <p class="text-xs text-gray-500">Booking pace & forecast</p>
                         </div>
                     </a>
-                    
-                    <a href="{% url 'admin:index' %}" 
+
+                    <a href="{% url 'pricing:agent_rates' org_code=org.code prop_code=prop.code %}"
+                       class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-teal-300 transition">
+                        <div class="p-2 bg-teal-100 rounded-lg mr-3">
+                            <svg class="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-sm font-medium text-gray-900">Agent Rates</p>
+                            <p class="text-xs text-gray-500">Rate card & quote builder</p>
+                        </div>
+                    </a>
+
+                    <a href="{% url 'pricing:manage_landing' org_code=org.code prop_code=prop.code %}"
                        class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-gray-400 transition">
                         <div class="p-2 bg-gray-100 rounded-lg mr-3">
                             <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -284,8 +333,8 @@
                             </svg>
                         </div>
                         <div>
-                            <p class="text-sm font-medium text-gray-900">Admin Panel</p>
-                            <p class="text-xs text-gray-500">Manage data</p>
+                            <p class="text-sm font-medium text-gray-900">Manage Property</p>
+                            <p class="text-xs text-gray-500">Settings & configuration</p>
                         </div>
                     </a>
                 </div>
@@ -306,7 +355,7 @@
                                 <p class="text-xs text-gray-500">{{ season.start_date|date:"M d" }} - {{ season.end_date|date:"M d, Y" }}</p>
                             </div>
                             <div class="text-right">
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
                                     {% if season.season_index >= 1.2 %}bg-red-100 text-red-800
                                     {% elif season.season_index >= 1.1 %}bg-amber-100 text-amber-800
                                     {% elif season.season_index <= 0.9 %}bg-blue-100 text-blue-800
@@ -328,9 +377,9 @@
                 <div class="px-6 py-4 border-b border-gray-100">
                     <div class="flex items-center justify-between">
                         <h2 class="text-lg font-semibold text-gray-900">Recent Reservations</h2>
-                        <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" 
+                        <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}"
                            class="text-sm text-blue-600 hover:text-blue-800">
-                            View All →
+                            View All &rarr;
                         </a>
                     </div>
                 </div>
@@ -373,247 +422,128 @@
 {% endblock %}
 
 {% block extra_js %}
-<!-- Chart.js CDN -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <script>
 // ============================================================================
-// REVENUE CHART INITIALIZATION
+// 12-MONTH SNAPSHOT CHART
 // ============================================================================
+{% if monthly_snapshot %}
+(function() {
+    var data = {{ snapshot_json|safe }};
+    var ctx = document.getElementById('snapshotChart');
+    if (!ctx) return;
 
-function initRevenueChart() {
-    console.log('Initializing revenue chart...');
-    
-    var dataScript = document.getElementById('forecast-chart-data');
-    if (!dataScript) {
-        console.log('No revenue chart data found');
-        return;
-    }
-    
-    try {
-        var chartData = JSON.parse(dataScript.textContent);
-        console.log('Chart data loaded:', chartData);
-        
-        var ctx = document.getElementById('revenueChart');
-        if (!ctx) {
-            console.error('Revenue chart canvas not found');
-            return;
-        }
-        
-        // Destroy existing chart if any
-        if (window.revenueChartInstance) {
-            window.revenueChartInstance.destroy();
-        }
-        
-        // Convert to numbers (safety check)
-        var grossRevenue = chartData.gross_revenue.map(function(v) { return Number(v); });
-        var netRevenue = chartData.net_revenue.map(function(v) { return Number(v); });
-        var commission = chartData.commission.map(function(v) { return Number(v); });
-        
-        // Calculate Y-axis max for proper scaling
-        var allValues = grossRevenue.concat(netRevenue, commission);
-        var maxValue = Math.max.apply(null, allValues);
-        var yAxisMax = Math.ceil(maxValue * 1.1 / 10000) * 10000; // Round up with 10% padding
-        
-        console.log('Max value:', maxValue, 'Y-axis max:', yAxisMax);
-        
-        // Create chart
-        window.revenueChartInstance = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: chartData.months,
-                datasets: [
-                    {
-                        label: 'Gross Revenue',
-                        data: grossRevenue,
-                        borderColor: 'rgb(34, 197, 94)',
-                        backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                        borderWidth: 2,
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 4,
-                        pointBackgroundColor: 'rgb(34, 197, 94)'
-                    },
-                    {
-                        label: 'Net Revenue',
-                        data: netRevenue,
-                        borderColor: 'rgb(59, 130, 246)',
-                        backgroundColor: 'transparent',
-                        borderWidth: 2,
-                        tension: 0.3,
-                        pointRadius: 4,
-                        pointBackgroundColor: 'rgb(59, 130, 246)'
-                    },
-                    {
-                        label: 'Commission',
-                        data: commission,
-                        borderColor: 'rgb(239, 68, 68)',
-                        backgroundColor: 'transparent',
-                        borderWidth: 2,
-                        borderDash: [5, 5],
-                        tension: 0.3,
-                        pointRadius: 3,
-                        pointBackgroundColor: 'rgb(239, 68, 68)'
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: {
-                    mode: 'index',
-                    intersect: false
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(function(m) { return m.month_name + ' ' + String(m.year).slice(2); }),
+            datasets: [
+                {
+                    label: 'Revenue ($)',
+                    data: data.map(function(m) { return m.revenue; }),
+                    backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                    borderRadius: 4,
+                    yAxisID: 'y',
+                    order: 2,
                 },
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            usePointStyle: true,
-                            padding: 20
-                        }
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        padding: 12,
-                        callbacks: {
-                            label: function(context) {
-                                return context.dataset.label + ': $' + 
-                                    context.parsed.y.toLocaleString('en-US', {
-                                        minimumFractionDigits: 0,
-                                        maximumFractionDigits: 0
-                                    });
+                {
+                    label: 'Occupancy (%)',
+                    data: data.map(function(m) { return m.occupancy; }),
+                    type: 'line',
+                    borderColor: 'rgb(34, 197, 94)',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 4,
+                    pointBackgroundColor: 'rgb(34, 197, 94)',
+                    tension: 0.3,
+                    fill: false,
+                    yAxisID: 'y1',
+                    order: 1,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { usePointStyle: true, padding: 16 }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    padding: 12,
+                    callbacks: {
+                        label: function(ctx) {
+                            if (ctx.dataset.yAxisID === 'y1') {
+                                return 'Occupancy: ' + ctx.parsed.y.toFixed(1) + '%';
                             }
+                            return 'Revenue: $' + ctx.parsed.y.toLocaleString('en-US', {maximumFractionDigits: 0});
                         }
                     }
-                },
-                scales: {
-                    y: {
-                        min: 0,
-                        max: yAxisMax,
-                        ticks: {
-                            callback: function(value) {
-                                return '$' + (value / 1000).toFixed(0) + 'k';
-                            },
-                            color: '#6b7280',
-                            font: { size: 11 },
-                            maxTicksLimit: 8
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    position: 'left',
+                    ticks: {
+                        callback: function(v) {
+                            if (v >= 1000) return '$' + (v / 1000).toFixed(0) + 'k';
+                            return '$' + v;
                         },
-                        grid: {
-                            color: 'rgba(0, 0, 0, 0.05)',
-                            drawBorder: true
-                        }
+                        color: '#6b7280',
+                        font: { size: 11 }
                     },
-                    x: {
-                        ticks: {
-                            color: '#6b7280',
-                            font: { size: 11 }
-                        },
-                        grid: {
-                            display: false
-                        }
-                    }
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                },
+                y1: {
+                    beginAtZero: true,
+                    max: 100,
+                    position: 'right',
+                    ticks: {
+                        callback: function(v) { return v + '%'; },
+                        color: '#22c55e',
+                        font: { size: 11 }
+                    },
+                    grid: { drawOnChartArea: false }
+                },
+                x: {
+                    ticks: { color: '#6b7280', font: { size: 11 } },
+                    grid: { display: false }
                 }
             }
-        });
-        
-        console.log('Revenue chart initialized successfully');
-    } catch (error) {
-        console.error('Error initializing revenue chart:', error);
-    }
-}
-
-// ============================================================================
-// PARITY DATA LOADING
-// ============================================================================
-
-function loadParityData() {
-    var seasonSelect = document.getElementById('parity-season-select');
-    if (!seasonSelect) return;
-    
-    var seasonId = seasonSelect.value;
-    var url = "{% url 'pricing:parity_data_ajax' org_code=org.code prop_code=prop.code %}?season=" + seasonId;
-    
-    fetch(url)
-        .then(function(response) { return response.json(); })
-        .then(function(data) {
-            if (data.success) {
-                document.getElementById('parity-content').innerHTML = data.html;
-            } else {
-                console.error('Parity load failed:', data.message);
-            }
-        })
-        .catch(function(error) {
-            console.error('Parity fetch error:', error);
-        });
-}
-
-// ============================================================================
-// REVENUE FORECAST LOADING
-// ============================================================================
-
-function loadRevenueForecast() {
-    var url = "{% url 'pricing:revenue_forecast_ajax' org_code=org.code prop_code=prop.code %}";
-    
-    fetch(url)
-        .then(function(response) { return response.json(); })
-        .then(function(data) {
-            if (data.success) {
-                if (data.has_data) {
-                    // Inject the HTML content
-                    document.getElementById('revenue-forecast-content').innerHTML = data.revenue_html;
-                    
-                    // Initialize chart after DOM updates (critical!)
-                    setTimeout(initRevenueChart, 100);
-                } else {
-                    document.getElementById('revenue-forecast-content').innerHTML = 
-                        '<div class="text-center py-8">' +
-                            '<svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
-                                '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>' +
-                            '</svg>' +
-                            '<p class="mt-2 text-sm text-gray-500">' + (data.message || 'No forecast data available.') + '</p>' +
-                        '</div>';
-                }
-            } else {
-                document.getElementById('revenue-forecast-content').innerHTML = 
-                    '<div class="text-center py-8 text-red-500">' +
-                        '<p>Error loading forecast: ' + data.message + '</p>' +
-                    '</div>';
-            }
-        })
-        .catch(function(error) {
-            console.error('Revenue forecast error:', error);
-            document.getElementById('revenue-forecast-content').innerHTML = 
-                '<div class="text-center py-8 text-red-500">' +
-                    '<p>Failed to load forecast data</p>' +
-                '</div>';
-        });
-}
+        }
+    });
+})();
+{% endif %}
 
 // ============================================================================
 // PICKUP SUMMARY LOADING
 // ============================================================================
-
 function loadPickupSummary() {
     var url = "{% url 'pricing:pickup_summary_ajax' org_code=org.code prop_code=prop.code %}";
-    
+
     fetch(url)
         .then(function(response) { return response.json(); })
         .then(function(data) {
             if (data.success) {
                 document.getElementById('pickup-summary-content').innerHTML = data.html;
             } else {
-                document.getElementById('pickup-summary-content').innerHTML = 
+                document.getElementById('pickup-summary-content').innerHTML =
                     '<div class="text-center py-8">' +
                         '<svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
                             '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>' +
                         '</svg>' +
-                        '<p class="mt-2 text-sm text-gray-500">No pickup data available yet.</p>' +
+                        '<p class="mt-2 text-sm text-gray-500">' + (data.message || 'No pickup data available yet.') + '</p>' +
                     '</div>';
             }
         })
         .catch(function(error) {
             console.error('Pickup summary error:', error);
-            document.getElementById('pickup-summary-content').innerHTML = 
+            document.getElementById('pickup-summary-content').innerHTML =
                 '<div class="text-center py-8 text-gray-500">' +
                     '<p>Unable to load pickup data</p>' +
                 '</div>';
@@ -621,12 +551,159 @@ function loadPickupSummary() {
 }
 
 // ============================================================================
-// INITIALIZE ON PAGE LOAD
+// OCCUPANCY CALENDAR
 // ============================================================================
+var occCalYear = {{ today_year }};
+var occCalMonth = {{ today_month }};
+var occCalPrev = null;
+var occCalNext = null;
+
+function loadOccupancyCalendar(year, month) {
+    var url = "{% url 'pricing:occupancy_calendar_ajax' org_code=org.code prop_code=prop.code %}"
+        + "?year=" + year + "&month=" + month;
+
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                renderOccupancyCalendar(data);
+            } else {
+                document.getElementById('occ-cal-grid').innerHTML =
+                    '<div class="text-center py-8 text-gray-500"><p>' +
+                    (data.message || 'Unable to load calendar') + '</p></div>';
+            }
+        })
+        .catch(function(err) {
+            console.error('Occupancy calendar error:', err);
+            document.getElementById('occ-cal-grid').innerHTML =
+                '<div class="text-center py-8 text-gray-500"><p>Unable to load calendar data</p></div>';
+        });
+}
+
+function renderOccupancyCalendar(data) {
+    occCalYear = data.year;
+    occCalMonth = data.month;
+    occCalPrev = data.prev;
+    occCalNext = data.next;
+
+    // Update header
+    document.getElementById('occ-cal-month-title').textContent = data.month_name;
+    document.getElementById('occ-cal-subtitle').textContent =
+        data.total_rooms + ' rooms' +
+        (data.forecast_occupancy !== null ? ' \u2022 Forecast: ' + data.forecast_occupancy + '% occupancy' : '');
+
+    var badge = document.getElementById('occ-cal-forecast-badge');
+    if (data.forecast_occupancy !== null) {
+        badge.textContent = 'Forecast: ' + data.forecast_occupancy + '%';
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
+
+    var html = '';
+    var dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    // Header row
+    html += '<div class="grid grid-cols-7 bg-gray-50 border-b border-gray-200">';
+    for (var i = 0; i < 7; i++) {
+        html += '<div class="px-1 py-2 text-center text-xs font-semibold text-gray-500 uppercase">' + dayNames[i] + '</div>';
+    }
+    html += '</div>';
+
+    // Find weekday of the 1st
+    var firstDateStr = data.year + '-' + String(data.month).padStart(2, '0') + '-01';
+    var firstDayData = data.days[firstDateStr];
+    var startWeekday = firstDayData ? firstDayData.weekday : 0;
+
+    var dateKeys = Object.keys(data.days).sort();
+
+    html += '<div class="grid grid-cols-7 gap-px bg-gray-200">';
+
+    // Empty cells before first day
+    for (var i = 0; i < startWeekday; i++) {
+        html += '<div class="bg-gray-50 min-h-[72px] sm:min-h-[92px]"></div>';
+    }
+
+    // Day cells
+    for (var d = 0; d < dateKeys.length; d++) {
+        var dateStr = dateKeys[d];
+        var day = data.days[dateStr];
+        var occ = day.occupancy_percent;
+
+        // Color (red=low, green=high)
+        var barColor;
+        if (occ >= 100) barColor = '#15803d';
+        else if (occ >= 80) barColor = '#22c55e';
+        else if (occ >= 50) barColor = '#f59e0b';
+        else barColor = '#ef4444';
+
+        var cellClass = day.is_today ? 'ring-2 ring-inset ring-blue-500 bg-blue-50' : 'bg-white';
+        if (day.is_past) cellClass += ' opacity-60';
+
+        html += '<div class="' + cellClass + ' min-h-[72px] sm:min-h-[92px] p-1.5 sm:p-2 flex flex-col relative group">';
+
+        // Day number
+        if (day.is_today) {
+            html += '<div class="flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold mb-0.5">' + day.day + '</div>';
+        } else {
+            html += '<div class="text-xs sm:text-sm font-semibold text-gray-700 mb-0.5">' + day.day + '</div>';
+        }
+
+        // Season name (desktop)
+        if (day.season_name) {
+            html += '<div class="hidden sm:block text-[9px] text-gray-400 truncate leading-tight" title="' + day.season_name + '">' + day.season_name + '</div>';
+        }
+
+        // Spacer
+        html += '<div class="mt-auto">';
+
+        // Rooms fraction
+        html += '<div class="text-[10px] sm:text-xs font-medium text-gray-600">' + day.rooms_occupied + '/' + day.total_rooms + '</div>';
+
+        // Occupancy bar
+        html += '<div class="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">';
+        html += '<div class="h-full rounded-full transition-all" style="width:' + Math.min(occ, 100) + '%;background:' + barColor + '"></div>';
+        html += '</div>';
+
+        // Percent (desktop)
+        html += '<div class="hidden sm:block text-[9px] text-gray-500 text-right mt-0.5">' + occ + '%</div>';
+
+        html += '</div>'; // mt-auto
+
+        // Tooltip
+        html += '<div class="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-gray-900 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap z-50 pointer-events-none shadow-lg">';
+        html += '<div class="font-semibold">' + dateStr + '</div>';
+        html += '<div>Rooms: ' + day.rooms_occupied + ' / ' + day.total_rooms + '</div>';
+        html += '<div>Occupancy: ' + occ + '%</div>';
+        if (day.season_name) html += '<div>Season: ' + day.season_name + '</div>';
+        html += '<div class="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>';
+        html += '</div>';
+
+        html += '</div>'; // day cell
+    }
+
+    // Trailing empty cells
+    var lastDateStr = dateKeys[dateKeys.length - 1];
+    var lastWeekday = data.days[lastDateStr].weekday;
+    for (var i = lastWeekday + 1; i < 7; i++) {
+        html += '<div class="bg-gray-50 min-h-[72px] sm:min-h-[92px]"></div>';
+    }
+
+    html += '</div>';
+
+    document.getElementById('occ-cal-grid').innerHTML = html;
+}
+
+function navigateOccCal(direction) {
+    var target = direction === 'prev' ? occCalPrev : occCalNext;
+    if (target) {
+        loadOccupancyCalendar(target.year, target.month);
+    }
+}
 
 document.addEventListener('DOMContentLoaded', function() {
-    loadRevenueForecast();
     loadPickupSummary();
+    loadOccupancyCalendar(occCalYear, occCalMonth);
 });
 </script>
 {% endblock %}

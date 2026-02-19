@@ -5,6 +5,10 @@ from pricing.views import (
     PricingMatrixView,
     PricingMatrixPDFView,
     PricingMatrixChannelView,
+    RateLookupView,
+    RateLookupAPIView,
+    ItineraryQuoteAPIView,
+    AgentRatesView,
     DateRateOverrideCalendarView,
     parity_data_ajax,
     update_room,
@@ -14,6 +18,16 @@ from pricing.views import (
 )
 
 urlpatterns = [
+    # Rate Lookup (operational - front desk, sales)
+    path('org/<slug:org_code>/<slug:prop_code>/rates/',
+         RateLookupView.as_view(), name='rate_lookup'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/rate-card/',
+         RateLookupAPIView.as_view(), name='rate_card_api'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/itinerary-quote/',
+         ItineraryQuoteAPIView.as_view(), name='itinerary_quote_api'),
+    path('org/<slug:org_code>/<slug:prop_code>/agent-rates/',
+         AgentRatesView.as_view(), name='agent_rates'),
+
     # Matrix views
     path('org/<slug:org_code>/<slug:prop_code>/matrix/',
          PricingMatrixView.as_view(), name='matrix'),

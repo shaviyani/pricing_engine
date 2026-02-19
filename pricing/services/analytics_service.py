@@ -905,7 +905,22 @@ class ReservationImportService:
                 if any(any(syn in rt_name_lower for syn in keywords_map[group]) for group in found_groups):
                     return rt_obj, room_type_name
 
-        # 5. Fallback: No structured match found
+        # 5. Learn from previous mappings
+        # If a past reservation with the same room_type_name was mapped, reuse it
+        if self.hotel and room_type_name:
+            from pricing.models import Reservation as _Res
+            prev_rt_id = _Res.objects.filter(
+                hotel=self.hotel,
+                room_type_name__iexact=room_type_name,
+                room_type__isnull=False
+            ).values_list('room_type_id', flat=True).first()
+            if prev_rt_id:
+                # Find the RoomType in our pre-fetched dict by scanning values
+                for rt_obj in room_types.values():
+                    if rt_obj.id == prev_rt_id:
+                        return rt_obj, room_type_name
+
+        # 6. Fallback: No structured match found
         return None, room_type_name
     
     def _map_channel(self, source_str: str) -> Optional[Any]:
