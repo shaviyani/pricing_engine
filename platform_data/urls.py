@@ -36,6 +36,9 @@ urlpatterns = [
     
     # Arrival data
     path('api/arrivals/', views.PlatformArrivalDataView.as_view(), name='arrivals_api'),
+    path('api/arrivals/monthly/', views.PlatformArrivalMonthlySummaryView.as_view(), name='arrivals_monthly_api'),
+    path('api/arrivals/country/', views.PlatformArrivalCountryDetailView.as_view(), name='arrivals_country_api'),
+    path('api/arrivals/delete/', views.PlatformArrivalDeleteView.as_view(), name='arrivals_delete'),
     
     # Events
     path('api/events/', views.PlatformEventListView.as_view(), name='events_api'),

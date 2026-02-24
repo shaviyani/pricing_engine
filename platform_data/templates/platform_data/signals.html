@@ -5,14 +5,14 @@
 {% block page_subtitle %}Upload and manage market data shared across all properties{% endblock %}
 
 {% block extra_css %}
-<style>
 .tab-nav { display:flex; gap:4px; border-bottom:2px solid #e2e8f0; margin-bottom:20px; }
 .tab-btn { padding:10px 18px; font-size:13px; font-weight:600; color:#64748b; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; cursor:pointer; }
 .tab-btn:hover { color:#1e293b; }
 .tab-btn.active { color:#2563eb; border-bottom-color:#2563eb; }
 .tab-content { display:none; }
 .tab-content.active { display:block; }
-</style>
+#countryDropdown::-webkit-scrollbar { width:6px; }
+#countryDropdown::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:3px; }
 {% endblock %}
 
 {% block content %}
@@ -49,8 +49,8 @@
             <div id="uploadZone" style="border:2px dashed #cbd5e1; border-radius:10px; padding:40px; text-align:center; background:#f8fafc; cursor:pointer;" onclick="document.getElementById('fileInput').click()">
                 <p style="font-size:28px; margin-bottom:8px;">📡</p>
                 <p style="font-weight:600; color:#475569;">Drop file here or click to browse</p>
-                <p style="font-size:12px; color:#94a3b8; margin-top:4px;">CSV, XLSX</p>
-                <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display:none;">
+                <p style="font-size:12px; color:#94a3b8; margin-top:4px;">CSV, XLSX, or <strong>MoT PDF reports</strong> (auto-detected)</p>
+                <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.pdf" style="display:none;">
             </div>
             <div id="uploadProgress" style="display:none; text-align:center; padding:20px; color:#64748b;">Reading headers...</div>
         </div>
@@ -87,19 +87,63 @@
 
 <!-- ========== ARRIVALS TAB ========== -->
 <div id="tab-arrivals" class="tab-content">
+    <!-- Monthly Totals Bar Chart -->
+    <div class="platform-card">
+        <div class="platform-card-header">
+            <h3>Monthly Arrival Totals</h3>
+            <span id="chartSubtitle" style="font-size:12px; color:#64748b;"></span>
+        </div>
+        <div class="platform-card-body-padded">
+            <div id="chartWrap" style="position:relative; height:280px;">
+                <canvas id="arrivalsChart"></canvas>
+            </div>
+            <div id="chartEmpty" style="display:none; text-align:center; padding:40px; color:#94a3b8;">
+                No arrival data yet. Import a MoT report to see the chart.
+            </div>
+        </div>
+    </div>
+
+    <!-- Country Analysis Chart -->
+    <div class="platform-card">
+        <div class="platform-card-header">
+            <h3>Country Analysis</h3>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <div id="countrySearchBox" style="position:relative;">
+                    <input type="text" id="countrySearchInput" placeholder="Type to search countries..." autocomplete="off"
+                        style="padding:6px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; width:220px;">
+                    <button id="countrySearchClear" onclick="clearCountrySearch()" style="display:none; position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; color:#94a3b8; cursor:pointer; font-size:14px; line-height:1;" title="Clear">✕</button>
+                    <div id="countryDropdown" style="display:none; position:absolute; top:100%; left:0; right:0; max-height:240px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-top:none; border-radius:0 0 6px 6px; z-index:50; box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>
+                </div>
+                <input type="hidden" id="countrySelectValue" value="">
+                <span id="countryChartSubtitle" style="font-size:12px; color:#64748b;"></span>
+            </div>
+        </div>
+        <div class="platform-card-body-padded">
+            <div id="countryChartWrap" style="position:relative; height:260px;">
+                <canvas id="countryChart"></canvas>
+            </div>
+            <div id="countryChartEmpty" style="text-align:center; padding:30px; color:#94a3b8;">
+                Select a country above to see its arrival trend over time.
+            </div>
+            <div id="countryStats" style="display:none; margin-top:12px;"></div>
+        </div>
+    </div>
+
+    <!-- Country Breakdown Table -->
     <div class="platform-card">
         <div class="platform-card-header">
             <h3>Country Arrival Data</h3>
             <span style="font-size:12px; color:#64748b;">{{ total_arrival_records }} records{% if latest_arrival_period %} · Latest: {{ latest_arrival_period|date:"M Y" }}{% endif %}</span>
         </div>
         <div class="platform-card-body-padded">
-            <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+            <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
                 <select id="arrivalPeriod" style="padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;" onchange="loadArrivals()">
                     <option value="">All periods</option>
                     {% for p in arrival_periods %}
                     <option value="{{ p|date:'Y-m-d' }}">{{ p|date:"M Y" }}</option>
                     {% endfor %}
                 </select>
+                <button id="btnDeletePeriod" class="btn btn-sm" style="background:#fef2f2; color:#dc2626; border:1px solid #fca5a5; display:none;" onclick="deleteArrivalPeriod()">Delete Period</button>
             </div>
             <div id="arrivalsTable"></div>
         </div>
@@ -166,6 +210,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
 var uploadData = null;
 var currentColumnMap = {};
@@ -179,7 +224,7 @@ document.querySelectorAll('.tab-btn').forEach(function(btn){btn.addEventListener
     document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.remove('active');});
     document.querySelectorAll('.tab-content').forEach(function(c){c.classList.remove('active');});
     this.classList.add('active');document.getElementById('tab-'+this.dataset.tab).classList.add('active');
-    if(this.dataset.tab==='arrivals')loadArrivals();
+    if(this.dataset.tab==='arrivals'){loadArrivalsChart();loadCountryList();loadArrivals();}
     if(this.dataset.tab==='events')loadEvents();
 });});
 
@@ -195,13 +240,39 @@ zone.addEventListener('drop',function(e){e.preventDefault();this.style.borderCol
 function handleUpload(file){
     document.getElementById('uploadZone').style.display='none';
     document.getElementById('uploadProgress').style.display='block';
+    document.getElementById('uploadProgress').textContent=file.name.endsWith('.pdf')?'Parsing MoT PDF report...':'Reading headers...';
     var fd=new FormData();fd.append('file',file);fd.append('import_type',document.getElementById('importType').value);
     fetch('/platform/api/signals/upload/',{method:'POST',headers:{'X-CSRFToken':getCookie('csrftoken')},body:fd})
     .then(function(r){return r.json();}).then(function(d){
         document.getElementById('uploadProgress').style.display='none';
         if(!d.success){showToast(d.error||'Upload failed','error');document.getElementById('uploadZone').style.display='block';return;}
-        uploadData=d.data;renderMapping(d.data);
+        uploadData=d.data;
+        if(d.data.auto_import){renderPdfPreview(d.data);}
+        else{renderMapping(d.data);}
     }).catch(function(e){document.getElementById('uploadProgress').style.display='none';document.getElementById('uploadZone').style.display='block';showToast('Error: '+e,'error');});
+}
+
+function renderPdfPreview(data){
+    document.getElementById('mappingCard').style.display='block';
+    var info=data.report_type==='monthly'?'📄 Monthly Report':'📊 Daily Update';
+    info+=' — '+data.report_source;
+    info+=' — '+data.country_count+' countries, '+data.total_arrivals.toLocaleString()+' total arrivals';
+    document.getElementById('mappingInfo').innerHTML=info;
+
+    var thead=document.querySelector('#previewTable thead');
+    var tbody=document.querySelector('#previewTable tbody');
+    thead.innerHTML='<tr>'+data.headers.map(function(h){return '<th style="white-space:nowrap;padding:6px 10px;">'+h+'</th>';}).join('')+'</tr>';
+    tbody.innerHTML=data.preview.map(function(row){return '<tr>'+row.map(function(v,i){
+        var style='padding:4px 10px;';
+        if(i===1)style+='text-align:right;font-weight:600;';
+        if(i===3){var n=parseFloat(v);if(!isNaN(n))style+='color:'+(n>=0?'#059669':'#dc2626')+';';}
+        return '<td style="'+style+'">'+v+'</td>';
+    }).join('')+'</tr>';}).join('');
+
+    document.getElementById('mappingGrid').innerHTML='<div style="padding:16px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;"><strong style="color:#059669;">✓ PDF auto-detected</strong> — Report period: <strong>'+data.report_period+'</strong> ('+data.report_type+'). No column mapping needed. Click Import to save '+data.country_count+' countries.</div>';
+
+    // Hide template save for PDF
+    document.getElementById('templateName').parentElement.parentElement.style.display='none';
 }
 
 function resetUpload(){
@@ -210,6 +281,7 @@ function resetUpload(){
     document.getElementById('mappingCard').style.display='none';
     document.getElementById('importResult').style.display='none';
     document.getElementById('fileInput').value='';
+    document.getElementById('templateName').parentElement.parentElement.style.display='';
 }
 
 function renderMapping(data){
@@ -268,7 +340,16 @@ function saveTemplate(){
 function executeImport(){
     var btn=document.getElementById('btnImport');btn.disabled=true;btn.textContent='Importing...';
     var periodInput=document.getElementById('reportPeriod').value;
-    fetch('/platform/api/signals/execute/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({column_map:currentColumnMap,import_type:document.getElementById('importType').value,country_code:document.getElementById('countryCode').value.toUpperCase(),report_period:periodInput||null,template_id:matchedTemplateId})})
+    var isAutoImport=uploadData&&uploadData.auto_import;
+    var body={
+        column_map:isAutoImport?{}:currentColumnMap,
+        import_type:document.getElementById('importType').value,
+        country_code:document.getElementById('countryCode').value.toUpperCase(),
+        report_period:isAutoImport?(uploadData.report_period||null):(periodInput||null),
+        template_id:matchedTemplateId,
+        auto_import:!!isAutoImport
+    };
+    fetch('/platform/api/signals/execute/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify(body)})
     .then(function(r){return r.json();}).then(function(d){
         btn.disabled=false;btn.textContent='Import Data';
         var panel=document.getElementById('importResult');panel.style.display='block';
@@ -284,10 +365,333 @@ function executeImport(){
 }
 
 // =========================================================================
+// ARRIVALS CHART
+// =========================================================================
+var arrivalsChartInstance = null;
+
+function loadArrivalsChart(){
+    fetch('/platform/api/arrivals/monthly/?country=MV')
+    .then(function(r){return r.json();})
+    .then(function(d){
+        if(!d.success) return;
+        var monthly = d.data.monthly;
+        var chartWrap = document.getElementById('chartWrap');
+        var chartEmpty = document.getElementById('chartEmpty');
+
+        if(!monthly.length){
+            chartWrap.style.display='none';
+            chartEmpty.style.display='block';
+            return;
+        }
+        chartWrap.style.display='block';
+        chartEmpty.style.display='none';
+
+        var labels = monthly.map(function(m){return m.label;});
+        var values = monthly.map(function(m){return m.total_arrivals;});
+        var total = values.reduce(function(a,b){return a+b;},0);
+
+        document.getElementById('chartSubtitle').textContent = monthly.length+' months · '+total.toLocaleString()+' total arrivals';
+
+        if(arrivalsChartInstance){arrivalsChartInstance.destroy();}
+
+        var ctx = document.getElementById('arrivalsChart').getContext('2d');
+        arrivalsChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Total Arrivals',
+                    data: values,
+                    backgroundColor: 'rgba(37, 99, 235, 0.7)',
+                    hoverBackgroundColor: 'rgba(37, 99, 235, 0.9)',
+                    borderRadius: 4,
+                    maxBarThickness: 60,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {display: false},
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx){return ctx.parsed.y.toLocaleString()+' arrivals';}
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {color: '#f1f5f9'},
+                        ticks: {
+                            font: {size: 11},
+                            color: '#64748b',
+                            callback: function(v){return v >= 1000 ? (v/1000)+'k' : v;}
+                        }
+                    },
+                    x: {
+                        grid: {display: false},
+                        ticks: {font: {size: 11}, color: '#64748b'}
+                    }
+                }
+            }
+        });
+    });
+}
+
+// =========================================================================
+// COUNTRY ANALYSIS — SEARCHABLE DROPDOWN + CHART
+// =========================================================================
+var countryChartInstance = null;
+var countryListLoaded = false;
+var allCountries = [];
+
+function loadCountryList(){
+    if(countryListLoaded) return;
+    fetch('/platform/api/arrivals/country/?country=MV')
+    .then(function(r){return r.json();})
+    .then(function(d){
+        if(!d.success) return;
+        allCountries = d.data.origins;
+        countryListLoaded = true;
+    });
+}
+
+// Searchable dropdown logic
+(function(){
+    var input = document.getElementById('countrySearchInput');
+    var dropdown = document.getElementById('countryDropdown');
+    var clearBtn = document.getElementById('countrySearchClear');
+    var hidden = document.getElementById('countrySelectValue');
+
+    function renderDropdown(filter){
+        var q = (filter||'').toLowerCase();
+        var matches = allCountries.filter(function(c){ return !q || c.toLowerCase().indexOf(q) !== -1; });
+        if(!matches.length){
+            dropdown.innerHTML='<div style="padding:10px 12px;color:#94a3b8;font-size:12px;">No matches</div>';
+            dropdown.style.display='block';
+            return;
+        }
+        dropdown.innerHTML = matches.map(function(c){
+            var isSelected = c === hidden.value;
+            return '<div class="cs-item" data-value="'+c+'" style="padding:8px 12px;font-size:13px;cursor:pointer;'
+                + (isSelected ? 'background:#eff6ff;color:#2563eb;font-weight:600;' : '')
+                + '">' + highlightMatch(c, q) + '</div>';
+        }).join('');
+        dropdown.style.display='block';
+    }
+
+    function highlightMatch(text, q){
+        if(!q) return text;
+        var idx = text.toLowerCase().indexOf(q);
+        if(idx === -1) return text;
+        return text.substring(0,idx) + '<strong style="color:#2563eb;">' + text.substring(idx, idx+q.length) + '</strong>' + text.substring(idx+q.length);
+    }
+
+    input.addEventListener('focus', function(){
+        if(allCountries.length) renderDropdown(this.value);
+    });
+
+    input.addEventListener('input', function(){
+        renderDropdown(this.value);
+        clearBtn.style.display = this.value ? 'block' : 'none';
+    });
+
+    dropdown.addEventListener('click', function(e){
+        var item = e.target.closest('.cs-item');
+        if(!item) return;
+        var val = item.dataset.value;
+        hidden.value = val;
+        input.value = val;
+        clearBtn.style.display = 'block';
+        dropdown.style.display = 'none';
+        loadCountryChart();
+    });
+
+    dropdown.addEventListener('mouseover', function(e){
+        var item = e.target.closest('.cs-item');
+        if(item) item.style.background = '#f1f5f9';
+    });
+    dropdown.addEventListener('mouseout', function(e){
+        var item = e.target.closest('.cs-item');
+        if(item) item.style.background = (item.dataset.value === hidden.value) ? '#eff6ff' : '';
+    });
+
+    document.addEventListener('click', function(e){
+        if(!document.getElementById('countrySearchBox').contains(e.target)){
+            dropdown.style.display = 'none';
+        }
+    });
+
+    input.addEventListener('keydown', function(e){
+        var items = dropdown.querySelectorAll('.cs-item');
+        if(!items.length) return;
+        var active = dropdown.querySelector('.cs-active');
+        if(e.key === 'ArrowDown'){
+            e.preventDefault();
+            if(active){ active.classList.remove('cs-active'); active.style.background=''; var next=active.nextElementSibling; if(next&&next.classList.contains('cs-item')){next.classList.add('cs-active');next.style.background='#f1f5f9';next.scrollIntoView({block:'nearest'});} else {items[0].classList.add('cs-active');items[0].style.background='#f1f5f9';}}
+            else {items[0].classList.add('cs-active');items[0].style.background='#f1f5f9';}
+        } else if(e.key === 'ArrowUp'){
+            e.preventDefault();
+            if(active){ active.classList.remove('cs-active'); active.style.background=''; var prev=active.previousElementSibling; if(prev&&prev.classList.contains('cs-item')){prev.classList.add('cs-active');prev.style.background='#f1f5f9';prev.scrollIntoView({block:'nearest'});} else {items[items.length-1].classList.add('cs-active');items[items.length-1].style.background='#f1f5f9';}}
+            else {items[items.length-1].classList.add('cs-active');items[items.length-1].style.background='#f1f5f9';}
+        } else if(e.key === 'Enter'){
+            e.preventDefault();
+            if(active) active.click();
+        } else if(e.key === 'Escape'){
+            dropdown.style.display='none';
+        }
+    });
+})();
+
+function clearCountrySearch(){
+    document.getElementById('countrySearchInput').value='';
+    document.getElementById('countrySelectValue').value='';
+    document.getElementById('countrySearchClear').style.display='none';
+    document.getElementById('countryDropdown').style.display='none';
+    loadCountryChart();
+}
+
+function loadCountryChart(){
+    var origin=document.getElementById('countrySelectValue').value;
+    var wrap=document.getElementById('countryChartWrap');
+    var empty=document.getElementById('countryChartEmpty');
+    var stats=document.getElementById('countryStats');
+
+    if(!origin){
+        wrap.style.display='none';
+        stats.style.display='none';
+        empty.style.display='block';
+        empty.textContent='Select a country above to see its arrival trend over time.';
+        document.getElementById('countryChartSubtitle').textContent='';
+        if(countryChartInstance){countryChartInstance.destroy();countryChartInstance=null;}
+        return;
+    }
+
+    fetch('/platform/api/arrivals/country/?country=MV&origin_country='+encodeURIComponent(origin))
+    .then(function(r){return r.json();})
+    .then(function(d){
+        if(!d.success) return;
+        var series=d.data.series;
+
+        if(!series.length){
+            wrap.style.display='none';
+            stats.style.display='none';
+            empty.style.display='block';
+            empty.textContent='No data found for '+origin+'.';
+            return;
+        }
+
+        wrap.style.display='block';
+        empty.style.display='none';
+
+        var labels=series.map(function(s){return s.label;});
+        var arrivals=series.map(function(s){return s.arrivals;});
+        var shares=series.map(function(s){return s.market_share_pct;});
+
+        var totalArr=arrivals.reduce(function(a,b){return a+b;},0);
+        var avgShare=shares.filter(function(s){return s!==null;});
+        avgShare=avgShare.length ? (avgShare.reduce(function(a,b){return a+b;},0)/avgShare.length).toFixed(1) : null;
+
+        document.getElementById('countryChartSubtitle').textContent=series.length+' months · '+totalArr.toLocaleString()+' total';
+
+        if(countryChartInstance){countryChartInstance.destroy();}
+
+        var ctx=document.getElementById('countryChart').getContext('2d');
+        var datasets=[{
+            label: origin+' Arrivals',
+            data: arrivals,
+            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+            borderColor: 'rgba(16, 185, 129, 1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointBackgroundColor: 'rgba(16, 185, 129, 1)',
+            yAxisID: 'y',
+        }];
+
+        var hasShares=shares.some(function(s){return s!==null;});
+        if(hasShares){
+            datasets.push({
+                label: 'Market Share %',
+                data: shares,
+                borderColor: 'rgba(139, 92, 246, 0.8)',
+                borderWidth: 2,
+                borderDash: [5,3],
+                fill: false,
+                tension: 0.3,
+                pointRadius: 3,
+                pointBackgroundColor: 'rgba(139, 92, 246, 1)',
+                yAxisID: 'y1',
+            });
+        }
+
+        countryChartInstance=new Chart(ctx,{
+            type:'line',
+            data:{labels:labels, datasets:datasets},
+            options:{
+                responsive:true,
+                maintainAspectRatio:false,
+                interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{display:hasShares, position:'top', labels:{font:{size:11},usePointStyle:true,pointStyle:'circle'}},
+                    tooltip:{
+                        callbacks:{
+                            label:function(ctx){
+                                if(ctx.datasetIndex===0) return ctx.parsed.y.toLocaleString()+' arrivals';
+                                return ctx.parsed.y.toFixed(1)+'% share';
+                            }
+                        }
+                    }
+                },
+                scales:{
+                    y:{
+                        beginAtZero:true,
+                        position:'left',
+                        grid:{color:'#f1f5f9'},
+                        ticks:{font:{size:11},color:'#64748b',callback:function(v){return v>=1000?(v/1000)+'k':v;}}
+                    },
+                    y1: hasShares ? {
+                        beginAtZero:true,
+                        position:'right',
+                        grid:{drawOnChartArea:false},
+                        ticks:{font:{size:11},color:'#8b5cf6',callback:function(v){return v+'%';}}
+                    } : undefined,
+                    x:{
+                        grid:{display:false},
+                        ticks:{font:{size:11},color:'#64748b'}
+                    }
+                }
+            }
+        });
+
+        // Stats summary
+        var latest=series[series.length-1];
+        var prev=series.length>=2?series[series.length-2]:null;
+        var html='<div style="display:flex;gap:16px;flex-wrap:wrap;">';
+        html+='<div class="stat-box" style="padding:12px 16px;"><div class="value" style="font-size:20px;">'+latest.arrivals.toLocaleString()+'</div><div class="label">Latest ('+latest.label+')</div></div>';
+        if(prev){
+            var diff=latest.arrivals-prev.arrivals;
+            var diffPct=prev.arrivals>0?((diff/prev.arrivals)*100).toFixed(1):0;
+            var diffColor=diff>=0?'#059669':'#dc2626';
+            html+='<div class="stat-box" style="padding:12px 16px;"><div class="value" style="font-size:20px;color:'+diffColor+'">'+(diff>=0?'+':'')+diff.toLocaleString()+'</div><div class="label">vs '+prev.label+' ('+(diff>=0?'+':'')+diffPct+'%)</div></div>';
+        }
+        if(avgShare) html+='<div class="stat-box" style="padding:12px 16px;"><div class="value" style="font-size:20px;">'+avgShare+'%</div><div class="label">Avg Market Share</div></div>';
+        html+='<div class="stat-box" style="padding:12px 16px;"><div class="value" style="font-size:20px;">'+totalArr.toLocaleString()+'</div><div class="label">Total ('+series.length+' months)</div></div>';
+        html+='</div>';
+        stats.innerHTML=html;
+        stats.style.display='block';
+    });
+}
+
+// =========================================================================
 // ARRIVALS BROWSER
 // =========================================================================
 function loadArrivals(){
     var period=document.getElementById('arrivalPeriod').value;
+    var btnDel=document.getElementById('btnDeletePeriod');
+    btnDel.style.display=period?'inline-block':'none';
     var url='/platform/api/arrivals/?country=MV';
     if(period)url+='&period='+period;
     fetch(url).then(function(r){return r.json();}).then(function(d){
@@ -295,13 +699,35 @@ function loadArrivals(){
         var records=d.data.records;
         var el=document.getElementById('arrivalsTable');
         if(!records.length){el.innerHTML='<div class="empty-state"><p>No arrival data found.</p></div>';return;}
-        var html='<table class="data-table"><thead><tr><th>Period</th><th>Country</th><th>Arrivals</th><th>Market Share</th><th>YoY Change</th></tr></thead><tbody>';
+        var html='<table class="data-table"><thead><tr><th>Period</th><th>Country</th><th>Arrivals</th><th>Market Share</th><th>YoY Change</th><th style="width:50px;"></th></tr></thead><tbody>';
         records.forEach(function(r){
             var yoy=r.yoy_change_pct;var yoyStr=yoy!==null?(yoy>=0?'+':'')+yoy.toFixed(1)+'%':'—';
             var yoyColor=yoy>0?'color:#059669':yoy<0?'color:#dc2626':'color:#64748b';
-            html+='<tr><td>'+r.report_period+'</td><td style="font-weight:600;">'+r.origin_country+'</td><td>'+r.arrivals.toLocaleString()+'</td><td>'+(r.market_share_pct?r.market_share_pct.toFixed(1)+'%':'—')+'</td><td style="'+yoyColor+'">'+yoyStr+'</td></tr>';
+            html+='<tr><td>'+r.report_period+'</td><td style="font-weight:600;">'+r.origin_country+'</td><td>'+r.arrivals.toLocaleString()+'</td><td>'+(r.market_share_pct?r.market_share_pct.toFixed(1)+'%':'—')+'</td><td style="'+yoyColor+'">'+yoyStr+'</td>';
+            html+='<td><button onclick="deleteArrivalRecord('+r.id+',\''+r.origin_country.replace(/'/g,"\\'")+'\')" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:12px;" title="Delete">✕</button></td></tr>';
         });
         html+='</tbody></table>';el.innerHTML=html;
+    });
+}
+
+function deleteArrivalRecord(id,name){
+    if(!confirm('Delete arrival record for "'+name+'"?'))return;
+    fetch('/platform/api/arrivals/delete/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({id:id})})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);loadArrivals();loadArrivalsChart();}
+        else showToast(d.error||'Failed','error');
+    });
+}
+
+function deleteArrivalPeriod(){
+    var period=document.getElementById('arrivalPeriod').value;
+    if(!period)return;
+    var label=document.getElementById('arrivalPeriod').selectedOptions[0].text;
+    if(!confirm('Delete ALL arrival records for '+label+'? This cannot be undone.'))return;
+    fetch('/platform/api/arrivals/delete/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},body:JSON.stringify({period:period,country_code:'MV'})})
+    .then(function(r){return r.json();}).then(function(d){
+        if(d.success){showToast(d.message);document.getElementById('arrivalPeriod').value='';loadArrivals();loadArrivalsChart();}
+        else showToast(d.error||'Failed','error');
     });
 }
 

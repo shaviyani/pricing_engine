@@ -450,7 +450,13 @@ class PlatformSignalUploadView(SuperuserRequiredMixin, View):
         if not uploaded_file:
             return error_response('No file uploaded')
         
-        suffix = os.path.splitext(uploaded_file.name)[1]
+        suffix = os.path.splitext(uploaded_file.name)[1].lower()
+        
+        # Handle PDF (MoT reports)
+        if suffix == '.pdf':
+            return self._handle_pdf(request, uploaded_file, import_type)
+        
+        # Handle CSV/Excel (standard import flow)
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             for chunk in uploaded_file.chunks():
                 tmp.write(chunk)
@@ -473,12 +479,68 @@ class PlatformSignalUploadView(SuperuserRequiredMixin, View):
             
             return success_response(data={
                 'filename': uploaded_file.name,
+                'file_type': 'csv',
                 'headers': result['headers'],
                 'preview': result['preview'],
                 'row_count': result['row_count'],
-                'file_type': result['file_type'],
                 'template_match': template_match,
                 'field_definitions': fields,
+            })
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            return error_response(str(e))
+    
+    def _handle_pdf(self, request, uploaded_file, import_type):
+        """Handle PDF upload — auto-parse MoT report and import."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+            for chunk in uploaded_file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+        
+        try:
+            from .mot_parser import MoTReportParser, import_mot_report
+            
+            # First just parse to show preview
+            parser = MoTReportParser()
+            parsed = parser.parse_pdf(tmp_path)
+            
+            if 'error' in parsed:
+                os.unlink(tmp_path)
+                return error_response(parsed['error'])
+            
+            # Store path for execution
+            request.session['platform_import_tmp_path'] = tmp_path
+            request.session['platform_import_filename'] = uploaded_file.name
+            
+            # Build preview
+            top_countries = sorted(
+                parsed['countries'], key=lambda x: -(x['arrivals'] or 0)
+            )[:15]
+            
+            preview_rows = []
+            for c in top_countries:
+                preview_rows.append([
+                    c['country'],
+                    str(c['arrivals'] or ''),
+                    str(c.get('market_share', '') or ''),
+                    str(c.get('pct_change', '') or ''),
+                    str(c.get('ranking', '') or ''),
+                ])
+            
+            return success_response(data={
+                'filename': uploaded_file.name,
+                'file_type': 'pdf',
+                'report_type': parsed['report_type'],
+                'report_period': parsed['report_period'].isoformat(),
+                'report_source': parsed['source'],
+                'total_arrivals': parsed['total_arrivals'],
+                'country_count': parsed['country_count'],
+                'key_indicators': parsed.get('key_indicators', {}),
+                'headers': ['Country', 'Arrivals', 'Market Share %', 'YoY Change %', 'Ranking'],
+                'preview': preview_rows,
+                'row_count': parsed['country_count'],
+                'auto_import': True,  # Signal to UI: no column mapping needed
             })
         except Exception as e:
             if os.path.exists(tmp_path):
@@ -487,7 +549,7 @@ class PlatformSignalUploadView(SuperuserRequiredMixin, View):
 
 
 class PlatformSignalExecuteView(SuperuserRequiredMixin, View):
-    """POST: Execute platform data import with column mapping."""
+    """POST: Execute platform data import with column mapping or PDF auto-import."""
     
     def post(self, request, *args, **kwargs):
         try:
@@ -495,15 +557,43 @@ class PlatformSignalExecuteView(SuperuserRequiredMixin, View):
         except json.JSONDecodeError:
             return error_response('Invalid JSON')
         
-        column_map = data.get('column_map', {})
-        import_type = data.get('import_type', 'arrival_report')
-        country_code = data.get('country_code', 'MV')
-        template_id = data.get('template_id')
-        report_period_str = data.get('report_period')
-        
         tmp_path = request.session.get('platform_import_tmp_path')
         if not tmp_path or not os.path.exists(tmp_path):
             return error_response('No file uploaded. Please upload a file first.')
+        
+        country_code = data.get('country_code', 'MV')
+        
+        # PDF auto-import (MoT reports)
+        if data.get('auto_import') or tmp_path.endswith('.pdf'):
+            try:
+                from .mot_parser import import_mot_report
+                result = import_mot_report(
+                    file_path=tmp_path,
+                    country_code=country_code,
+                    user=request.user,
+                )
+                
+                # Cleanup
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                request.session.pop('platform_import_tmp_path', None)
+                request.session.pop('platform_import_filename', None)
+                
+                if result.get('success'):
+                    return success_response(
+                        data=result,
+                        message=f"PDF import complete: {result['rows_created']} created, {result['rows_updated']} updated from {result['countries_parsed']} countries"
+                    )
+                else:
+                    return error_response(result.get('error', 'PDF import failed'))
+            except Exception as e:
+                return error_response(str(e))
+        
+        # Standard CSV/Excel import
+        column_map = data.get('column_map', {})
+        import_type = data.get('import_type', 'arrival_report')
+        template_id = data.get('template_id')
+        report_period_str = data.get('report_period')
         
         # Parse report period if provided
         report_period = None
@@ -646,6 +736,106 @@ class PlatformArrivalDataView(SuperuserRequiredMixin, View):
                 row['yoy_change_pct'] = float(row['yoy_change_pct'])
         
         return success_response(data={'records': data, 'count': len(data)})
+
+
+class PlatformArrivalMonthlySummaryView(SuperuserRequiredMixin, View):
+    """GET: Monthly arrival totals for bar chart."""
+
+    def get(self, request, *args, **kwargs):
+        from .models import MarketArrivalData
+
+        country_code = request.GET.get('country', 'MV')
+
+        qs = MarketArrivalData.objects.filter(
+            country_code=country_code
+        ).values('report_period').annotate(
+            total_arrivals=Sum('arrivals')
+        ).order_by('report_period')
+
+        data = [{
+            'period': row['report_period'].isoformat(),
+            'label': row['report_period'].strftime('%b %Y'),
+            'total_arrivals': row['total_arrivals'],
+        } for row in qs]
+
+        return success_response(data={'monthly': data})
+
+
+class PlatformArrivalCountryDetailView(SuperuserRequiredMixin, View):
+    """GET: Per-country arrival time series + list of unique origin countries."""
+
+    def get(self, request, *args, **kwargs):
+        from .models import MarketArrivalData
+
+        country_code = request.GET.get('country', 'MV')
+        origin = request.GET.get('origin_country', '')
+
+        # Always return the list of unique origin countries (for the dropdown)
+        origins = list(
+            MarketArrivalData.objects.filter(country_code=country_code)
+            .values_list('origin_country', flat=True)
+            .distinct()
+            .order_by('origin_country')
+        )
+
+        # If a specific origin country is requested, return its time series
+        series = []
+        if origin:
+            qs = MarketArrivalData.objects.filter(
+                country_code=country_code, origin_country=origin
+            ).order_by('report_period')
+            series = [{
+                'period': row.report_period.isoformat(),
+                'label': row.report_period.strftime('%b %Y'),
+                'arrivals': row.arrivals,
+                'market_share_pct': float(row.market_share_pct) if row.market_share_pct else None,
+                'yoy_change_pct': float(row.yoy_change_pct) if row.yoy_change_pct else None,
+            } for row in qs]
+
+        return success_response(data={
+            'origins': origins,
+            'origin_country': origin,
+            'series': series,
+        })
+
+
+class PlatformArrivalDeleteView(SuperuserRequiredMixin, View):
+    """POST: Delete arrival records — single record or entire period."""
+
+    def post(self, request, *args, **kwargs):
+        import json
+        from .models import MarketArrivalData
+
+        try:
+            body = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return error_response('Invalid JSON')
+
+        record_id = body.get('id')
+        period = body.get('period')
+        country_code = body.get('country_code', 'MV')
+
+        if record_id:
+            deleted, _ = MarketArrivalData.objects.filter(id=record_id).delete()
+            return success_response(
+                data={'deleted': deleted},
+                message=f'{deleted} record deleted'
+            )
+        elif period:
+            from datetime import datetime
+            try:
+                period_date = datetime.strptime(period, '%Y-%m-%d').date()
+            except ValueError:
+                return error_response('Invalid period format. Use YYYY-MM-DD.')
+            deleted, _ = MarketArrivalData.objects.filter(
+                country_code=country_code, report_period=period_date
+            ).delete()
+            return success_response(
+                data={'deleted': deleted},
+                message=f'{deleted} records deleted for {period_date.strftime("%b %Y")}'
+            )
+        else:
+            return error_response('Provide "id" or "period" to delete.')
 
 
 # =============================================================================
