@@ -1,63 +1,53 @@
-# Pricing Engine - Minimal MVP
+# Pricing Engine
 
-A simplified hotel pricing calculation system.
+A multi-organization, multi-property hotel revenue management platform built with Django.
 
 ## Features
 
-- **4 Models**: Season, RoomType, RatePlan, Channel
-- **3-Step Calculation**: Base Rate × Season Index + Meal Supplements - Channel Discount
-- **Pricing Matrix View**: See all rates across seasons, rate plans, and channels
-- **Admin Interface**: Manage all data easily
+- **Multi-Org Architecture** -- Organizations with multiple properties, each with independent pricing
+- **Pricing Matrix** -- Versioned seasons, room types, rate plans, channels with modifier-based discounts
+- **Dynamic Pricing** -- Occupancy-based multipliers, booking window adjustments, event uplifts
+- **Date Rate Overrides** -- Calendar-based rate adjustments with priority layering
+- **Reservation Import** -- Flexible column-mapping templates for Synxis, Opera, and custom PMS exports
+- **Booking Analysis** -- KPI dashboards, channel mix, room type performance, monthly trends
+- **Pickup Analysis** -- Booking velocity tracking, pace vs STLY, occupancy forecasting
+- **Revenue Forecasting** -- Projected revenue by channel with occupancy calendar
+- **Rate Lookup** -- Front-desk rate card with real-time pricing for any date
+- **Agent Rate Cards** -- Unique shareable URLs per travel agent with quote builder
+- **Platform Intelligence** -- MoT arrival data import, country analysis, market signals
 
 ## Setup
 
-1. Install dependencies:
 ```bash
-pip install -r requirements.txt
-```
-
-2. Run migrations:
-```bash
+pip install -r requirements.txt   # or: pipenv install
 python manage.py migrate
-```
-
-3. Create superuser:
-```bash
 python manage.py createsuperuser
-```
-
-4. Load sample data:
-```bash
-python manage.py loaddata pricing/fixtures/sample_data.json
-```
-
-5. Run server:
-```bash
 python manage.py runserver
 ```
 
-6. Visit:
-- Home: http://localhost:8000/
-- Pricing Matrix: http://localhost:8000/matrix/
+Visit:
+- App: http://localhost:8000/
 - Admin: http://localhost:8000/admin/
+- Platform: http://localhost:8000/platform/
 
-## Sample Data Included
+## Tech Stack
 
-- **5 Seasons**: Low, Shoulder, High, Shoulder, Peak
-- **1 Room Type**: Deluxe Room ($65 base rate)
-- **4 Rate Plans**: Room Only, Bed & Breakfast, Half Board, Full Board
-- **2 Channels**: OTA (0% discount), DIRECT (15% discount)
+- Python 3.12+ / Django 5.x
+- SQLite (development) -- swap to PostgreSQL for production
+- ReportLab (PDF export), Pandas (data processing), pdfplumber (PDF import)
+- Tailwind CSS + Chart.js (frontend)
 
-## Calculation Example
+## Project Structure
 
 ```
-Base Rate: $65
-Season Index: 1.3 (Shoulder)
-= Seasonal Rate: $84.50
+pricing/              Main app
+  models/             core, pricing, analytics, forecasts
+  views/              core, pricing, analytics, forecasts, admin_views, mixins
+  services/           pricing_service, analytics_service, forecast_service, version_service
+  admin/              core, pricing, analytics, forecasts, overrides, modifiers, versions
+  templates/          core, manage, pricing_pages, analytics, forecasts, rates, partials
+  urls/               core, pricing, analytics, forecasts, admin
 
-Meal Supplement: $6/person × 2 pax = $12
-= Rate Plan Price: $96.50
-
-Channel Discount: 15%
-= Final Rate: $82.03
+platform_data/        Market intelligence (MoT arrivals, events, signals)
+config/               Django settings, URLs, WSGI
 ```
