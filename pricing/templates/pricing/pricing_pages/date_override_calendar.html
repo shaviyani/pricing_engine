@@ -12,12 +12,13 @@
     /* Calendar Grid - Mobile First */
     .calendar-grid {
         display: grid;
-        grid-template-columns: repeat(7, 1fr);
+        grid-template-columns: repeat(7, minmax(0, 1fr));
         gap: 1px;
         background: #e5e7eb;
         border: 1px solid #e5e7eb;
         border-radius: 8px;
         overflow: hidden;
+        min-width: 0;
     }
     
     .calendar-header {
@@ -33,12 +34,14 @@
     .calendar-day {
         background: white;
         min-height: 70px;
+        min-width: 0;
         padding: 4px;
         position: relative;
         cursor: pointer;
         transition: all 0.15s ease;
         display: flex;
         flex-direction: column;
+        overflow: hidden;
     }
     
     .calendar-day:hover {
@@ -819,7 +822,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
         
         <!-- Calendar Section -->
-        <div class="lg:col-span-3 space-y-4">
+        <div class="lg:col-span-3 space-y-4 min-w-0">
             
             <!-- Month Navigation + Filters -->
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
@@ -913,7 +916,7 @@
             </div>
             
             <!-- Calendar Grid -->
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
                 <div class="calendar-grid">
                     <!-- Header Row -->
                     {% for day_name in weekdays %}
@@ -1086,7 +1089,7 @@ function loadCalendarRates() {
         overrideEls[i].innerHTML = '';
     }
     
-    var url = '/{{ org_code }}/{{ prop_code }}/api/calendar-rates/' +
+    var url = '/org/{{ org_code }}/{{ prop_code }}/api/calendar-rates/' +
         '?year=' + currentYear +
         '&month=' + currentMonth +
         '&channel_id=' + channelId +
@@ -1175,7 +1178,7 @@ function showDateRates(dateStr) {
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
     
-    fetch('/{{ org_code }}/{{ prop_code }}/api/date-rate-detail/?date=' + dateStr)
+    fetch('/org/{{ org_code }}/{{ prop_code }}/api/date-rate-detail/?date=' + dateStr)
         .then(function(r) { return r.json(); })
         .then(function(data) {
             currentModalData = data;

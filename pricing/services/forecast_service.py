@@ -812,12 +812,23 @@ class PickupAnalysisService:
             velocity_forecast = otb_room_nights + int(velocity['room_nights_per_day'] * days_out)
         
         # Weighted forecast: 50% curve, 30% STLY, 20% velocity
-        forecast_room_nights = int(
+        base_forecast = int(
             curve_forecast * 0.5 +
             stly_room_nights * 0.3 +
             velocity_forecast * 0.2
         )
-        
+
+        # Market signal adjustment
+        market_factor = 1.0
+        try:
+            from platform_data.services import MarketSignalService
+            country_code = getattr(self.property, 'country_code', 'MV') or 'MV'
+            market_factor = MarketSignalService.get_market_yoy_factor(country_code)
+        except Exception:
+            pass
+
+        forecast_room_nights = int(base_forecast * market_factor)
+
         # Cap at available
         forecast_room_nights = min(forecast_room_nights, total_available)
         
@@ -910,6 +921,9 @@ class PickupAnalysisService:
             
             # Velocity
             'velocity': velocity,
+
+            # Market signal
+            'market_factor': market_factor,
         }
     
     def get_default_pickup_curves(self):

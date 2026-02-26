@@ -7,6 +7,7 @@ Shared across all organizations and properties by country_code.
 
 Scoping:
     - MarketArrivalData: country_code (e.g., 'MV' for Maldives)
+    - MarketKeyIndicator: country_code + report_period (headline KPIs from MoT)
     - MarketEvent: country_code
     - PlatformFileImport: tracks upload history
     - PlatformImportTemplate: saved column mappings for platform imports
@@ -82,6 +83,63 @@ class MarketArrivalData(models.Model):
     
     def __str__(self):
         return f"{self.country_code} {self.report_period:%b %Y} — {self.origin_country}: {self.arrivals:,}"
+
+
+# =============================================================================
+# MARKET KEY INDICATORS
+# =============================================================================
+
+class MarketKeyIndicator(models.Model):
+    """
+    Country-level headline KPIs from MoT monthly reports.
+
+    One row per country per report period. Stores the "Key Indicators"
+    section: total arrivals, occupancy, average stay, bed-nights, etc.
+    """
+    country_code = models.CharField(
+        max_length=2, db_index=True,
+        help_text="ISO 3166-1 alpha-2 country code"
+    )
+    report_period = models.DateField(
+        help_text="First day of reporting period (e.g., 2026-01-01)"
+    )
+    total_arrivals = models.PositiveIntegerField(
+        default=0, help_text="Total tourist arrivals for the period"
+    )
+    occupancy_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Country-wide bed occupancy rate (%)"
+    )
+    avg_stay_days = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Average duration of stay (days)"
+    )
+    total_bed_nights = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Total tourist bed-nights"
+    )
+    total_beds_operational = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Total operational bed capacity"
+    )
+    source_report = models.CharField(
+        max_length=200, blank=True,
+        help_text="Source reference"
+    )
+    file_import = models.ForeignKey(
+        'PlatformFileImport', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='indicator_records'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-report_period']
+        verbose_name = "Market Key Indicator"
+        verbose_name_plural = "Market Key Indicators"
+        unique_together = ['country_code', 'report_period']
+
+    def __str__(self):
+        return f"{self.country_code} {self.report_period:%b %Y} — {self.total_arrivals:,} arrivals"
 
 
 # =============================================================================

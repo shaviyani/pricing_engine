@@ -172,15 +172,7 @@
                     <tr class="channel-{{ channel_id }}-room-{{ room_id }}-content hidden hover:bg-gray-50">
                         <td class="px-4 py-1.5 sticky left-0 bg-white z-10">
                             <div class="pl-16 text-sm flex items-center">
-                                {% if mod_data.modifier.modifier_type == 'member' %}
-                                <span class="text-yellow-500 mr-1">🎯</span>
-                                {% elif mod_data.modifier.modifier_type == 'mobile' %}
-                                <span class="text-blue-500 mr-1">📱</span>
-                                {% elif mod_data.modifier.modifier_type == 'country' %}
-                                <span class="text-green-500 mr-1">🌍</span>
-                                {% else %}
-                                <span class="text-gray-400 mr-1">•</span>
-                                {% endif %}
+                                <span class="inline-block w-2 h-2 rounded-full mr-1.5 {% if mod_data.modifier.modifier_type == 'member' %}bg-yellow-500{% elif mod_data.modifier.modifier_type == 'mobile' %}bg-blue-500{% elif mod_data.modifier.modifier_type == 'country' %}bg-green-500{% else %}bg-gray-400{% endif %}"></span>
                                 <span class="text-gray-700">{{ mod_data.modifier.name }}</span>
                                 {% if mod_data.modifier.discount_percent > 0 %}
                                 <span class="text-xs text-green-600 ml-1">(-{{ mod_data.modifier.discount_percent }}%)</span>
@@ -224,15 +216,15 @@
                 <span class="text-gray-600">Room Summary (B&B Standard)</span>
             </div>
             <div class="flex items-center">
-                <span class="text-yellow-500 mr-1">🎯</span>
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-500 mr-2"></span>
                 <span class="text-gray-600">Member Rate</span>
             </div>
             <div class="flex items-center">
-                <span class="text-blue-500 mr-1">📱</span>
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500 mr-2"></span>
                 <span class="text-gray-600">Mobile Rate</span>
             </div>
             <div class="flex items-center">
-                <span class="text-green-500 mr-1">🌍</span>
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 mr-2"></span>
                 <span class="text-gray-600">Country Rate</span>
             </div>
         </div>

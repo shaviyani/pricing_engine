@@ -47,6 +47,7 @@ class ManageBaseMixin(PricingManagementMixin):
             context['room_types'] = RoomType.objects.filter(hotel=hotel).order_by('sort_order')
         
         context['active_section'] = getattr(self, 'active_section', 'landing')
+        context['nav_active'] = 'manage'
         return context
 
 
@@ -157,6 +158,22 @@ class ManagePricingView(ManageBaseMixin, TemplateView):
         return context
 
 
+class ManageDynamicView(ManageBaseMixin, TemplateView):
+    """Dynamic pricing rules and event uplifts."""
+    template_name = 'pricing/manage/dynamic.html'
+    active_section = 'dynamic'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from pricing.models import PricingMatrixVersion
+
+        hotel = context.get('hotel')
+        version = PricingMatrixVersion.get_published(hotel) if hotel else None
+        context['pricing_version'] = version
+
+        return context
+
+
 class ManageOffersView(ManageBaseMixin, TemplateView):
     """Offers & overrides: date rate overrides + future offers."""
     template_name = 'pricing/manage/offers.html'
@@ -198,12 +215,6 @@ class ManageImportView(ManageBaseMixin, TemplateView):
             context['reservation_count'] = Reservation.objects.filter(hotel=hotel).count()
 
         return context
-
-
-class ManageReportsView(ManageBaseMixin, TemplateView):
-    """Reports: PDF exports, review analysis (future)."""
-    template_name = 'pricing/manage/reports.html'
-    active_section = 'reports'
 
 
 class ManageVersionDetailView(ManageBaseMixin, TemplateView):
@@ -1433,55 +1444,6 @@ import json
 # =============================================================================
 # BASE MIXIN
 # =============================================================================
-
-class OrganizationSettingsView(SettingsMixin, TemplateView):
-    """
-    Organization settings dashboard.
-    Shows organization details and all properties with their settings.
-    """
-    template_name = 'pricing/admin/organization_settings.html'
-    
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        
-        org = self.get_organization()
-        
-        # Get all properties with stats
-        properties = org.properties.filter(is_active=True).annotate(
-            room_type_count=Count('room_types'),
-            season_count=Count('seasons'),
-            total_room_count=Sum('room_types__number_of_rooms')
-        ).order_by('name')
-        
-        # Add property-specific settings
-        properties_data = []
-        for prop in properties:
-            properties_data.append({
-                'id': prop.id,
-                'name': prop.name,
-                'code': prop.code,
-                'location': prop.location,
-                'reference_base_rate': prop.reference_base_rate,
-                'currency_symbol': prop.currency_symbol,
-                'total_rooms': prop.total_room_count or 0,
-                'room_type_count': prop.room_type_count,
-                'season_count': prop.season_count,
-                'service_charge_percent': getattr(prop, 'service_charge_percent', Decimal('10.00')),
-                'tax_percent': getattr(prop, 'tax_percent', Decimal('16.00')),
-                'tax_on_service_charge': getattr(prop, 'tax_on_service_charge', True),
-                'is_active': prop.is_active,
-            })
-        
-        context.update({
-            'org': org,
-            'organization': org,
-            'properties': properties_data,
-            'property_count': len(properties_data),
-            'total_rooms': sum(p['total_rooms'] for p in properties_data),
-        })
-        
-        return context
-
 
 # =============================================================================
 # ORGANIZATION API

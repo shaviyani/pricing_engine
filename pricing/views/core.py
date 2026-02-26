@@ -242,11 +242,12 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context['nav_active'] = 'dashboard'
         prop = context['property']
-        
+
         # Get property-scoped querysets
         qs = self.get_property_querysets(prop)
-        
+
         # Quick stats
         context['stats'] = {
             'seasons_count': qs['seasons'].count(),
@@ -330,7 +331,23 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
         context['today_month'] = today.month
 
         return context
-    
+
+
+class MarketContextAjaxView(PropertyMixin, View):
+    """AJAX endpoint: returns market context JSON for the property dashboard."""
+
+    def get(self, request, *args, **kwargs):
+        prop = self.get_property()
+        country_code = getattr(prop, 'country_code', 'MV') or 'MV'
+
+        try:
+            from platform_data.services import MarketSignalService
+            data = MarketSignalService.get_market_context(country_code)
+        except Exception as e:
+            logger.exception("Market context error")
+            data = {'has_data': False, 'error': str(e)}
+
+        return JsonResponse(data)
 
 
 # =============================================================================

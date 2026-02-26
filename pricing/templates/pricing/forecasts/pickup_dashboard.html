@@ -76,7 +76,7 @@
             <p class="text-xs opacity-75 mt-1">Future arrivals</p>
         </div>
         
-        <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
+        <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
             <p class="text-sm font-medium opacity-90">Booking Velocity</p>
             <p class="text-3xl font-bold mt-1">{{ kpis.booking_velocity }}</p>
             <p class="text-xs opacity-75 mt-1">
@@ -103,7 +103,7 @@
             <p class="text-xs opacity-75 mt-1">days to arrival</p>
         </div>
         
-        <div class="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
+        <div class="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-5 text-white shadow-lg transform hover:-translate-y-1 transition">
             <p class="text-sm font-medium opacity-90">OTB Next 90 Days</p>
             <p class="text-3xl font-bold mt-1">${{ kpis.otb_90_revenue|floatformat:0|intcomma }}</p>
             <p class="text-xs opacity-75 mt-1">{{ kpis.otb_90_occupancy }}% occupancy</p>
@@ -128,7 +128,7 @@
                         <span class="text-gray-600">Pickup Forecast</span>
                     </div>
                     <div class="flex items-center">
-                        <span class="w-3 h-3 rounded-full bg-purple-500 mr-2"></span>
+                        <span class="w-3 h-3 rounded-full bg-amber-500 mr-2"></span>
                         <span class="text-gray-600">Your Scenario</span>
                     </div>
                 </div>
@@ -145,8 +145,9 @@
                         <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">OTB Occ</th>
                         <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-green-50">Fcst RN</th>
                         <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-green-50">Fcst Occ</th>
-                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-purple-50">Scenario</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-amber-50">Scenario</th>
                         <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">vs STLY</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Mkt</th>
                         <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Confidence</th>
                     </tr>
                 </thead>
@@ -177,20 +178,29 @@
                                 <div class="bg-green-500 h-1.5 rounded-full" style="width: {{ forecast.forecast_occupancy }}%"></div>
                             </div>
                         </td>
-                        <td class="px-4 py-4 text-center bg-purple-50">
-                            <div class="text-sm font-medium text-purple-700">{{ forecast.scenario_occupancy }}%</div>
+                        <td class="px-4 py-4 text-center bg-amber-50">
+                            <div class="text-sm font-medium text-amber-700">{{ forecast.scenario_occupancy }}%</div>
                         </td>
                         <td class="px-4 py-4 text-center">
                             {% if forecast.vs_stly is not None %}
                             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
                                 {% if forecast.vs_stly >= 5 %}bg-green-100 text-green-800{% elif forecast.vs_stly <= -5 %}bg-red-100 text-red-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
                                 {% if forecast.vs_stly >= 0 %}+{% endif %}{{ forecast.vs_stly }}%
-                                {% if forecast.vs_stly >= 5 %}🟢{% elif forecast.vs_stly <= -5 %}🔴{% else %}🟡{% endif %}
                             </span>
                             {% else %}
                             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                                 N/A
                             </span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-4 text-center">
+                            {% if forecast.market_factor and forecast.market_factor != 1.0 %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
+                                {% if forecast.market_factor > 1.0 %}bg-green-100 text-green-700{% else %}bg-red-100 text-red-700{% endif %}">
+                                {{ forecast.market_factor }}x
+                            </span>
+                            {% else %}
+                            <span class="text-xs text-gray-400">1.0x</span>
                             {% endif %}
                         </td>
                         <td class="px-4 py-4 text-center">
@@ -210,6 +220,7 @@
                 <div><strong>Fcst:</strong> Pickup-based forecast (data-driven)</div>
                 <div><strong>Scenario:</strong> Your target from Season settings</div>
                 <div><strong>STLY:</strong> Same Time Last Year comparison</div>
+                <div><strong>Mkt:</strong> Market signal factor from MoT data</div>
             </div>
         </div>
     </div>
@@ -419,55 +430,59 @@
         <div class="flex items-center justify-between mb-6">
             <div>
                 <h2 class="text-xl font-bold text-gray-900">Pickup Curves by Season</h2>
-                <p class="text-sm text-gray-600">Historical booking patterns - % of final occupancy booked at each point</p>
+                <p class="text-sm text-gray-600">Historical booking patterns from real reservation data</p>
             </div>
-            <div class="flex items-center space-x-4 text-sm">
+            <div class="flex items-center space-x-4 text-sm" id="pickupCurvesLegend">
+                {% for s in pickup_season_details %}
                 <div class="flex items-center">
-                    <span class="w-4 h-1 bg-red-500 rounded mr-2"></span>
-                    <span class="text-gray-600">Peak</span>
+                    <span class="w-4 h-1 rounded mr-2" style="background-color: {{ s.color }}"></span>
+                    <span class="text-gray-600 capitalize">{{ s.type }}</span>
                 </div>
-                <div class="flex items-center">
-                    <span class="w-4 h-1 bg-orange-500 rounded mr-2"></span>
-                    <span class="text-gray-600">High</span>
-                </div>
-                <div class="flex items-center">
-                    <span class="w-4 h-1 bg-blue-500 rounded mr-2"></span>
-                    <span class="text-gray-600">Shoulder</span>
-                </div>
-                <div class="flex items-center">
-                    <span class="w-4 h-1 bg-gray-400 rounded mr-2"></span>
-                    <span class="text-gray-600">Low</span>
-                </div>
+                {% endfor %}
             </div>
         </div>
-        
+
+        {% if pickup_curves %}
         <div class="chart-container" style="height: 350px;">
             <canvas id="pickupCurvesChart"></canvas>
         </div>
-        
-        <!-- Curve Insights -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-            <div class="bg-red-50 rounded-lg p-4 border border-red-100">
-                <p class="text-xs text-red-700 font-semibold uppercase">Peak Season</p>
-                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>45 days</strong></p>
-                <p class="text-xs text-gray-500">Fast early pickup</p>
+
+        <!-- Data Quality & Insights -->
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
+            {% for s in pickup_season_details %}
+            <div class="rounded-lg p-4 border" style="background-color: color-mix(in srgb, {{ s.color }} 10%, white); border-color: color-mix(in srgb, {{ s.color }} 25%, white);">
+                <div class="flex items-center justify-between">
+                    <p class="text-xs font-semibold uppercase" style="color: {{ s.color }}">{{ s.type }} Season</p>
+                    <span class="text-xs px-1.5 py-0.5 rounded {% if s.quality == 'good' %}bg-green-100 text-green-700{% elif s.quality == 'limited' %}bg-amber-100 text-amber-700{% else %}bg-gray-100 text-gray-500{% endif %}">
+                        {{ s.quality }} ({{ s.count }} season{{ s.count|pluralize }})
+                    </span>
+                </div>
+                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>{{ s.half_booked_days }} days</strong></p>
+                <p class="text-xs text-gray-500">{{ s.description }}</p>
             </div>
-            <div class="bg-orange-50 rounded-lg p-4 border border-orange-100">
-                <p class="text-xs text-orange-700 font-semibold uppercase">High Season</p>
-                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>40 days</strong></p>
-                <p class="text-xs text-gray-500">Steady buildup</p>
-            </div>
-            <div class="bg-blue-50 rounded-lg p-4 border border-blue-100">
-                <p class="text-xs text-blue-700 font-semibold uppercase">Shoulder Season</p>
-                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>30 days</strong></p>
-                <p class="text-xs text-gray-500">Later decisions</p>
-            </div>
-            <div class="bg-gray-100 rounded-lg p-4 border border-gray-200">
-                <p class="text-xs text-gray-700 font-semibold uppercase">Low Season</p>
-                <p class="text-sm text-gray-700 mt-1">50% booked by <strong>21 days</strong></p>
-                <p class="text-xs text-gray-500">Last-minute heavy</p>
+            {% endfor %}
+        </div>
+
+        <!-- Data disclaimer -->
+        <div class="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
+            <div class="flex items-start">
+                <svg class="w-4 h-4 text-amber-600 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <div class="text-xs text-amber-900">
+                    <strong>Data Note:</strong> Curves are calculated from completed past seasons. More historical data improves accuracy. Seasons marked "limited" have fewer than 3 data points.
+                </div>
             </div>
         </div>
+        {% else %}
+        <div class="text-center py-12 text-gray-500">
+            <svg class="mx-auto h-10 w-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+            <p class="text-sm font-medium">No completed seasons found</p>
+            <p class="text-xs mt-1">Pickup curves will appear once past seasons have reservation data.</p>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Alert & Recommendations -->
@@ -547,6 +562,11 @@
         --color-blue: #3b82f6;
         --color-purple: #a855f7;
         --color-gray: #9ca3af;
+
+        /* Season type colors */
+        --season-peak: #ef4444;
+        --season-shoulder: #3b82f6;
+        --season-low: #9ca3af;
     }
 </style>
 {% endblock %}
@@ -823,57 +843,45 @@ function initVelocityChart() {
 function initPickupCurvesChart() {
     var ctx = document.getElementById('pickupCurvesChart');
     if (!ctx || !chartData.pickupCurves) return;
-    
+
     if (pickupCurvesChart) pickupCurvesChart.destroy();
-    
+
     var data = chartData.pickupCurves;
-    
+    var series = data.series || {};
+
+    // Color map for season types
+    var seasonColors = {
+        peak: 'rgb(239, 68, 68)',
+        shoulder: 'rgb(59, 130, 246)',
+        low: 'rgb(156, 163, 175)'
+    };
+
+    // Build datasets dynamically from available season types
+    var datasets = [];
+    var typeOrder = ['peak', 'shoulder', 'low'];
+    typeOrder.forEach(function(st) {
+        if (series[st] && series[st].length > 0) {
+            var color = seasonColors[st] || 'rgb(107, 114, 128)';
+            datasets.push({
+                label: st.charAt(0).toUpperCase() + st.slice(1) + ' Season',
+                data: series[st],
+                borderColor: color,
+                backgroundColor: 'transparent',
+                borderWidth: 3,
+                tension: 0.4,
+                pointRadius: 4,
+                pointBackgroundColor: color
+            });
+        }
+    });
+
+    if (datasets.length === 0) return;
+
     pickupCurvesChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: data.days_out.map(function(d) { return d + 'd'; }),
-            datasets: [
-                {
-                    label: 'Peak Season',
-                    data: data.peak,
-                    borderColor: 'rgb(239, 68, 68)',
-                    backgroundColor: 'transparent',
-                    borderWidth: 3,
-                    tension: 0.4,
-                    pointRadius: 4,
-                    pointBackgroundColor: 'rgb(239, 68, 68)'
-                },
-                {
-                    label: 'High Season',
-                    data: data.high,
-                    borderColor: 'rgb(249, 115, 22)',
-                    backgroundColor: 'transparent',
-                    borderWidth: 3,
-                    tension: 0.4,
-                    pointRadius: 4,
-                    pointBackgroundColor: 'rgb(249, 115, 22)'
-                },
-                {
-                    label: 'Shoulder Season',
-                    data: data.shoulder,
-                    borderColor: 'rgb(59, 130, 246)',
-                    backgroundColor: 'transparent',
-                    borderWidth: 3,
-                    tension: 0.4,
-                    pointRadius: 4,
-                    pointBackgroundColor: 'rgb(59, 130, 246)'
-                },
-                {
-                    label: 'Low Season',
-                    data: data.low,
-                    borderColor: 'rgb(156, 163, 175)',
-                    backgroundColor: 'transparent',
-                    borderWidth: 3,
-                    tension: 0.4,
-                    pointRadius: 4,
-                    pointBackgroundColor: 'rgb(156, 163, 175)'
-                }
-            ]
+            datasets: datasets
         },
         options: {
             responsive: true,
@@ -906,7 +914,7 @@ function initPickupCurvesChart() {
                 },
                 x: {
                     reverse: true,
-                    title: { display: true, text: 'Days Before Arrival' },
+                    title: { display: true, text: 'Days Before Season Start' },
                     grid: { display: false }
                 }
             }
@@ -968,11 +976,11 @@ function showMonthDetail(year, month) {
                 <p class="text-sm text-green-700">' + forecast.forecast_nights.toLocaleString() + ' room nights</p>\
                 <p class="text-sm text-green-600">$' + forecast.forecast_revenue.toLocaleString() + ' revenue</p>\
             </div>\
-            <div class="bg-purple-50 rounded-lg p-4">\
-                <p class="text-xs text-purple-700 font-medium uppercase">Your Scenario</p>\
-                <p class="text-3xl font-bold text-purple-900 mt-1">' + forecast.scenario_occupancy + '%</p>\
-                <p class="text-sm text-purple-700">' + forecast.scenario_nights.toLocaleString() + ' room nights</p>\
-                <p class="text-sm text-purple-600">From Season settings</p>\
+            <div class="bg-amber-50 rounded-lg p-4">\
+                <p class="text-xs text-amber-700 font-medium uppercase">Your Scenario</p>\
+                <p class="text-3xl font-bold text-amber-900 mt-1">' + forecast.scenario_occupancy + '%</p>\
+                <p class="text-sm text-amber-700">' + forecast.scenario_nights.toLocaleString() + ' room nights</p>\
+                <p class="text-sm text-amber-600">From Season settings</p>\
             </div>\
         </div>\
         \
@@ -1004,6 +1012,20 @@ function showMonthDetail(year, month) {
                 </div>\
                 <span class="text-2xl font-bold ' + (forecast.vs_stly >= 0 ? 'text-green-600' : 'text-red-600') + '">\
                     ' + (forecast.vs_stly >= 0 ? '+' : '') + forecast.vs_stly + '%\
+                </span>\
+            </div>\
+        </div>\
+        ' : '') + '\
+        \
+        ' + (forecast.market_factor && forecast.market_factor !== 1.0 ? '\
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">\
+            <div class="flex items-center justify-between">\
+                <div>\
+                    <p class="text-sm font-semibold text-blue-900">Market Signal</p>\
+                    <p class="text-xs text-blue-700">Based on MoT arrival trends (YoY)</p>\
+                </div>\
+                <span class="text-xl font-bold ' + (forecast.market_factor >= 1.0 ? 'text-green-600' : 'text-red-600') + '">\
+                    ' + forecast.market_factor + 'x\
                 </span>\
             </div>\
         </div>\

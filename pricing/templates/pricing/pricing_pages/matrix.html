@@ -278,14 +278,22 @@
             <p class="text-gray-600 mt-1">{{ hotel.name }} • Rates by channel and modifier</p>
         </div>
         <div class="flex items-center gap-3 no-print">
+            <a href="{% url 'pricing:pricing_matrix_pdf' org_code=org.code prop_code=prop.code %}" target="_blank"
+                class="px-4 py-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-sm font-medium text-blue-700 transition inline-flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                PDF
+            </a>
             <button onclick="expandAllChannels()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
                 Expand All
             </button>
             <button onclick="collapseAllChannels()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
                 Collapse All
             </button>
-            <button onclick="window.print()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
-                🖨️ Print
+            <button onclick="window.print()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition inline-flex items-center">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+                Print
             </button>
         </div>
     </div>
@@ -297,7 +305,7 @@
             <p class="text-2xl font-bold mt-1">{{ hotel.service_charge_percent|default:"10" }}%</p>
             <p class="text-xs opacity-75 mt-1">Added to subtotal</p>
         </div>
-        <div class="kpi-card bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-5 text-white shadow-lg">
+        <div class="kpi-card bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 text-white shadow-lg">
             <p class="text-sm font-medium opacity-90">Tax (GST)</p>
             <p class="text-2xl font-bold mt-1">{{ hotel.tax_percent|default:"16" }}%</p>
             <p class="text-xs opacity-75 mt-1">{% if hotel.tax_on_service_charge %}On subtotal + SC{% else %}On subtotal only{% endif %}</p>
@@ -345,6 +353,17 @@
                     <option value="2" {% if pax == 2 %}selected{% endif %}>2 Guests</option>
                     <option value="3" {% if pax == 3 %}selected{% endif %}>3 Guests</option>
                     <option value="4" {% if pax == 4 %}selected{% endif %}>4 Guests</option>
+                </select>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label for="channelFilter" class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Channel</label>
+                <select id="channelFilter" name="channel_id" class="filter-select" onchange="this.form.submit()">
+                    <option value="all" {% if not selected_channel %}selected{% endif %}>All Channels</option>
+                    {% for ch in all_channels %}
+                    <option value="{{ ch.id }}" {% if selected_channel and ch.id == selected_channel.id %}selected{% endif %}>
+                        {{ ch.name }}
+                    </option>
+                    {% endfor %}
                 </select>
             </div>
         </form>
@@ -469,7 +488,7 @@
                     {% with room_matrix=matrix|get_item:room.id %}
                     <tr>
                         <td colspan="{{ seasons|length|add:1 }}" class="bg-gray-100 text-left px-4 py-3 font-bold text-gray-800 text-base border-b-2 border-gray-300">
-                            🏨 {{ room.name }}
+                            {{ room.name }}
                             <span class="font-normal text-gray-500 text-sm ml-2">
                                 Base: ${{ room.get_effective_base_rate|floatformat:0 }}
                                 {% if room.get_premium_percent > 0 %}
@@ -486,7 +505,7 @@
                     {% with channel_mods=channel_modifiers|get_item:channel.id %}
                     <tr class="channel-header-row" onclick="toggleChannel('room{{ room.id }}-channel{{ channel.id }}')">
                         <td class="channel-name-cell">
-                            <span class="toggle-icon collapsed" id="toggle-room{{ room.id }}-channel{{ channel.id }}">▼</span>
+                            <span class="toggle-icon collapsed" id="toggle-room{{ room.id }}-channel{{ channel.id }}"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7"/></svg></span>
                             <span class="channel-info">
                                 {{ channel.name }}
                                 {% if channel.base_discount_percent > 0 %}<span class="channel-badge discount">-{{ channel.base_discount_percent }}%</span>{% endif %}
@@ -500,7 +519,7 @@
                         {% endfor %}
                     </tr>
                     <tr class="bar-row room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
-                        <td class="row-label">📊 BAR (Reference)</td>
+                        <td class="row-label">BAR (Reference)</td>
                         {% for season in seasons %}
                         {% with cell=channel_data|get_item:season.id %}
                         <td><div class="rate-dual"><span class="rate-subtotal" style="color:#166534;">${{ cell.bar_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.bar_rate|floatformat:2 }}</span></div></td>
@@ -518,7 +537,7 @@
                     {% for modifier in channel_mods %}
                     <tr class="modifier-row {% if modifier.is_stacked %}stacked{% endif %} room{{ room.id }}-channel{{ channel.id }}-details channel-details-hidden">
                         <td class="row-label">
-                            {% if modifier.modifier_type == 'member' %}🎯{% elif modifier.modifier_type == 'mobile' %}📱{% elif modifier.modifier_type == 'promo' %}📧{% elif modifier.modifier_type == 'last_minute' %}⚡{% elif modifier.modifier_type == 'early_bird' %}🐦{% elif modifier.modifier_type == 'corporate' %}🏢{% else %}📋{% endif %}
+                            <span class="inline-block w-2 h-2 rounded-full mr-1 {% if modifier.modifier_type == 'member' %}bg-yellow-500{% elif modifier.modifier_type == 'mobile' %}bg-blue-500{% elif modifier.modifier_type == 'promo' %}bg-pink-500{% elif modifier.modifier_type == 'last_minute' %}bg-amber-500{% elif modifier.modifier_type == 'early_bird' %}bg-emerald-500{% elif modifier.modifier_type == 'corporate' %}bg-slate-500{% else %}bg-gray-400{% endif %}"></span>
                             {{ modifier.name }}
                             {% if modifier.discount_percent > 0 %}<span class="discount-badge">-{{ modifier.discount_percent }}%</span>{% endif %}
                         </td>
@@ -547,7 +566,7 @@
                     {% with channel_mods=channel_modifiers|get_item:channel.id %}
                     <tr class="channel-header-row" onclick="toggleChannel('channel{{ channel.id }}')">
                         <td class="channel-name-cell">
-                            <span class="toggle-icon collapsed" id="toggle-channel{{ channel.id }}">▼</span>
+                            <span class="toggle-icon collapsed" id="toggle-channel{{ channel.id }}"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7"/></svg></span>
                             <span class="channel-info">
                                 {{ channel.name }}
                                 {% if channel.base_discount_percent > 0 %}<span class="channel-badge discount">-{{ channel.base_discount_percent }}%</span>{% endif %}
@@ -561,7 +580,7 @@
                         {% endfor %}
                     </tr>
                     <tr class="bar-row channel{{ channel.id }}-details channel-details-hidden">
-                        <td class="row-label">📊 BAR (Reference)</td>
+                        <td class="row-label">BAR (Reference)</td>
                         {% for season in seasons %}
                         {% with cell=channel_data|get_item:season.id %}
                         <td><div class="rate-dual"><span class="rate-subtotal" style="color:#166534;">${{ cell.bar_subtotal|floatformat:2 }}</span><span class="rate-final">${{ cell.bar_rate|floatformat:2 }}</span></div></td>
@@ -579,7 +598,7 @@
                     {% for modifier in channel_mods %}
                     <tr class="modifier-row {% if modifier.is_stacked %}stacked{% endif %} channel{{ channel.id }}-details channel-details-hidden">
                         <td class="row-label">
-                            {% if modifier.modifier_type == 'member' %}🎯{% elif modifier.modifier_type == 'mobile' %}📱{% elif modifier.modifier_type == 'promo' %}📧{% elif modifier.modifier_type == 'last_minute' %}⚡{% elif modifier.modifier_type == 'early_bird' %}🐦{% elif modifier.modifier_type == 'corporate' %}🏢{% else %}📋{% endif %}
+                            <span class="inline-block w-2 h-2 rounded-full mr-1 {% if modifier.modifier_type == 'member' %}bg-yellow-500{% elif modifier.modifier_type == 'mobile' %}bg-blue-500{% elif modifier.modifier_type == 'promo' %}bg-pink-500{% elif modifier.modifier_type == 'last_minute' %}bg-amber-500{% elif modifier.modifier_type == 'early_bird' %}bg-emerald-500{% elif modifier.modifier_type == 'corporate' %}bg-slate-500{% else %}bg-gray-400{% endif %}"></span>
                             {{ modifier.name }}
                             {% if modifier.discount_percent > 0 %}<span class="discount-badge">-{{ modifier.discount_percent }}%</span>{% endif %}
                         </td>
@@ -607,10 +626,10 @@
     </div>
     {% else %}
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
-        <div class="text-gray-400 text-6xl mb-4">📊</div>
+        <div class="text-gray-300 mb-4"><svg class="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg></div>
         <h2 class="text-xl font-semibold text-gray-700 mb-2">No Data Available</h2>
         <p class="text-gray-500 mb-6">Please add room types, seasons, and channels first.</p>
-        <a href="{% url 'pricing:dashboard' org_code=org_code prop_code=prop_code %}" class="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">⚙️ Configure Pricing</a>
+        <a href="{% url 'pricing:dashboard' org_code=org_code prop_code=prop_code %}" class="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"><svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>Configure Pricing</a>
     </div>
     {% endif %}
     

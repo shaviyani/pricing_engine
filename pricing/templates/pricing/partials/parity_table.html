@@ -64,15 +64,15 @@
                 <td class="px-4 py-3 whitespace-nowrap text-center">
                     {% if item.status == 'good' %}
                     <span class="inline-flex px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">
-                        ✓ {{ item.status_text }}
+                        {{ item.status_text }}
                     </span>
                     {% elif item.status == 'warning' %}
                     <span class="inline-flex px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800">
-                        ⚠ {{ item.status_text }}
+                        {{ item.status_text }}
                     </span>
                     {% else %}
                     <span class="inline-flex px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
-                        ℹ {{ item.status_text }}
+                        {{ item.status_text }}
                     </span>
                     {% endif %}
                 </td>

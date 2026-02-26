@@ -57,10 +57,11 @@ class PricingMatrixView(PropertyMixin, TemplateView):
     - OTA expanded by default, others collapsed
     """
     template_name = 'pricing/pricing_pages/matrix.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        
+        context['nav_active'] = 'pricing'
+
         from pricing.models import (
             Property, Season, RoomType, Channel, RatePlan, RateModifier,
             PricingMatrixVersion
@@ -89,21 +90,34 @@ class PricingMatrixView(PropertyMixin, TemplateView):
         room_type_id = self.request.GET.get('room_type_id', 'all')
         rate_plan_id = self.request.GET.get('rate_plan_id')
         pax = int(self.request.GET.get('pax', 2))
-        
+        channel_id = self.request.GET.get('channel_id', 'all')
+
         # Get all entities (version-scoped)
         version_filter = {'hotel': hotel}
         if version:
             version_filter['version'] = version
-        
+
         seasons = Season.objects.filter(**version_filter).order_by('start_date')
         room_types = RoomType.objects.filter(**version_filter).order_by('sort_order')
         channels = Channel.objects.filter(**version_filter).order_by('sort_order')
         rate_plans = RatePlan.objects.filter(**version_filter).order_by('sort_order')
-        
+
+        # Store all channels for the filter dropdown, then filter if specific channel selected
+        all_channels = Channel.objects.filter(**version_filter).order_by('sort_order')
+        selected_channel = None
+        if channel_id != 'all':
+            try:
+                channels = channels.filter(id=int(channel_id))
+                selected_channel = channels.first()
+            except (ValueError, TypeError):
+                pass
+
         context['seasons'] = seasons
         context['room_types'] = room_types
         context['channels'] = channels
         context['rate_plans'] = rate_plans
+        context['all_channels'] = all_channels
+        context['selected_channel'] = selected_channel
         context['pax'] = pax
         
         # Determine if showing all rooms or single room
@@ -971,9 +985,10 @@ class PricingMatrixChannelView(PropertyMixin, TemplateView):
     - Rate Plans & Modifiers as expandable detail
     """
     template_name = 'pricing/pricing_pages/matrix_channel.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context['nav_active'] = 'pricing'
         prop = context['property']
         
         # Get property-scoped data
@@ -1320,10 +1335,11 @@ class DateRateOverrideCalendarView(PropertyMixin, TemplateView):
     - Color coding by override type (increase/decrease)
     """
     template_name = 'pricing/pricing_pages/date_override_calendar.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        
+        context['nav_active'] = 'pricing'
+
         from pricing.models import (
             Property, DateRateOverride, Season, RoomType, RatePlan, Channel
         )
@@ -1897,6 +1913,7 @@ class RateLookupView(PropertyMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context['nav_active'] = 'rates'
         prop = context['property']
 
         # Get target date from query param or default to today
@@ -2097,6 +2114,7 @@ class AgentRatesView(PropertyMixin, TemplateView):
         from pricing.services import calculate_final_rate
 
         context = super().get_context_data(**kwargs)
+        context['nav_active'] = 'rates'
         prop = context['property']
 
         qs = self.get_property_querysets(prop)

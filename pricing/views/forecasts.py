@@ -45,11 +45,11 @@ class PickupDashboardView(PropertyMixin, TemplateView):
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context['nav_active'] = 'forecasts'
         prop = context['property']
-        
-        from pricing.models import PickupCurve, RoomType, Season
+
         from pricing.services import PickupAnalysisService
-        
+
         # Pass property to service
         service = PickupAnalysisService(property=prop)
         today = date.today()
@@ -139,67 +139,59 @@ class PickupDashboardView(PropertyMixin, TemplateView):
         context['channel_data'] = channel_data
         
         # =====================================================================
-        # PICKUP CURVES
+        # PICKUP CURVES (from real reservation data)
         # =====================================================================
-        curves = {}
-        default_curves = service.get_default_pickup_curves()
-        
-        for season_type in ['peak', 'high', 'shoulder', 'low']:
-            curve_data = PickupCurve.objects.filter(
-                season_type=season_type,
-                season__isnull=True
-            )
-            
-            if hasattr(PickupCurve, 'hotel'):
-                curve_data = curve_data.filter(hotel=prop)
-            
-            curve_data = curve_data.order_by('-days_out')
-            
-            if curve_data.exists():
-                curves[season_type] = [
-                    {'days_out': c.days_out, 'percent': float(c.cumulative_percent)}
-                    for c in curve_data
-                ]
-            else:
-                curves[season_type] = [
-                    {'days_out': d, 'percent': p}
-                    for d, p in default_curves[season_type]
-                ]
-        
+        pickup_result = self._calculate_real_pickup_curves(prop, today)
+        curves = pickup_result['curves']
         context['pickup_curves'] = curves
+
+        # Build a combined list for easy template iteration
+        season_colors = {'peak': '#ef4444', 'shoulder': '#3b82f6', 'low': '#9ca3af'}
+        pickup_season_details = []
+        for st in ['peak', 'shoulder', 'low']:
+            if st in pickup_result['insights']:
+                pickup_season_details.append({
+                    'type': st,
+                    'color': season_colors.get(st, '#6b7280'),
+                    'half_booked_days': pickup_result['insights'][st]['half_booked_days'],
+                    'description': pickup_result['insights'][st]['description'],
+                    'quality': pickup_result['data_quality'].get(st, 'insufficient'),
+                    'count': pickup_result['season_count'].get(st, 0),
+                })
+        context['pickup_season_details'] = pickup_season_details
         
         # =====================================================================
         # CHART DATA AS JSON (for JavaScript)
         # =====================================================================
         chart_data = {
-            'bookingPace': {
-                'dates': booking_pace['dates'],
-                'cumNights': booking_pace['cum_nights'],
-                'cumRevenue': booking_pace['cum_revenue'],
-                'stlyNights': booking_pace['stly_nights'],
-            },
-            'leadTime': {
-                'labels': [b['label'] for b in lead_time_data['buckets']],
-                'counts': [b['count'] for b in lead_time_data['buckets']],
-                'percents': [b['percent'] for b in lead_time_data['buckets']],
-            },
-            'channels': {
-                'labels': [c['name'] for c in channel_data],
-                'data': [c['percent'] for c in channel_data],
-            },
-            'velocity': {
-                'dates': daily_velocity['dates'],
-                'dailyCount': daily_velocity['daily_count'],
-                'dailyRevenue': daily_velocity['daily_revenue'],
-            },
-            'pickupCurves': {
-                'daysOut': [90, 75, 60, 45, 30, 15, 7, 0],
-                'peak': [d['percent'] for d in curves.get('peak', [])[-8:]],
-                'high': [d['percent'] for d in curves.get('high', [])[-8:]],
-                'shoulder': [d['percent'] for d in curves.get('shoulder', [])[-8:]],
-                'low': [d['percent'] for d in curves.get('low', [])[-8:]],
-            },
-        }
+    'bookingPace': {
+        'dates': booking_pace['dates'],
+        'cum_nights': booking_pace['cum_nights'],       # was cumNights
+        'cum_revenue': booking_pace['cum_revenue'],     # was cumRevenue
+        'stly_nights': booking_pace['stly_nights'],     # was stlyNights
+    },
+    'leadTime': {
+        'labels': [b['label'] for b in lead_time_data['buckets']],
+        'counts': [b['count'] for b in lead_time_data['buckets']],
+        'percents': [b['percent'] for b in lead_time_data['buckets']],
+    },
+    'channels': {
+        'labels': [c['name'] for c in channel_data],
+        'data': [c['percent'] for c in channel_data],
+    },
+    'dailyVelocity': {                                  # was 'velocity'
+        'dates': daily_velocity['dates'],
+        'bookings': daily_velocity['daily_count'],      # was dailyCount
+        'revenue': daily_velocity['daily_revenue'],     # was dailyRevenue
+    },
+    'pickupCurves': {
+        'days_out': [90, 75, 60, 45, 30, 15, 7, 0],
+        'series': {
+            st: [d['percent'] for d in points[-8:]]
+            for st, points in curves.items()
+        },
+    },
+}
         context['chart_data_json'] = json.dumps(chart_data)
         
         # Last updated timestamp
@@ -357,6 +349,138 @@ class PickupDashboardView(PropertyMixin, TemplateView):
             })
         
         return result
+
+    def _calculate_real_pickup_curves(self, prop, today):
+        """
+        Calculate pickup curves from real reservation data.
+
+        For each season_type that has past completed seasons, calculates
+        what percentage of total room nights were booked at each checkpoint
+        (90, 75, 60, 45, 30, 15, 7, 0 days before season start).
+
+        Returns dict with:
+            curves: {season_type: [{'days_out': N, 'percent': P}, ...]}
+            insights: {season_type: {'half_booked_days': N, 'description': str}}
+            data_quality: {season_type: 'good'|'limited'|'insufficient'}
+            season_count: {season_type: N}
+        """
+        from pricing.models import Season, Reservation
+
+        checkpoints = [90, 75, 60, 45, 30, 15, 7, 0]
+
+        # Get all past completed seasons for this property
+        past_seasons = Season.objects.filter(
+            hotel=prop,
+            end_date__lt=today,
+        ).order_by('start_date')
+
+        # Group by season_type
+        seasons_by_type = {}
+        for season in past_seasons:
+            st = season.season_type
+            if st not in seasons_by_type:
+                seasons_by_type[st] = []
+            seasons_by_type[st].append(season)
+
+        curves = {}
+        insights = {}
+        data_quality = {}
+        season_count = {}
+
+        for season_type, seasons in seasons_by_type.items():
+            season_count[season_type] = len(seasons)
+
+            # Assess data quality
+            if len(seasons) >= 3:
+                data_quality[season_type] = 'good'
+            elif len(seasons) >= 1:
+                data_quality[season_type] = 'limited'
+            else:
+                data_quality[season_type] = 'insufficient'
+                continue
+
+            # For each season, calculate pickup percentages at each checkpoint
+            all_percentages = {cp: [] for cp in checkpoints}
+
+            for season in seasons:
+                # Total room nights for arrivals within this season
+                total_rn = Reservation.objects.filter(
+                    hotel=prop,
+                    arrival_date__gte=season.start_date,
+                    arrival_date__lte=season.end_date,
+                    status__in=['confirmed', 'checked_in', 'checked_out'],
+                ).aggregate(total=Sum('nights'))['total'] or 0
+
+                if total_rn == 0:
+                    continue
+
+                for cp in checkpoints:
+                    cutoff_date = season.start_date - timedelta(days=cp)
+                    booked_rn = Reservation.objects.filter(
+                        hotel=prop,
+                        arrival_date__gte=season.start_date,
+                        arrival_date__lte=season.end_date,
+                        booking_date__lte=cutoff_date,
+                        status__in=['confirmed', 'checked_in', 'checked_out'],
+                    ).aggregate(total=Sum('nights'))['total'] or 0
+
+                    pct = round(booked_rn / total_rn * 100, 1)
+                    all_percentages[cp].append(pct)
+
+            # Average across seasons
+            curve_points = []
+            for cp in checkpoints:
+                vals = all_percentages[cp]
+                if vals:
+                    avg_pct = round(sum(vals) / len(vals), 1)
+                else:
+                    avg_pct = 0.0
+                curve_points.append({'days_out': cp, 'percent': avg_pct})
+
+            curves[season_type] = curve_points
+
+            # Calculate "50% booked by N days" via interpolation
+            half_booked_days = None
+            for i in range(len(curve_points) - 1):
+                p1 = curve_points[i]
+                p2 = curve_points[i + 1]
+                if p1['percent'] <= 50 <= p2['percent']:
+                    # Linear interpolation
+                    if p2['percent'] != p1['percent']:
+                        ratio = (50 - p1['percent']) / (p2['percent'] - p1['percent'])
+                        days = p1['days_out'] - ratio * (p1['days_out'] - p2['days_out'])
+                        half_booked_days = round(days)
+                    else:
+                        half_booked_days = p1['days_out']
+                    break
+
+            if half_booked_days is None:
+                # Check if already above 50% at 90 days
+                if curve_points and curve_points[0]['percent'] >= 50:
+                    half_booked_days = 90
+                    description = 'Very early bookers'
+                else:
+                    half_booked_days = 0
+                    description = 'Last-minute heavy'
+            else:
+                if half_booked_days >= 60:
+                    description = 'Fast early pickup'
+                elif half_booked_days >= 30:
+                    description = 'Steady buildup'
+                else:
+                    description = 'Later decisions'
+
+            insights[season_type] = {
+                'half_booked_days': half_booked_days,
+                'description': description,
+            }
+
+        return {
+            'curves': curves,
+            'insights': insights,
+            'data_quality': data_quality,
+            'season_count': season_count,
+        }
 
 
 @require_GET

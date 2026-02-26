@@ -7,6 +7,7 @@ from pricing.views import (
     OrganizationDashboardView,
     PropertyListView,
     PropertyDashboardView,
+    MarketContextAjaxView,
 )
 
 urlpatterns = [
@@ -15,4 +16,5 @@ urlpatterns = [
     path('org/<slug:org_code>/', OrganizationDashboardView.as_view(), name='org_dashboard'),
     path('org/<slug:org_code>/properties/', PropertyListView.as_view(), name='property_list'),
     path('org/<slug:org_code>/<slug:prop_code>/', PropertyDashboardView.as_view(), name='property_dashboard'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/market-context/', MarketContextAjaxView.as_view(), name='market_context_api'),
 ]

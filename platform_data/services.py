@@ -506,3 +506,140 @@ class MarketSignalService:
             'total_arrival_records': total_arrival_records,
             'upcoming_events': active_events,
         }
+
+    # -----------------------------------------------------------------
+    # Market Context (for property dashboard panel)
+    # -----------------------------------------------------------------
+    @staticmethod
+    def get_market_context(country_code):
+        """
+        Dashboard-ready market context: latest KPIs + YoY change.
+
+        Returns dict consumed by the Market Context AJAX panel.
+        """
+        from .models import MarketKeyIndicator, MarketArrivalData
+
+        latest = MarketKeyIndicator.objects.filter(
+            country_code=country_code
+        ).order_by('-report_period').first()
+
+        if not latest:
+            return {'has_data': False}
+
+        # YoY comparison
+        prev_period = date(
+            latest.report_period.year - 1,
+            latest.report_period.month,
+            latest.report_period.day,
+        )
+        prev = MarketKeyIndicator.objects.filter(
+            country_code=country_code,
+            report_period=prev_period,
+        ).first()
+
+        yoy_arrivals = None
+        if prev and prev.total_arrivals:
+            yoy_arrivals = round(
+                (latest.total_arrivals - prev.total_arrivals) / prev.total_arrivals * 100, 1
+            )
+
+        yoy_occupancy = None
+        if prev and prev.occupancy_rate and latest.occupancy_rate:
+            yoy_occupancy = round(float(latest.occupancy_rate - prev.occupancy_rate), 1)
+
+        # Top 5 source markets for the latest period
+        top_markets = list(
+            MarketArrivalData.objects.filter(
+                country_code=country_code,
+                report_period=latest.report_period,
+            ).order_by('-arrivals')[:5].values(
+                'origin_country', 'arrivals', 'market_share_pct', 'yoy_change_pct'
+            )
+        )
+
+        return {
+            'has_data': True,
+            'period': latest.report_period.isoformat(),
+            'period_label': latest.report_period.strftime('%B %Y'),
+            'total_arrivals': latest.total_arrivals,
+            'occupancy_rate': float(latest.occupancy_rate) if latest.occupancy_rate else None,
+            'avg_stay_days': float(latest.avg_stay_days) if latest.avg_stay_days else None,
+            'total_bed_nights': latest.total_bed_nights,
+            'yoy_arrivals_pct': yoy_arrivals,
+            'yoy_occupancy_pp': yoy_occupancy,
+            'source_report': latest.source_report,
+            'top_markets': top_markets,
+        }
+
+    # -----------------------------------------------------------------
+    # Market YoY Factor (for forecast formula)
+    # -----------------------------------------------------------------
+    @staticmethod
+    def get_market_yoy_factor(country_code):
+        """
+        Returns a multiplicative factor for the forecast formula.
+
+        Logic:
+            yoy_pct  →  factor
+            +10%     →  1.05   (half-weight: market up → nudge forecast up)
+            -10%     →  0.95
+            no data  →  1.00   (neutral)
+
+        Capped to [0.85, 1.15] to avoid wild swings.
+        """
+        from .models import MarketKeyIndicator
+
+        latest = MarketKeyIndicator.objects.filter(
+            country_code=country_code
+        ).order_by('-report_period').first()
+
+        if not latest:
+            return 1.0
+
+        prev_period = date(
+            latest.report_period.year - 1,
+            latest.report_period.month,
+            latest.report_period.day,
+        )
+        prev = MarketKeyIndicator.objects.filter(
+            country_code=country_code,
+            report_period=prev_period,
+        ).first()
+
+        if not prev or not prev.total_arrivals:
+            return 1.0
+
+        yoy_pct = (latest.total_arrivals - prev.total_arrivals) / prev.total_arrivals * 100
+        # Half-weight: divide by 200 instead of 100
+        factor = 1.0 + (yoy_pct / 200)
+        return max(0.85, min(1.15, round(factor, 4)))
+
+    # -----------------------------------------------------------------
+    # Property vs Market (optional enrichment)
+    # -----------------------------------------------------------------
+    @staticmethod
+    def get_property_vs_market(country_code, property_occupancy, property_adr=None):
+        """
+        Compare property metrics against national KPIs.
+
+        Returns dict with index values (>1 = outperforming market).
+        """
+        from .models import MarketKeyIndicator
+
+        latest = MarketKeyIndicator.objects.filter(
+            country_code=country_code
+        ).order_by('-report_period').first()
+
+        if not latest or not latest.occupancy_rate:
+            return {'has_data': False}
+
+        market_occ = float(latest.occupancy_rate)
+        occ_index = round(property_occupancy / market_occ, 2) if market_occ > 0 else None
+
+        return {
+            'has_data': True,
+            'period_label': latest.report_period.strftime('%B %Y'),
+            'market_occupancy': market_occ,
+            'property_occupancy': property_occupancy,
+            'occupancy_index': occ_index,
+        }

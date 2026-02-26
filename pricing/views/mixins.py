@@ -74,7 +74,8 @@ class PropertyMixin(OrganizationMixin):
         # Store in session for redirect convenience
         self.request.session['current_property_id'] = prop.id
         self.request.session['current_org_id'] = context['organization'].id
-        
+
+        context['nav_active'] = ''
         return context
     
     def get_property_querysets(self, prop, version=None):

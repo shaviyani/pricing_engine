@@ -20,6 +20,7 @@ from .core import (
     OrganizationDashboardView,
     PropertyListView,
     PropertyDashboardView,
+    MarketContextAjaxView,
 )
 
 # Pricing views
@@ -64,9 +65,9 @@ from .admin_views import (
     ManageOrganizationView,
     ManagePropertyView,
     ManagePricingView,
+    ManageDynamicView,
     ManageOffersView,
     ManageImportView,
-    ManageReportsView,
     PropertyUpdateView,
     # Seasons
     SeasonListView,
@@ -103,7 +104,6 @@ from .admin_views import (
     SeasonModifierOverrideResetView,
     SeasonModifierOverrideBulkPopulateView,
     # Organization & Property Settings
-    OrganizationSettingsView,
     OrganizationUpdateView,
     PropertyCreateView,
     PropertyDeleteView,

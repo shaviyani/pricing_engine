@@ -36,8 +36,8 @@
                     <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Seasons</p>
                     <p class="mt-1 text-2xl font-bold text-gray-900">{{ stats.seasons_count }}</p>
                 </div>
-                <div class="p-3 bg-amber-100 rounded-lg">
-                    <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="p-3 bg-blue-100 rounded-lg">
+                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
                     </svg>
                 </div>
@@ -67,8 +67,8 @@
                     <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Rate Plans</p>
                     <p class="mt-1 text-2xl font-bold text-gray-900">{{ stats.rate_plans_count }}</p>
                 </div>
-                <div class="p-3 bg-green-100 rounded-lg">
-                    <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="p-3 bg-blue-100 rounded-lg">
+                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
                     </svg>
                 </div>
@@ -82,8 +82,8 @@
                     <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Channels</p>
                     <p class="mt-1 text-2xl font-bold text-gray-900">{{ stats.channels_count }}</p>
                 </div>
-                <div class="p-3 bg-purple-100 rounded-lg">
-                    <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="p-3 bg-blue-100 rounded-lg">
+                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
                     </svg>
                 </div>
@@ -265,8 +265,27 @@
             </div>
         </div>
 
-        <!-- Right Column: Quick Actions & Recent Reservations -->
+        <!-- Right Column: Market Context, Quick Actions & Recent Reservations -->
         <div class="space-y-6">
+
+            <!-- Market Context Panel (AJAX) -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200" id="market-context-card">
+                <div class="px-6 py-4 border-b border-gray-100">
+                    <div class="flex items-center justify-between">
+                        <h2 class="text-lg font-semibold text-gray-900">Market Context</h2>
+                        <span id="market-ctx-period" class="text-xs text-gray-400"></span>
+                    </div>
+                </div>
+                <div id="market-context-content" class="p-6">
+                    <div class="flex items-center justify-center py-6">
+                        <svg class="animate-spin h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="ml-3 text-sm text-gray-500">Loading market data...</span>
+                    </div>
+                </div>
+            </div>
 
             <!-- Quick Actions -->
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -285,6 +304,32 @@
                         </div>
                     </a>
 
+                    <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}"
+                       class="flex items-center p-3 bg-amber-50 rounded-lg hover:bg-amber-100 transition group">
+                        <div class="flex-shrink-0 w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center group-hover:bg-amber-200">
+                            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                            </svg>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm font-semibold text-gray-900">Rate Lookup</p>
+                            <p class="text-xs text-gray-500">Today's rates & quotes</p>
+                        </div>
+                    </a>
+
+                    <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}"
+                       class="flex items-center p-3 bg-rose-50 rounded-lg hover:bg-rose-100 transition group">
+                        <div class="flex-shrink-0 w-10 h-10 bg-rose-100 rounded-lg flex items-center justify-center group-hover:bg-rose-200">
+                            <svg class="w-5 h-5 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm font-semibold text-gray-900">Override Calendar</p>
+                            <p class="text-xs text-gray-500">Date-specific adjustments</p>
+                        </div>
+                    </a>
+
                     <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}"
                        class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-green-300 transition">
                         <div class="p-2 bg-green-100 rounded-lg mr-3">
@@ -299,9 +344,9 @@
                     </a>
 
                     <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}"
-                       class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-purple-300 transition">
-                        <div class="p-2 bg-purple-100 rounded-lg mr-3">
-                            <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                       class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-blue-300 transition">
+                        <div class="p-2 bg-blue-100 rounded-lg mr-3">
+                            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
                             </svg>
                         </div>
@@ -312,9 +357,9 @@
                     </a>
 
                     <a href="{% url 'pricing:agent_rates' org_code=org.code prop_code=prop.code %}"
-                       class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-teal-300 transition">
-                        <div class="p-2 bg-teal-100 rounded-lg mr-3">
-                            <svg class="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                       class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-blue-300 transition">
+                        <div class="p-2 bg-blue-100 rounded-lg mr-3">
+                            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
                             </svg>
                         </div>
@@ -701,7 +746,112 @@ function navigateOccCal(direction) {
     }
 }
 
+// ============================================================================
+// MARKET CONTEXT PANEL
+// ============================================================================
+function loadMarketContext() {
+    var url = "{% url 'pricing:market_context_api' org_code=org.code prop_code=prop.code %}";
+
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var el = document.getElementById('market-context-content');
+            if (!data.has_data) {
+                el.innerHTML =
+                    '<div class="text-center py-6">' +
+                        '<svg class="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+                            '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' +
+                        '</svg>' +
+                        '<p class="mt-2 text-sm text-gray-500">No market data available</p>' +
+                        '<p class="text-xs text-gray-400">Import a MoT report to see market context</p>' +
+                    '</div>';
+                return;
+            }
+
+            document.getElementById('market-ctx-period').textContent = data.period_label;
+
+            var html = '<div class="space-y-3">';
+
+            // KPI row
+            html += '<div class="grid grid-cols-2 gap-3">';
+
+            // Total arrivals
+            html += '<div class="bg-blue-50 rounded-lg p-3">';
+            html += '<p class="text-xs font-medium text-blue-600 uppercase">Arrivals</p>';
+            html += '<p class="text-lg font-bold text-gray-900">' + Number(data.total_arrivals).toLocaleString() + '</p>';
+            if (data.yoy_arrivals_pct !== null) {
+                var arrColor = data.yoy_arrivals_pct >= 0 ? 'text-green-600' : 'text-red-600';
+                var arrArrow = data.yoy_arrivals_pct >= 0 ? '\u2191' : '\u2193';
+                html += '<p class="text-xs ' + arrColor + '">' + arrArrow + ' ' + Math.abs(data.yoy_arrivals_pct) + '% YoY</p>';
+            }
+            html += '</div>';
+
+            // Occupancy
+            html += '<div class="bg-green-50 rounded-lg p-3">';
+            html += '<p class="text-xs font-medium text-green-600 uppercase">Mkt Occupancy</p>';
+            html += '<p class="text-lg font-bold text-gray-900">' + (data.occupancy_rate !== null ? data.occupancy_rate.toFixed(1) + '%' : '\u2014') + '</p>';
+            if (data.yoy_occupancy_pp !== null) {
+                var occColor = data.yoy_occupancy_pp >= 0 ? 'text-green-600' : 'text-red-600';
+                var occArrow = data.yoy_occupancy_pp >= 0 ? '\u2191' : '\u2193';
+                html += '<p class="text-xs ' + occColor + '">' + occArrow + ' ' + Math.abs(data.yoy_occupancy_pp) + 'pp YoY</p>';
+            }
+            html += '</div>';
+
+            html += '</div>'; // grid
+
+            // Avg stay
+            if (data.avg_stay_days !== null) {
+                html += '<div class="flex items-center justify-between text-sm">';
+                html += '<span class="text-gray-500">Avg Stay</span>';
+                html += '<span class="font-medium text-gray-900">' + data.avg_stay_days.toFixed(1) + ' days</span>';
+                html += '</div>';
+            }
+
+            // Bed nights
+            if (data.total_bed_nights) {
+                html += '<div class="flex items-center justify-between text-sm">';
+                html += '<span class="text-gray-500">Bed Nights</span>';
+                html += '<span class="font-medium text-gray-900">' + Number(data.total_bed_nights).toLocaleString() + '</span>';
+                html += '</div>';
+            }
+
+            // Top markets
+            if (data.top_markets && data.top_markets.length > 0) {
+                html += '<div class="border-t border-gray-100 pt-3 mt-3">';
+                html += '<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Top Source Markets</p>';
+                for (var i = 0; i < data.top_markets.length; i++) {
+                    var m = data.top_markets[i];
+                    html += '<div class="flex items-center justify-between py-1">';
+                    html += '<span class="text-sm text-gray-700">' + m.origin_country + '</span>';
+                    html += '<div class="text-right">';
+                    html += '<span class="text-sm font-medium text-gray-900">' + Number(m.arrivals).toLocaleString() + '</span>';
+                    if (m.yoy_change_pct !== null) {
+                        var mktColor = parseFloat(m.yoy_change_pct) >= 0 ? 'text-green-600' : 'text-red-600';
+                        html += ' <span class="text-xs ' + mktColor + '">(' + (parseFloat(m.yoy_change_pct) >= 0 ? '+' : '') + parseFloat(m.yoy_change_pct).toFixed(1) + '%)</span>';
+                    }
+                    html += '</div>';
+                    html += '</div>';
+                }
+                html += '</div>';
+            }
+
+            // Source
+            if (data.source_report) {
+                html += '<p class="text-xs text-gray-400 mt-2 pt-2 border-t border-gray-100">' + data.source_report + '</p>';
+            }
+
+            html += '</div>';
+            el.innerHTML = html;
+        })
+        .catch(function(err) {
+            console.error('Market context error:', err);
+            document.getElementById('market-context-content').innerHTML =
+                '<div class="text-center py-6 text-gray-500"><p class="text-sm">Unable to load market data</p></div>';
+        });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    loadMarketContext();
     loadPickupSummary();
     loadOccupancyCalendar(occCalYear, occCalMonth);
 });
