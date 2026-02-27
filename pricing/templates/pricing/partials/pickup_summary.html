@@ -33,13 +33,25 @@
     <div class="border border-gray-200 rounded-xl p-4">
         <div class="flex items-center justify-between mb-2">
             <h4 class="text-sm font-semibold text-gray-900">{{ forecast.month_name }}</h4>
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
-                {% if forecast.confidence_label == 'High' %}bg-green-100 text-green-800
-                {% elif forecast.confidence_label == 'Good' %}bg-blue-100 text-blue-800
-                {% elif forecast.confidence_label == 'Medium' %}bg-amber-100 text-amber-800
-                {% else %}bg-gray-100 text-gray-600{% endif %}">
-                {{ forecast.confidence_label }}
-            </span>
+            <div class="flex items-center gap-1.5">
+                {% if forecast.demand_index_pct is not None and forecast.demand_index_pct != 0 %}
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs
+                    {% if forecast.demand_index_pct > 0 %}bg-green-50 text-green-700
+                    {% elif forecast.demand_index_pct < 0 %}bg-red-50 text-red-700
+                    {% else %}bg-gray-50 text-gray-600{% endif %}"
+                    title="{{ forecast.demand_driver }} · {{ forecast.demand_source }}">
+                    {% if forecast.demand_index_pct > 0 %}&#8593;{% elif forecast.demand_index_pct < 0 %}&#8595;{% endif %}
+                    {{ forecast.demand_index_pct|floatformat:1 }}% mkt
+                </span>
+                {% endif %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
+                    {% if forecast.confidence_label == 'High' %}bg-green-100 text-green-800
+                    {% elif forecast.confidence_label == 'Good' %}bg-blue-100 text-blue-800
+                    {% elif forecast.confidence_label == 'Medium' %}bg-amber-100 text-amber-800
+                    {% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ forecast.confidence_label }}
+                </span>
+            </div>
         </div>
         <div class="space-y-2">
             <div class="flex justify-between text-sm">
@@ -62,6 +74,12 @@
                 <span class="font-medium {% if forecast.vs_stly >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
                     {% if forecast.vs_stly >= 0 %}+{% endif %}{{ forecast.vs_stly }}%
                 </span>
+            </div>
+            {% endif %}
+            {% if forecast.demand_driver %}
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-500">Demand Driver</span>
+                <span class="font-medium text-gray-700 text-xs">{{ forecast.demand_driver }}</span>
             </div>
             {% endif %}
         </div>

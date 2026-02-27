@@ -388,9 +388,9 @@ class DynamicPricingService:
             hotel=self.hotel,
             arrival_date__lte=target_date,
             departure_date__gt=target_date,
-            status__in=['confirmed', 'checked_in']
+            status__in=Reservation.FUTURE_STATUSES
         ).count()
-        
+
         occupancy_pct = Decimal(str(booked)) / Decimal(str(total_rooms)) * Decimal('100')
         
         # 3. Days until arrival
@@ -672,7 +672,7 @@ class DynamicPricingOptimizer:
         # Get all reservations for this hotel (non-cancelled)
         reservations = Reservation.objects.filter(
             hotel=self.hotel,
-            status__in=['confirmed', 'checked_in', 'checked_out'],
+            status__in=Reservation.ACTIVE_STATUSES,
         ).exclude(adr=Decimal('0.00')).select_related('room_type')
         
         if not reservations.exists():
@@ -743,7 +743,7 @@ class DynamicPricingOptimizer:
                 arrival_date__lte=res.arrival_date,
                 departure_date__gt=res.arrival_date,
                 booking_date__lte=res.booking_date,
-                status__in=['confirmed', 'checked_in', 'checked_out'],
+                status__in=Reservation.ACTIVE_STATUSES,
             ).exclude(pk=res.pk).count()
             
             occupancy_pct = Decimal(str(otb_at_booking)) / Decimal(str(total_rooms)) * Decimal('100')
@@ -823,7 +823,7 @@ class DynamicPricingOptimizer:
                     hotel=self.hotel,
                     arrival_date__lte=arr_date,
                     departure_date__gt=arr_date,
-                    status__in=['confirmed', 'checked_in', 'checked_out'],
+                    status__in=Reservation.ACTIVE_STATUSES,
                 ).count()
                 total_booked_nights += booked
                 total_available_nights += total_rooms

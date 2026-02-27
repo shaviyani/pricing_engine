@@ -1,0 +1,438 @@
+{% extends 'pricing/base.html' %}
+{% load humanize %}
+
+{% block title %}Booking Trends - {{ prop.name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Booking Trends</h1>
+            {% if has_data and trends %}
+            <p class="text-sm text-gray-500">Bookings received in the last {{ days }} days · {{ trends.period_start }} to {{ trends.period_end }}</p>
+            {% endif %}
+        </div>
+        <div class="flex items-center gap-2">
+            <select id="periodSelect" class="text-sm border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500">
+                <option value="7" {% if days == 7 %}selected{% endif %}>Last 7 days</option>
+                <option value="14" {% if days == 14 %}selected{% endif %}>Last 14 days</option>
+                <option value="30" {% if days == 30 %}selected{% endif %}>Last 30 days</option>
+                <option value="60" {% if days == 60 %}selected{% endif %}>Last 60 days</option>
+                <option value="90" {% if days == 90 %}selected{% endif %}>Last 90 days</option>
+            </select>
+        </div>
+    </div>
+
+    {% if not has_data %}
+    <!-- No data state -->
+    <div class="text-center py-16 bg-white rounded-xl shadow-sm border">
+        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">Import reservation data to see booking trends.</p>
+    </div>
+    {% else %}
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <!-- Bookings -->
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Bookings</p>
+            <p class="text-2xl font-bold text-gray-900 mt-1">{{ trends.kpis.bookings }}</p>
+            {% if trends.kpis.yoy_bookings is not None %}
+            <p class="text-xs mt-1 {% if trends.kpis.yoy_bookings > 0 %}text-green-600{% elif trends.kpis.yoy_bookings < 0 %}text-red-600{% else %}text-gray-500{% endif %}">
+                {% if trends.kpis.yoy_bookings > 0 %}+{% endif %}{{ trends.kpis.yoy_bookings }}% vs STLY
+            </p>
+            {% endif %}
+            {% if trends.kpis.cancellations > 0 %}
+            <p class="text-xs text-gray-400 mt-0.5">{{ trends.kpis.cancellations }} cancelled</p>
+            {% endif %}
+        </div>
+
+        <!-- Room Nights -->
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Room Nights</p>
+            <p class="text-2xl font-bold text-gray-900 mt-1">{{ trends.kpis.room_nights|intcomma }}</p>
+            {% if trends.kpis.yoy_room_nights is not None %}
+            <p class="text-xs mt-1 {% if trends.kpis.yoy_room_nights > 0 %}text-green-600{% elif trends.kpis.yoy_room_nights < 0 %}text-red-600{% else %}text-gray-500{% endif %}">
+                {% if trends.kpis.yoy_room_nights > 0 %}+{% endif %}{{ trends.kpis.yoy_room_nights }}% vs STLY
+            </p>
+            {% endif %}
+        </div>
+
+        <!-- Revenue -->
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Revenue</p>
+            <p class="text-2xl font-bold text-gray-900 mt-1">${{ trends.kpis.revenue|floatformat:0|intcomma }}</p>
+            {% if trends.kpis.yoy_revenue is not None %}
+            <p class="text-xs mt-1 {% if trends.kpis.yoy_revenue > 0 %}text-green-600{% elif trends.kpis.yoy_revenue < 0 %}text-red-600{% else %}text-gray-500{% endif %}">
+                {% if trends.kpis.yoy_revenue > 0 %}+{% endif %}{{ trends.kpis.yoy_revenue }}% vs STLY
+            </p>
+            {% endif %}
+        </div>
+
+        <!-- ADR -->
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Avg ADR</p>
+            <p class="text-2xl font-bold text-gray-900 mt-1">${{ trends.kpis.avg_adr|floatformat:0 }}</p>
+            {% if trends.kpis.yoy_adr is not None %}
+            <p class="text-xs mt-1 {% if trends.kpis.yoy_adr > 0 %}text-green-600{% elif trends.kpis.yoy_adr < 0 %}text-red-600{% else %}text-gray-500{% endif %}">
+                {% if trends.kpis.yoy_adr > 0 %}+{% endif %}{{ trends.kpis.yoy_adr }}% vs STLY
+            </p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Daily Pace Chart -->
+    <div class="bg-white rounded-xl shadow-sm border p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900 mb-4">Daily Booking Pace</h2>
+        <div style="height: 280px;">
+            <canvas id="paceChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Two-column grid: Arrival Mix + Source Markets -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+
+        <!-- Arrival Month Mix -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Bookings by Arrival Month</h2>
+            <div style="height: 240px;" class="mb-4">
+                <canvas id="arrivalChart"></canvas>
+            </div>
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-100">
+                        <th class="text-left py-2 text-gray-500 font-medium">Month</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Nights</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Share</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">vs STLY</th>
+                    </tr>
+                </thead>
+                <tbody id="arrivalTable"></tbody>
+            </table>
+        </div>
+
+        <!-- Source Market Mix -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Source Markets</h2>
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-100">
+                        <th class="text-left py-2 text-gray-500 font-medium">Country</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Nights</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Yours</th>
+                        {% if trends.has_national_data %}
+                        <th class="text-right py-2 text-gray-500 font-medium">National</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">MoT YoY</th>
+                        {% endif %}
+                        <th class="text-right py-2 text-gray-500 font-medium">vs STLY</th>
+                    </tr>
+                </thead>
+                <tbody id="countryTable"></tbody>
+            </table>
+            {% if trends.gap_markets %}
+            <div class="mt-3 pt-3 border-t border-gray-100">
+                <p class="text-xs font-medium text-amber-600 mb-2">Missing Markets (>=2% national share, 0 bookings)</p>
+                <div class="flex flex-wrap gap-2">
+                    {% for gap in trends.gap_markets %}
+                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-amber-50 text-amber-700">
+                        {{ gap.country }} · {{ gap.national_share }}%
+                    </span>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Two-column grid: Room Mix + Channel Mix -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+
+        <!-- Room Type Mix -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Room Types</h2>
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-100">
+                        <th class="text-left py-2 text-gray-500 font-medium">Room Type</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Nights</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Revenue</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">ADR</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">vs STLY</th>
+                    </tr>
+                </thead>
+                <tbody id="roomTable"></tbody>
+            </table>
+        </div>
+
+        <!-- Channel Mix -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Channels</h2>
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-100">
+                        <th class="text-left py-2 text-gray-500 font-medium">Channel</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Nights</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Revenue</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">Share</th>
+                        <th class="text-right py-2 text-gray-500 font-medium">vs STLY</th>
+                    </tr>
+                </thead>
+                <tbody id="channelTable"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Booking Log -->
+    <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-gray-900">Recent Bookings</h2>
+            <span class="text-sm text-gray-500">Last 30 entries</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-600">Booked</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-600">Conf#</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-600">Guest</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-600">Country</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-600">Arrival</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Nights</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-600">Room</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Revenue</th>
+                    </tr>
+                </thead>
+                <tbody id="bookingLogTable" class="divide-y divide-gray-100"></tbody>
+            </table>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if has_data and trends %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var CURRENCY = '$';
+    var paceData = JSON.parse('{{ daily_pace_json|escapejs }}');
+
+    // Cumulative pace chart
+    var paceCtx = document.getElementById('paceChart').getContext('2d');
+    new Chart(paceCtx, {
+        type: 'line',
+        data: {
+            labels: paceData.labels,
+            datasets: [
+                {
+                    label: 'This Year (cumulative)',
+                    data: paceData.cum_current,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    pointHitRadius: 8,
+                },
+                {
+                    label: 'STLY (cumulative)',
+                    data: paceData.cum_stly,
+                    borderColor: '#9ca3af',
+                    borderDash: [5, 3],
+                    borderWidth: 1.5,
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    pointHitRadius: 8,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
+                tooltip: {
+                    callbacks: {
+                        afterBody: function(items) {
+                            var idx = items[0].dataIndex;
+                            var today = paceData.current[idx] || 0;
+                            return 'Daily: ' + today + ' booking' + (today !== 1 ? 's' : '');
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { maxTicksLimit: 10, font: { size: 11 } }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Cumulative Bookings' },
+                    ticks: { font: { size: 11 } }
+                }
+            }
+        }
+    });
+
+    // ── Table renderers ──
+
+    function formatYoY(val) {
+        if (val === null || val === undefined) return '<span class="text-gray-300">&mdash;</span>';
+        var cls = val > 0 ? 'text-green-600' : val < 0 ? 'text-red-600' : 'text-gray-500';
+        return '<span class="' + cls + '">' + (val > 0 ? '+' : '') + val.toFixed(1) + '%</span>';
+    }
+
+    function formatCurrency(val) {
+        return CURRENCY + Math.round(val).toLocaleString();
+    }
+
+    function renderArrivalTable(data) {
+        var html = '';
+        data.forEach(function(m) {
+            html += '<tr class="border-b border-gray-50">';
+            html += '<td class="py-2 font-medium text-gray-900">' + m.month_short + '</td>';
+            html += '<td class="py-2 text-right text-gray-900">' + m.nights.toLocaleString() + '</td>';
+            html += '<td class="py-2 text-right text-gray-600">' + m.share.toFixed(1) + '%</td>';
+            html += '<td class="py-2 text-right">' + formatYoY(m.yoy_nights) + '</td>';
+            html += '</tr>';
+        });
+        document.getElementById('arrivalTable').innerHTML = html;
+    }
+
+    function renderCountryTable(data, hasNational) {
+        var html = '';
+        data.forEach(function(c) {
+            html += '<tr class="border-b border-gray-50">';
+            html += '<td class="py-2 font-medium text-gray-900">' + c.country + '</td>';
+            html += '<td class="py-2 text-right text-gray-900">' + c.nights.toLocaleString() + '</td>';
+            html += '<td class="py-2 text-right text-gray-600">' + c.share.toFixed(1) + '%</td>';
+            if (hasNational) {
+                var natShare = c.national_share !== null ? c.national_share.toFixed(1) + '%' : '&mdash;';
+                var natYoY = c.national_yoy !== null
+                    ? '<span class="' + (c.national_yoy > 0 ? 'text-green-600' : c.national_yoy < 0 ? 'text-red-600' : 'text-gray-500') + '">'
+                      + (c.national_yoy > 0 ? '+' : '') + c.national_yoy.toFixed(1) + '%</span>'
+                    : '&mdash;';
+                html += '<td class="py-2 text-right text-gray-500">' + natShare + '</td>';
+                html += '<td class="py-2 text-right">' + natYoY + '</td>';
+            }
+            html += '<td class="py-2 text-right">' + formatYoY(c.yoy_nights) + '</td>';
+            html += '</tr>';
+        });
+        document.getElementById('countryTable').innerHTML = html;
+    }
+
+    function renderRoomTable(data) {
+        var html = '';
+        data.forEach(function(r) {
+            html += '<tr class="border-b border-gray-50">';
+            html += '<td class="py-2 font-medium text-gray-900">' + r.room_type + '</td>';
+            html += '<td class="py-2 text-right text-gray-900">' + r.nights.toLocaleString() + '</td>';
+            html += '<td class="py-2 text-right text-gray-900">' + formatCurrency(r.revenue) + '</td>';
+            html += '<td class="py-2 text-right text-gray-600">' + formatCurrency(r.adr) + '</td>';
+            html += '<td class="py-2 text-right">' + formatYoY(r.yoy_nights) + '</td>';
+            html += '</tr>';
+        });
+        document.getElementById('roomTable').innerHTML = html;
+    }
+
+    function renderChannelTable(data) {
+        var html = '';
+        data.forEach(function(ch) {
+            html += '<tr class="border-b border-gray-50">';
+            html += '<td class="py-2 font-medium text-gray-900">' + ch.channel + '</td>';
+            html += '<td class="py-2 text-right text-gray-900">' + ch.nights.toLocaleString() + '</td>';
+            html += '<td class="py-2 text-right text-gray-900">' + formatCurrency(ch.revenue) + '</td>';
+            html += '<td class="py-2 text-right text-gray-600">' + ch.share.toFixed(1) + '%</td>';
+            html += '<td class="py-2 text-right">' + formatYoY(ch.yoy_nights) + '</td>';
+            html += '</tr>';
+        });
+        document.getElementById('channelTable').innerHTML = html;
+    }
+
+    function renderBookingLog(data) {
+        var html = '';
+        data.forEach(function(b) {
+            html += '<tr class="hover:bg-gray-50">';
+            html += '<td class="px-4 py-2 text-gray-600">' + (b.booking_date || '&mdash;') + '</td>';
+            html += '<td class="px-4 py-2 font-mono text-xs text-gray-700">' + (b.confirmation_no || '') + '</td>';
+            html += '<td class="px-4 py-2 text-gray-900">' + (b.guest__name || '&mdash;') + '</td>';
+            html += '<td class="px-4 py-2 text-gray-600">' + (b.guest__country || '&mdash;') + '</td>';
+            html += '<td class="px-4 py-2 text-gray-600">' + (b.arrival_date || '&mdash;') + '</td>';
+            html += '<td class="px-4 py-2 text-right text-gray-900">' + (b.nights || 0) + '</td>';
+            html += '<td class="px-4 py-2 text-gray-600">' + (b.room_type__name || '&mdash;') + '</td>';
+            html += '<td class="px-4 py-2 text-right text-gray-900">' + formatCurrency(b.total_amount) + '</td>';
+            html += '</tr>';
+        });
+        document.getElementById('bookingLogTable').innerHTML = html;
+    }
+
+    // Arrival month chart
+    var arrivalData = JSON.parse('{{ arrival_mix_json|escapejs }}');
+    var arrCtx = document.getElementById('arrivalChart').getContext('2d');
+    new Chart(arrCtx, {
+        type: 'bar',
+        data: {
+            labels: arrivalData.map(function(m) { return m.month_short; }),
+            datasets: [
+                {
+                    label: 'Current',
+                    data: arrivalData.map(function(m) { return m.nights; }),
+                    backgroundColor: '#3b82f6',
+                    borderRadius: 4,
+                },
+                {
+                    label: 'STLY',
+                    data: arrivalData.map(function(m) { return m.stly_nights; }),
+                    backgroundColor: '#e5e7eb',
+                    borderRadius: 4,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } }
+            },
+            scales: {
+                x: { beginAtZero: true, title: { display: true, text: 'Room Nights' } },
+                y: { grid: { display: false } }
+            }
+        }
+    });
+
+    // ── Initial render ──
+    var countryData = JSON.parse('{{ country_mix_json|escapejs }}');
+    var roomData = JSON.parse('{{ room_mix_json|escapejs }}');
+    var channelData = JSON.parse('{{ channel_mix_json|escapejs }}');
+    var hasNational = {{ trends.has_national_data|yesno:"true,false" }};
+
+    renderArrivalTable(arrivalData);
+    renderCountryTable(countryData, hasNational);
+    renderRoomTable(roomData);
+    renderChannelTable(channelData);
+
+    // Booking log — already serialized as JSON-safe list
+    var bookingLog = {{ trends.booking_log|safe }};
+    renderBookingLog(bookingLog);
+
+    // ── Period switcher ──
+    document.getElementById('periodSelect').addEventListener('change', function() {
+        var days = this.value;
+        window.location.href = window.location.pathname + '?days=' + days;
+    });
+});
+</script>
+{% endif %}
+{% endblock %}

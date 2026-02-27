@@ -517,12 +517,12 @@ class PricingService:
             }
 
         # Occupancy
-        total_rooms = sum(rt.number_of_rooms for rt in room_types) or 0
+        total_rooms = self.hotel.get_total_rooms() if self.hotel else (sum(rt.number_of_rooms for rt in room_types) or 0)
         booked = Reservation.objects.filter(
             hotel=self.hotel,
             arrival_date__lte=target_date,
             departure_date__gt=target_date,
-            status__in=['confirmed', 'checked_in']
+            status__in=Reservation.FUTURE_STATUSES
         ).count() if total_rooms > 0 else 0
         occ_pct = round(booked / total_rooms * 100, 1) if total_rooms > 0 else 0
 

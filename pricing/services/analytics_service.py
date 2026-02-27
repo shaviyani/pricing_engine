@@ -1368,16 +1368,17 @@ class BookingAnalysisService:
     def get_dashboard_data(self, year=None, start_date=None, end_date=None, include_cancelled=False):
         """
         Get all dashboard data for a given period.
-        
+
         Args:
             year: Optional year to filter by arrival date (default: current year)
             start_date: Optional start date for custom range
             end_date: Optional end date for custom range
             include_cancelled: If True, include cancelled bookings in main metrics
-        
+
         Returns:
             Dict with all dashboard data
         """
+        from pricing.models import Reservation
         # Default to current year
         if year is None and start_date is None:
             year = date.today().year
@@ -1387,7 +1388,7 @@ class BookingAnalysisService:
         
         # ACTIVE bookings (exclude cancelled)
         active_queryset = base_queryset.filter(
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         )
         
         # CANCELLED bookings
@@ -1419,7 +1420,7 @@ class BookingAnalysisService:
         
         # Get total rooms for occupancy calculation (with property filtering)
         room_types = self._get_room_types()
-        total_rooms = sum(rt.number_of_rooms for rt in room_types) or 20
+        total_rooms = self.property.get_total_rooms() if self.property else (sum(rt.number_of_rooms for rt in room_types) or 1)
         
         # Calculate all metrics
         kpis = self._calculate_kpis(active_queryset, total_rooms, year)
@@ -2083,21 +2084,22 @@ class BookingAnalysisService:
         """
         from django.db.models import Sum, Count, Avg, F
         from django.db.models.functions import TruncMonth
-        
+        from pricing.models import Reservation
+
         # Base queryset for this arrival month
         base_qs = self._get_base_queryset().filter(
             arrival_date__year=year,
             arrival_date__month=month
         )
-        
+
         # Active bookings only for summary
         active_qs = base_qs.filter(
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         )
         
         # Get room types for available calculation
         room_types = self._get_room_types()
-        total_rooms = sum(rt.number_of_rooms for rt in room_types) or 1
+        total_rooms = self.property.get_total_rooms() if self.property else (sum(rt.number_of_rooms for rt in room_types) or 1)
         days_in_month = calendar.monthrange(year, month)[1]
         available = total_rooms * days_in_month
         
@@ -2145,10 +2147,11 @@ class BookingAnalysisService:
         channel_distribution = self._get_channel_distribution_detail(active_qs)
         
         # ===================
-        # COUNTRY DISTRIBUTION
+        # COUNTRY DISTRIBUTION (enriched with market data)
         # ===================
         country_distribution = self._get_country_distribution(active_qs)
-        
+        country_data = self._enrich_country_with_market_data(country_distribution, year, month)
+
         return {
             'year': year,
             'month': month,
@@ -2158,7 +2161,7 @@ class BookingAnalysisService:
             'room_distribution': room_distribution,
             'lead_time': lead_time,
             'channel_distribution': channel_distribution,
-            'country_distribution': country_distribution,
+            'country_distribution': country_data,
         }
 
     def _get_velocity_for_month(self, base_qs, year, month):
@@ -2174,10 +2177,9 @@ class BookingAnalysisService:
         from django.db.models import Sum, Count
         from django.db.models.functions import TruncMonth
         
-        # Active statuses
-        active_statuses = ['confirmed', 'checked_in', 'checked_out']
-        # Lost statuses (cancelled, void, no_show)
-        lost_statuses = ['cancelled', 'void', 'no_show']
+        from pricing.models import Reservation
+        active_statuses = Reservation.ACTIVE_STATUSES
+        lost_statuses = Reservation.LOST_STATUSES
         
         # Get ACTIVE bookings grouped by booking month
         active_bookings = base_qs.filter(
@@ -2380,9 +2382,9 @@ class BookingAnalysisService:
         return distribution
 
     def _get_country_distribution(self, queryset):
-        """Get distribution by guest country."""
-        from django.db.models import Sum, Count
-        
+        """Get distribution by guest country with revenue, ADR, and rev_share."""
+        from django.db.models import Sum, Count, Avg
+
         by_country = queryset.exclude(
             guest__country__isnull=True
         ).exclude(
@@ -2393,22 +2395,821 @@ class BookingAnalysisService:
             'guest__country'
         ).annotate(
             room_nights=Sum('nights'),
-            bookings=Count('id')
+            bookings=Count('id'),
+            revenue=Sum('total_amount'),
         ).order_by('-room_nights')[:10]  # Top 10 countries
-        
+
+        # Compute total revenue across all returned countries for rev_share
+        total_revenue = sum(
+            float(row['revenue'] or 0) for row in by_country
+        )
+
         distribution = []
         for row in by_country:
             country = row['guest__country'] or 'Unknown'
+            rev = float(row['revenue'] or 0)
+            rn = row['room_nights'] or 0
+            adr = round(rev / rn, 2) if rn > 0 else 0
+            rev_share = round(rev / total_revenue * 100, 1) if total_revenue > 0 else 0
             distribution.append({
                 'country': country,
-                'room_nights': row['room_nights'] or 0,
+                'room_nights': rn,
                 'bookings': row['bookings'] or 0,
+                'revenue': round(rev, 2),
+                'adr': adr,
+                'rev_share': rev_share,
             })
-        
+
         # If no guest country data, return placeholder
         if not distribution:
-            distribution = [{'country': 'Unknown', 'room_nights': 0, 'bookings': 0}]
+            distribution = [{'country': 'Unknown', 'room_nights': 0, 'bookings': 0,
+                             'revenue': 0, 'adr': 0, 'rev_share': 0}]
         return distribution
+
+    def _enrich_country_with_market_data(self, country_distribution, year, month):
+        """
+        Enrich property country distribution with national market context.
+
+        For past months: uses actual MoT data.
+        For future months: projects from historical data + YoY trend.
+
+        Returns dict with 'countries', 'has_national', 'national_period', 'is_projected'.
+        """
+        try:
+            from platform_data.models import MarketArrivalData
+            from platform_data.services import _normalize_guest_country
+            from django.db.models import Sum
+        except ImportError:
+            return {'countries': country_distribution, 'has_national': False, 'national_period': None, 'is_projected': False}
+
+        target_period = date(year, month, 1)
+        country_code = self.property.country_code if self.property else 'MV'
+
+        # --- TIER 1: Exact match ---
+        national_qs = MarketArrivalData.objects.filter(
+            country_code=country_code,
+            report_period=target_period
+        )
+        if national_qs.exists():
+            return self._build_enriched_result(
+                country_distribution, national_qs, target_period,
+                label=target_period.strftime('%B %Y'),
+                is_projected=False,
+            )
+
+        # --- TIER 2: Same month prior year + YoY trend ---
+        prior_year_period = date(year - 1, month, 1)
+        prior_qs = MarketArrivalData.objects.filter(
+            country_code=country_code,
+            report_period=prior_year_period
+        )
+
+        if prior_qs.exists():
+            yoy_factor = self._get_latest_yoy_factor(country_code)
+
+            projected = []
+            for row in prior_qs.values('origin_country', 'arrivals', 'market_share_pct'):
+                proj_arrivals = int(row['arrivals'] * yoy_factor)
+                projected.append({
+                    'origin_country': row['origin_country'],
+                    'arrivals': proj_arrivals,
+                    'market_share_pct': float(row['market_share_pct']) if row['market_share_pct'] else 0,
+                })
+
+            proj_total = sum(p['arrivals'] for p in projected)
+            if proj_total > 0:
+                for p in projected:
+                    p['market_share_pct'] = round(p['arrivals'] / proj_total * 100, 1)
+
+            yoy_pct = round((yoy_factor - 1) * 100, 1)
+            sign = '+' if yoy_pct >= 0 else ''
+            label = 'Projected from {} ({}{}% trend)'.format(
+                prior_year_period.strftime('%b %Y'), sign, yoy_pct
+            )
+
+            return self._build_enriched_result_from_list(
+                country_distribution, projected, target_period,
+                label=label,
+                is_projected=True,
+            )
+
+        # --- TIER 3: Latest available shares as proxy ---
+        latest_record = MarketArrivalData.objects.filter(
+            country_code=country_code
+        ).order_by('-report_period').first()
+
+        if not latest_record:
+            return {'countries': country_distribution, 'has_national': False, 'national_period': None, 'is_projected': False}
+
+        latest_period = latest_record.report_period
+        latest_qs = MarketArrivalData.objects.filter(
+            country_code=country_code,
+            report_period=latest_period
+        )
+
+        label = 'Based on {} market shares'.format(latest_period.strftime('%b %Y'))
+
+        return self._build_enriched_result(
+            country_distribution, latest_qs, latest_period,
+            label=label,
+            is_projected=True,
+        )
+
+    def _get_latest_yoy_factor(self, country_code='MV'):
+        """
+        Calculate YoY growth factor from the most recent period pair.
+        Returns float (e.g., 1.046 for +4.6% growth). Default 1.0.
+        """
+        from platform_data.models import MarketArrivalData
+        from django.db.models import Sum
+
+        periods = MarketArrivalData.objects.filter(
+            country_code=country_code
+        ).values_list(
+            'report_period', flat=True
+        ).distinct().order_by('-report_period')
+
+        for period in periods[:12]:
+            prior = date(period.year - 1, period.month, 1)
+
+            current_total = MarketArrivalData.objects.filter(
+                country_code=country_code, report_period=period
+            ).aggregate(t=Sum('arrivals'))['t']
+
+            prior_total = MarketArrivalData.objects.filter(
+                country_code=country_code, report_period=prior
+            ).aggregate(t=Sum('arrivals'))['t']
+
+            if current_total and prior_total and prior_total > 0:
+                factor = current_total / prior_total
+                return max(0.75, min(1.25, factor))
+
+        return 1.0
+
+    def _build_enriched_result(self, country_distribution, national_qs, period, label, is_projected):
+        """Build enriched result from a queryset of MarketArrivalData."""
+        national_map = {}
+        for row in national_qs.values('origin_country', 'arrivals', 'market_share_pct'):
+            national_map[row['origin_country']] = {
+                'arrivals': row['arrivals'],
+                'share': float(row['market_share_pct']) if row['market_share_pct'] else 0,
+            }
+
+        return self._merge_property_and_national(
+            country_distribution, national_map, label, is_projected
+        )
+
+    def _build_enriched_result_from_list(self, country_distribution, projected_list, period, label, is_projected):
+        """Build enriched result from a projected list of dicts."""
+        national_map = {}
+        for row in projected_list:
+            national_map[row['origin_country']] = {
+                'arrivals': row['arrivals'],
+                'share': row['market_share_pct'],
+            }
+
+        return self._merge_property_and_national(
+            country_distribution, national_map, label, is_projected
+        )
+
+    def _merge_property_and_national(self, country_distribution, national_map, label, is_projected):
+        """
+        Core merge logic: match property countries to national data,
+        calculate index, append gap markets.
+        """
+        from platform_data.services import _normalize_guest_country
+
+        prop_total_nights = sum(c['room_nights'] for c in country_distribution)
+
+        matched_national = set()
+        for row in country_distribution:
+            normalized = _normalize_guest_country(row['country'])
+            nat = national_map.get(normalized)
+
+            prop_share = round(row['room_nights'] / prop_total_nights * 100, 1) if prop_total_nights > 0 else 0
+
+            if nat:
+                matched_national.add(normalized)
+                row['national_share'] = nat['share']
+                row['index'] = round(prop_share / nat['share'], 1) if nat['share'] > 0 else None
+            else:
+                row['national_share'] = None
+                row['index'] = None
+
+            row['prop_share'] = prop_share
+
+        # Append significant national markets missing from property data
+        missing = []
+        for country_name, nat in sorted(national_map.items(), key=lambda x: x[1]['share'], reverse=True):
+            if country_name not in matched_national and len(missing) < 5:
+                if nat['share'] >= 2.0:
+                    missing.append({
+                        'country': country_name,
+                        'room_nights': 0,
+                        'bookings': 0,
+                        'revenue': 0,
+                        'adr': 0,
+                        'rev_share': 0,
+                        'prop_share': 0.0,
+                        'national_share': nat['share'],
+                        'index': 0.0,
+                        'is_gap': True,
+                    })
+
+        country_distribution.extend(missing)
+
+        return {
+            'countries': country_distribution,
+            'has_national': True,
+            'national_period': label,
+            'is_projected': is_projected,
+        }
+
+    # =========================================================================
+    # SOURCE MARKET TRENDS
+    # =========================================================================
+
+    def get_source_market_trends(self, year):
+        """
+        Build source-market summary and monthly trend data for the given year.
+
+        Returns:
+            {
+              'summary': [
+                {country, room_nights, revenue, adr, share, yoy_change},
+                ...  (top 10 countries)
+              ],
+              'monthly': {
+                'months': ['Jan', 'Feb', ...],
+                'series': [
+                  {country, data: [nights_jan, nights_feb, ...]},
+                  ...  (top 5 countries)
+                ]
+              }
+            }
+        """
+        from django.db.models import Sum, Count
+        from pricing.models import Reservation
+
+        base_qs = self._get_base_queryset().filter(
+            arrival_date__year=year,
+            status__in=Reservation.ACTIVE_STATUSES,
+        )
+
+        # ---------- Year-level summary by country ----------
+        by_country = base_qs.exclude(
+            guest__country__isnull=True
+        ).exclude(
+            guest__country=''
+        ).exclude(
+            guest__country='-'
+        ).values(
+            'guest__country'
+        ).annotate(
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            bookings=Count('id'),
+        ).order_by('-room_nights')[:10]
+
+        total_nights = sum(r['room_nights'] or 0 for r in by_country)
+
+        # Prior year totals for YoY
+        prior_qs = self._get_base_queryset().filter(
+            arrival_date__year=year - 1,
+            status__in=Reservation.ACTIVE_STATUSES,
+        ).exclude(
+            guest__country__isnull=True
+        ).exclude(guest__country='').exclude(guest__country='-')
+
+        prior_by_country = {}
+        for row in prior_qs.values('guest__country').annotate(rn=Sum('nights')):
+            prior_by_country[row['guest__country']] = row['rn'] or 0
+
+        summary = []
+        for row in by_country:
+            country = row['guest__country'] or 'Unknown'
+            rn = row['room_nights'] or 0
+            rev = float(row['revenue'] or 0)
+            adr = round(rev / rn, 2) if rn > 0 else 0
+            share = round(rn / total_nights * 100, 1) if total_nights > 0 else 0
+
+            prior_rn = prior_by_country.get(country, 0)
+            if prior_rn > 0:
+                yoy_change = round((rn - prior_rn) / prior_rn * 100, 1)
+            else:
+                yoy_change = None
+
+            summary.append({
+                'country': country,
+                'room_nights': rn,
+                'revenue': round(rev, 2),
+                'adr': adr,
+                'share': share,
+                'yoy_change': yoy_change,
+            })
+
+        # ---------- Monthly trend for top 5 ----------
+        top5 = [s['country'] for s in summary[:5]]
+        months_label = []
+        series_map = {c: [] for c in top5}
+
+        for m in range(1, 13):
+            months_label.append(calendar.month_abbr[m])
+            month_qs = base_qs.filter(
+                arrival_date__month=m,
+            ).exclude(
+                guest__country__isnull=True
+            ).exclude(guest__country='').exclude(guest__country='-')
+
+            month_by_country = {}
+            for row in month_qs.values('guest__country').annotate(rn=Sum('nights')):
+                month_by_country[row['guest__country']] = row['rn'] or 0
+
+            for c in top5:
+                series_map[c].append(month_by_country.get(c, 0))
+
+        series = [{'country': c, 'data': series_map[c]} for c in top5]
+
+        return {
+            'summary': summary,
+            'monthly': {
+                'months': months_label,
+                'series': series,
+            },
+        }
+
+    # -----------------------------------------------------------------
+    # Booking Trends (last N days)
+    # -----------------------------------------------------------------
+
+    def get_booking_trends(self, days=30):
+        """
+        30-day booking trend analysis.
+
+        All metrics based on booking_date window (when booked),
+        with breakdowns by arrival month, source market, room type, channel.
+        Includes STLY comparison and national market context.
+
+        Returns:
+            dict with kpis, daily_pace, arrival_mix, country_mix,
+            room_mix, channel_mix, booking_log, stly_comparison
+        """
+        from django.db.models import Sum, Count, Avg, F, Q
+        from django.db.models.functions import TruncMonth
+        from platform_data.utils import normalize_country
+        from pricing.models import Reservation
+
+        today = date.today()
+        window_start = today - timedelta(days=days)
+
+        prop = self.property
+
+        # ── Core queryset: bookings CREATED in window ──
+        recent = Reservation.objects.filter(
+            hotel=prop,
+            booking_date__gte=window_start,
+            booking_date__lte=today,
+            status__in=Reservation.ACTIVE_STATUSES,
+        )
+
+        # ── STLY queryset ──
+        stly_start = date(window_start.year - 1, window_start.month, window_start.day)
+        stly_end = date(today.year - 1, today.month, today.day)
+        stly = Reservation.objects.filter(
+            hotel=prop,
+            booking_date__gte=stly_start,
+            booking_date__lte=stly_end,
+            status__in=Reservation.ACTIVE_STATUSES,
+        )
+
+        # ── Cancellations in same window ──
+        cancellations = Reservation.objects.filter(
+            hotel=prop,
+            cancellation_date__gte=window_start,
+            cancellation_date__lte=today,
+            status='cancelled',
+        )
+        cancel_stats = cancellations.aggregate(
+            count=Count('id'),
+            nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+        )
+
+        # ═══════════════════════════════════════════
+        # 1. KPI CARDS
+        # ═══════════════════════════════════════════
+        current_stats = recent.aggregate(
+            bookings=Count('id'),
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            avg_adr=Avg('adr'),
+            avg_lead_time=Avg('lead_time_days'),
+        )
+
+        stly_stats = stly.aggregate(
+            bookings=Count('id'),
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            avg_adr=Avg('adr'),
+        )
+
+        def yoy_pct(current_val, stly_val):
+            if stly_val and stly_val > 0:
+                return round((current_val - stly_val) / stly_val * 100, 1)
+            return None
+
+        c = current_stats
+        s = stly_stats
+        kpis = {
+            'bookings': c['bookings'] or 0,
+            'room_nights': c['room_nights'] or 0,
+            'revenue': float(c['revenue'] or 0),
+            'avg_adr': float(c['avg_adr'] or 0),
+            'avg_lead_time': round(c['avg_lead_time'] or 0, 0),
+            'cancellations': cancel_stats['count'] or 0,
+            'cancelled_nights': cancel_stats['nights'] or 0,
+            'net_bookings': (c['bookings'] or 0) - (cancel_stats['count'] or 0),
+            'net_room_nights': (c['room_nights'] or 0) - (cancel_stats['nights'] or 0),
+            # STLY
+            'stly_bookings': s['bookings'] or 0,
+            'stly_room_nights': s['room_nights'] or 0,
+            'stly_revenue': float(s['revenue'] or 0),
+            'stly_avg_adr': float(s['avg_adr'] or 0),
+            # YoY
+            'yoy_bookings': yoy_pct(c['bookings'] or 0, s['bookings']),
+            'yoy_room_nights': yoy_pct(c['room_nights'] or 0, s['room_nights']),
+            'yoy_revenue': yoy_pct(float(c['revenue'] or 0), float(s['revenue'] or 0)),
+            'yoy_adr': yoy_pct(float(c['avg_adr'] or 0), float(s['avg_adr'] or 0)),
+        }
+
+        # ═══════════════════════════════════════════
+        # 2. DAILY BOOKING PACE (line chart)
+        # ═══════════════════════════════════════════
+        daily_current = dict(
+            recent.values('booking_date')
+            .annotate(
+                count=Count('id'),
+                nights=Sum('nights'),
+                revenue=Sum('total_amount'),
+            )
+            .values_list('booking_date', 'count')
+        )
+
+        daily_stly_raw = dict(
+            stly.values('booking_date')
+            .annotate(count=Count('id'))
+            .values_list('booking_date', 'count')
+        )
+
+        # Build aligned arrays: day 1..N
+        daily_pace = {
+            'labels': [],
+            'current': [],
+            'stly': [],
+            'cum_current': [],
+            'cum_stly': [],
+        }
+        cum_c = 0
+        cum_s = 0
+        for i in range(days):
+            d = window_start + timedelta(days=i)
+            d_stly = date(d.year - 1, d.month, d.day)
+
+            c_val = daily_current.get(d, 0)
+            s_val = daily_stly_raw.get(d_stly, 0)
+            cum_c += c_val
+            cum_s += s_val
+
+            daily_pace['labels'].append(d.strftime('%b %d'))
+            daily_pace['current'].append(c_val)
+            daily_pace['stly'].append(s_val)
+            daily_pace['cum_current'].append(cum_c)
+            daily_pace['cum_stly'].append(cum_s)
+
+        # ═══════════════════════════════════════════
+        # 3. ARRIVAL MONTH MIX (horizontal bar)
+        # ═══════════════════════════════════════════
+        arrival_by_month = (
+            recent.annotate(arr_month=TruncMonth('arrival_date'))
+            .values('arr_month')
+            .annotate(
+                bookings=Count('id'),
+                nights=Sum('nights'),
+                revenue=Sum('total_amount'),
+            )
+            .order_by('arr_month')
+        )
+
+        # STLY arrival month mix for comparison
+        stly_arrival_by_month = dict(
+            stly.annotate(arr_month=TruncMonth('arrival_date'))
+            .values('arr_month')
+            .annotate(nights=Sum('nights'))
+            .values_list('arr_month', 'nights')
+        )
+
+        total_nights = sum(r['nights'] or 0 for r in arrival_by_month)
+        arrival_mix = []
+        for row in arrival_by_month:
+            nights = row['nights'] or 0
+            month_dt = row['arr_month']
+            # STLY: same month but one year prior
+            stly_month = month_dt.replace(year=month_dt.year - 1)
+            stly_nights = stly_arrival_by_month.get(stly_month, 0)
+
+            arrival_mix.append({
+                'month': month_dt.strftime('%Y-%m-%d'),
+                'month_label': month_dt.strftime('%b %Y'),
+                'month_short': month_dt.strftime('%b'),
+                'bookings': row['bookings'] or 0,
+                'nights': nights,
+                'revenue': float(row['revenue'] or 0),
+                'share': round(nights / total_nights * 100, 1) if total_nights > 0 else 0,
+                'stly_nights': stly_nights or 0,
+                'yoy_nights': yoy_pct(nights, stly_nights) if stly_nights else None,
+            })
+
+        # ═══════════════════════════════════════════
+        # 4. SOURCE MARKET MIX (table + chart)
+        # ═══════════════════════════════════════════
+        country_raw = (
+            recent.filter(
+                guest__country__isnull=False,
+            ).exclude(
+                guest__country__in=['', '-'],
+            ).values(
+                'guest__country',
+            ).annotate(
+                bookings=Count('id'),
+                nights=Sum('nights'),
+                revenue=Sum('total_amount'),
+                avg_adr=Avg('adr'),
+            ).order_by('-nights')
+        )
+
+        # STLY country mix
+        stly_country = dict(
+            stly.filter(
+                guest__country__isnull=False,
+            ).exclude(
+                guest__country__in=['', '-'],
+            ).values(
+                'guest__country',
+            ).annotate(nights=Sum('nights'))
+            .values_list('guest__country', 'nights')
+        )
+        stly_total_nights = sum(stly_country.values()) if stly_country else 0
+
+        # National market shares (latest MoT period, weighted toward arrival months)
+        national_shares = self._get_national_shares_for_comparison(
+            prop, arrival_mix
+        )
+
+        country_mix = []
+        for row in country_raw[:12]:  # Top 12 markets
+            raw_name = row['guest__country']
+            normalized = normalize_country(raw_name)
+            nights = row['nights'] or 0
+            share = round(nights / total_nights * 100, 1) if total_nights > 0 else 0
+
+            # STLY comparison for this country
+            s_nights = stly_country.get(raw_name, 0)
+            s_share = round(s_nights / stly_total_nights * 100, 1) if stly_total_nights > 0 else 0
+
+            # National share from MoT
+            nat = national_shares.get(normalized, {})
+            nat_share = nat.get('share', None)
+
+            # Penetration index: property share / national share
+            index = None
+            if nat_share and nat_share > 0 and share > 0:
+                index = round(share / nat_share, 2)
+
+            country_mix.append({
+                'country': normalized,
+                'bookings': row['bookings'] or 0,
+                'nights': nights,
+                'revenue': float(row['revenue'] or 0),
+                'adr': float(row['avg_adr'] or 0),
+                'share': share,
+                'stly_nights': s_nights,
+                'stly_share': s_share,
+                'yoy_nights': yoy_pct(nights, s_nights) if s_nights else None,
+                'national_share': nat_share,
+                'national_yoy': nat.get('yoy', None),
+                'index': index,
+            })
+
+        # Gap markets: significant national share but zero property bookings
+        gap_markets = []
+        booked_countries = {c['country'] for c in country_mix}
+        for country, nat in national_shares.items():
+            if country not in booked_countries and nat.get('share', 0) >= 2.0:
+                gap_markets.append({
+                    'country': country,
+                    'national_share': nat['share'],
+                    'national_yoy': nat.get('yoy'),
+                    'note': 'No bookings in last 30 days',
+                })
+        gap_markets.sort(key=lambda x: -(x['national_share'] or 0))
+
+        # ═══════════════════════════════════════════
+        # 5. ROOM TYPE MIX
+        # ═══════════════════════════════════════════
+        room_raw = (
+            recent.values('room_type__name')
+            .annotate(
+                bookings=Count('id'),
+                nights=Sum('nights'),
+                revenue=Sum('total_amount'),
+                avg_adr=Avg('adr'),
+            )
+            .order_by('-nights')
+        )
+
+        stly_room = dict(
+            stly.values('room_type__name')
+            .annotate(nights=Sum('nights'))
+            .values_list('room_type__name', 'nights')
+        )
+
+        room_mix = []
+        for row in room_raw:
+            name = row['room_type__name'] or 'Unassigned'
+            nights = row['nights'] or 0
+            s_nights = stly_room.get(name, 0)
+            room_mix.append({
+                'room_type': name,
+                'bookings': row['bookings'] or 0,
+                'nights': nights,
+                'revenue': float(row['revenue'] or 0),
+                'adr': float(row['avg_adr'] or 0),
+                'share': round(nights / total_nights * 100, 1) if total_nights > 0 else 0,
+                'stly_nights': s_nights or 0,
+                'yoy_nights': yoy_pct(nights, s_nights) if s_nights else None,
+            })
+
+        # ═══════════════════════════════════════════
+        # 6. CHANNEL MIX
+        # ═══════════════════════════════════════════
+        channel_raw = (
+            recent.values('channel__name')
+            .annotate(
+                bookings=Count('id'),
+                nights=Sum('nights'),
+                revenue=Sum('total_amount'),
+            )
+            .order_by('-nights')
+        )
+
+        stly_channel = dict(
+            stly.values('channel__name')
+            .annotate(nights=Sum('nights'))
+            .values_list('channel__name', 'nights')
+        )
+
+        channel_mix = []
+        for row in channel_raw:
+            name = row['channel__name'] or 'Unknown'
+            nights = row['nights'] or 0
+            s_nights = stly_channel.get(name, 0)
+            channel_mix.append({
+                'channel': name,
+                'bookings': row['bookings'] or 0,
+                'nights': nights,
+                'revenue': float(row['revenue'] or 0),
+                'share': round(nights / total_nights * 100, 1) if total_nights > 0 else 0,
+                'stly_nights': s_nights or 0,
+                'yoy_nights': yoy_pct(nights, s_nights) if s_nights else None,
+            })
+
+        # ═══════════════════════════════════════════
+        # 7. BOOKING LOG (last 30 entries)
+        # ═══════════════════════════════════════════
+        booking_log = list(
+            recent.select_related('guest', 'room_type', 'channel')
+            .order_by('-booking_date', '-created_at')[:30]
+            .values(
+                'booking_date', 'confirmation_no',
+                'guest__name', 'guest__country',
+                'arrival_date', 'departure_date', 'nights',
+                'room_type__name', 'channel__name',
+                'total_amount', 'adr', 'status',
+            )
+        )
+
+        # Serialize dates
+        for b in booking_log:
+            b['booking_date'] = b['booking_date'].isoformat() if b['booking_date'] else ''
+            b['arrival_date'] = b['arrival_date'].isoformat() if b['arrival_date'] else ''
+            b['departure_date'] = b['departure_date'].isoformat() if b['departure_date'] else ''
+            b['total_amount'] = float(b['total_amount'] or 0)
+            b['adr'] = float(b['adr'] or 0)
+
+        return {
+            'period_start': window_start.isoformat(),
+            'period_end': today.isoformat(),
+            'days': days,
+            'kpis': kpis,
+            'daily_pace': daily_pace,
+            'arrival_mix': arrival_mix,
+            'country_mix': country_mix,
+            'gap_markets': gap_markets,
+            'room_mix': room_mix,
+            'channel_mix': channel_mix,
+            'booking_log': booking_log,
+            'has_national_data': bool(national_shares),
+        }
+
+    def _get_national_shares_for_comparison(self, prop, arrival_mix):
+        """
+        Get national market shares weighted by which arrival months
+        recent bookings target.
+
+        If 60% of 30-day bookings arrive in March and 40% in April,
+        weight March MoT shares 60% and April shares 40%.
+
+        Returns:
+            dict: {country_name: {share: float, yoy: float}}
+            share is percentage (e.g., 8.2 = 8.2%)
+        """
+        from platform_data.models import MarketArrivalData
+
+        country_code = getattr(prop, 'country_code', 'MV') or 'MV'
+
+        if not arrival_mix:
+            return {}
+
+        # Calculate weights by arrival month
+        total_nights = sum(m['nights'] for m in arrival_mix)
+        if total_nights == 0:
+            return {}
+
+        month_weights = {}
+        for m in arrival_mix:
+            month_dt = date.fromisoformat(m['month'])
+            weight = m['nights'] / total_nights
+            month_weights[(month_dt.year, month_dt.month)] = weight
+
+        # For each weighted month, get MoT country shares
+        blended = {}  # country -> {weighted_share, weighted_yoy, weight_sum}
+
+        for (year, month), weight in month_weights.items():
+            period = date(year, month, 1)
+
+            # Try exact period first, then same month last year
+            mot_data = list(MarketArrivalData.objects.filter(
+                country_code=country_code,
+                report_period=period,
+            ).values('origin_country', 'market_share_pct', 'yoy_change_pct'))
+
+            if not mot_data:
+                # Fallback: same month last year
+                mot_data = list(MarketArrivalData.objects.filter(
+                    country_code=country_code,
+                    report_period=date(year - 1, month, 1),
+                ).values('origin_country', 'market_share_pct', 'yoy_change_pct'))
+
+            if not mot_data:
+                # Fallback: latest available period
+                latest_period = MarketArrivalData.objects.filter(
+                    country_code=country_code,
+                ).order_by('-report_period').values_list(
+                    'report_period', flat=True,
+                ).first()
+
+                if latest_period:
+                    mot_data = list(MarketArrivalData.objects.filter(
+                        country_code=country_code,
+                        report_period=latest_period,
+                    ).values('origin_country', 'market_share_pct', 'yoy_change_pct'))
+
+            for row in mot_data:
+                country = row['origin_country']
+                share = float(row['market_share_pct'] or 0)
+                yoy = float(row['yoy_change_pct']) if row['yoy_change_pct'] is not None else None
+
+                if country not in blended:
+                    blended[country] = {
+                        'weighted_share': 0,
+                        'weighted_yoy': 0,
+                        'yoy_weight': 0,
+                    }
+
+                blended[country]['weighted_share'] += share * weight
+                if yoy is not None:
+                    blended[country]['weighted_yoy'] += yoy * weight
+                    blended[country]['yoy_weight'] += weight
+
+        # Finalize
+        result = {}
+        for country, data in blended.items():
+            result[country] = {
+                'share': round(data['weighted_share'], 1),
+                'yoy': round(data['weighted_yoy'] / data['yoy_weight'], 1) if data['yoy_weight'] > 0 else None,
+            }
+
+        return result
 
 
 # =============================================================================

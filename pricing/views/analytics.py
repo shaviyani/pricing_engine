@@ -24,6 +24,34 @@ from .mixins import PropertyMixin
 
 logger = logging.getLogger(__name__)
 
+
+def _attach_demand_indices(prop, monthly_data, year):
+    """Attach per-month demand index to monthly_data list in place."""
+    try:
+        from platform_data.services import MarketSignalService
+        month_dates = [date(year, m['month'], 1) for m in monthly_data]
+        indices = MarketSignalService.get_monthly_demand_indices(prop, month_dates)
+        for m in monthly_data:
+            key = date(year, m['month'], 1)
+            idx = indices.get(key)
+            if idx and idx['has_data']:
+                m['demand_pct'] = idx['pct']
+                m['demand_driver'] = idx['top_driver']
+                m['demand_national_pct'] = idx['national_pct']
+                m['demand_source'] = idx['source']
+            else:
+                m['demand_pct'] = None
+                m['demand_driver'] = ''
+                m['demand_national_pct'] = None
+                m['demand_source'] = ''
+    except Exception:
+        for m in monthly_data:
+            m['demand_pct'] = None
+            m['demand_driver'] = ''
+            m['demand_national_pct'] = None
+            m['demand_source'] = ''
+
+
 class BookingAnalysisDashboardView(PropertyMixin, TemplateView):
     """
     Booking Analysis Dashboard.
@@ -73,7 +101,10 @@ class BookingAnalysisDashboardView(PropertyMixin, TemplateView):
         context['meal_plan_mix'] = dashboard_data['meal_plan_mix']
         context['room_type_performance'] = dashboard_data['room_type_performance']
         context['chart_data_json'] = json.dumps(chart_data)
-        
+
+        # Attach demand indices to monthly data
+        _attach_demand_indices(prop, dashboard_data['monthly_data'], year)
+
         # Available years for selector
         years_with_data = Reservation.objects.filter(
             hotel=prop
@@ -84,9 +115,14 @@ class BookingAnalysisDashboardView(PropertyMixin, TemplateView):
         context['reservation_count'] = Reservation.objects.filter(
             hotel=prop,
             arrival_date__year=year,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         ).count()
-        
+
+        # Source market trends
+        source_market = service.get_source_market_trends(year=year)
+        context['source_market_summary'] = source_market['summary']
+        context['source_market_monthly_json'] = json.dumps(source_market['monthly'])
+
         return context
 
 
@@ -109,7 +145,9 @@ def booking_analysis_data_ajax(request, org_code, prop_code):
         service = BookingAnalysisService(hotel=prop)
         dashboard_data = service.get_dashboard_data(year=year)
         chart_data = service.get_chart_data(year=year)
-        
+
+        _attach_demand_indices(prop, dashboard_data['monthly_data'], year)
+
         kpis = dashboard_data['kpis']
         
         return JsonResponse({
@@ -159,6 +197,10 @@ def booking_analysis_data_ajax(request, org_code, prop_code):
                     'available': m['available'],
                     'occupancy': float(m['occupancy']),
                     'adr': float(m['adr']),
+                    'demand_pct': m.get('demand_pct'),
+                    'demand_driver': m.get('demand_driver', ''),
+                    'demand_national_pct': m.get('demand_national_pct'),
+                    'demand_source': m.get('demand_source', ''),
                 }
                 for m in dashboard_data['monthly_data']
             ],
@@ -198,10 +240,103 @@ class MonthDetailAPIView(PropertyMixin, View):
         return JsonResponse(data)
 
 
-"""
-Date Rate Override Calendar View
-================================
+class DemandIndexAjaxView(PropertyMixin, View):
+    """
+    AJAX endpoint: per-month demand index with full component breakdown.
 
-Add this view to your pricing/views.py
-"""
+    GET params:
+        year: int (default current year)
+        month: int (1-12, optional — if omitted returns all 12)
+    """
+
+    def get(self, request, *args, **kwargs):
+        prop = self.get_property()
+        year = int(request.GET.get('year', date.today().year))
+        month = request.GET.get('month')
+
+        if month:
+            months = [date(year, int(month), 1)]
+        else:
+            months = [date(year, m, 1) for m in range(1, 13)]
+
+        try:
+            from platform_data.services import MarketSignalService
+            indices = MarketSignalService.get_monthly_demand_indices(prop, months)
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+        # Serialize (date keys -> string)
+        serialized = {}
+        for dt, idx in indices.items():
+            key = dt.strftime('%Y-%m')
+            serialized[key] = {
+                'factor': idx['factor'],
+                'pct': idx['pct'],
+                'national_pct': idx['national_pct'],
+                'top_driver': idx['top_driver'],
+                'source': idx['source'],
+                'has_data': idx['has_data'],
+                'components': idx['components'],
+            }
+
+        return JsonResponse({'success': True, 'indices': serialized})
+
+
+class BookingTrendsView(PropertyMixin, TemplateView):
+    """
+    30-day booking trends: pace, arrival mix, source markets, rooms.
+    Answers "what happened recently and how does it compare?"
+    """
+    template_name = 'pricing/analytics/booking_trends.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['nav_active'] = 'analytics'
+        prop = context['property']
+
+        has_data = Reservation.objects.filter(hotel=prop).exists()
+        context['has_data'] = has_data
+
+        if not has_data:
+            return context
+
+        # Period from query param (default 30)
+        days = int(self.request.GET.get('days', 30))
+        days = max(7, min(90, days))  # Clamp 7-90
+
+        service = BookingAnalysisService(property=prop)
+        trends = service.get_booking_trends(days=days)
+
+        context['trends'] = trends
+        context['days'] = days
+
+        # JSON for charts
+        context['daily_pace_json'] = json.dumps(trends['daily_pace'])
+        context['arrival_mix_json'] = json.dumps(trends['arrival_mix'])
+        context['country_mix_json'] = json.dumps(trends['country_mix'])
+        context['room_mix_json'] = json.dumps(trends['room_mix'])
+        context['channel_mix_json'] = json.dumps(trends['channel_mix'])
+
+        return context
+
+
+def booking_trends_data_ajax(request, org_code, prop_code):
+    """AJAX: booking trends data for period switching."""
+    from pricing.services import BookingAnalysisService
+
+    try:
+        org = get_object_or_404(Organization, code=org_code, is_active=True)
+        prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+
+        days = int(request.GET.get('days', 30))
+        days = max(7, min(90, days))
+
+        service = BookingAnalysisService(property=prop)
+        trends = service.get_booking_trends(days=days)
+
+        return JsonResponse({'success': True, **trends})
+
+    except Exception as e:
+        logger.exception("Booking trends AJAX error")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 

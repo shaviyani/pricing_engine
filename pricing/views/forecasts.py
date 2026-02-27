@@ -18,7 +18,7 @@ from dateutil.relativedelta import relativedelta
 import calendar
 
 from pricing.models import (
-    Organization, Property, Season, RoomType, Channel,
+    Organization, Property, Season, Channel,
     Reservation, DailyPickupSnapshot, MonthlyPickupSnapshot,
     OccupancyForecast,
 )
@@ -72,7 +72,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
             booking_date__gte=week_ago,
             booking_date__lte=today,
             arrival_date__gte=today,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         )
         
         weekly_stats = weekly_bookings.aggregate(
@@ -91,7 +91,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
             hotel=prop,
             arrival_date__gte=today,
             arrival_date__lte=three_months,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         )
         
         otb_stats = future_reservations.aggregate(
@@ -222,7 +222,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
             booking_date__lte=today,
             arrival_date__gte=arrival_start,
             arrival_date__lte=arrival_end,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         ).values('booking_date').annotate(
             nights=Sum('nights'),
             revenue=Sum('total_amount'),
@@ -257,7 +257,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
             booking_date__lte=stly_end,
             arrival_date__gte=stly_arrival_start,
             arrival_date__lte=stly_arrival_end,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         ).values('booking_date').annotate(
             nights=Sum('nights'),
         ).order_by('booking_date')
@@ -293,7 +293,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
             hotel=prop,
             booking_date__gte=start_date,
             booking_date__lte=today,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         ).values('booking_date').annotate(
             count=Count('id'),
             revenue=Sum('total_amount'),
@@ -323,7 +323,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
         future_reservations = Reservation.objects.filter(
             hotel=prop,
             arrival_date__gte=today,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         )
         
         channel_stats = future_reservations.values('channel__name').annotate(
@@ -408,7 +408,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
                     hotel=prop,
                     arrival_date__gte=season.start_date,
                     arrival_date__lte=season.end_date,
-                    status__in=['confirmed', 'checked_in', 'checked_out'],
+                    status__in=Reservation.ACTIVE_STATUSES,
                 ).aggregate(total=Sum('nights'))['total'] or 0
 
                 if total_rn == 0:
@@ -421,7 +421,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
                         arrival_date__gte=season.start_date,
                         arrival_date__lte=season.end_date,
                         booking_date__lte=cutoff_date,
-                        status__in=['confirmed', 'checked_in', 'checked_out'],
+                        status__in=Reservation.ACTIVE_STATUSES,
                     ).aggregate(total=Sum('nights'))['total'] or 0
 
                     pct = round(booked_rn / total_rn * 100, 1)
@@ -768,29 +768,12 @@ def occupancy_calendar_ajax(request, org_code, prop_code):
         first_date = date(year, month, 1)
         last_date = date(year, month, last_day)
 
-        # Total rooms from RoomType sum
-        total_rooms = sum(
-            rt.number_of_rooms
-            for rt in RoomType.objects.filter(hotel=prop)
-        )
-        if total_rooms == 0:
-            total_rooms = prop.total_rooms or 1
+        # Total rooms from property
+        total_rooms = prop.get_total_rooms()
 
-        # Build per-day occupancy map (same logic as calendar_rates_ajax)
-        occupancy_map = {}
-        reservations = Reservation.objects.filter(
-            hotel=prop,
-            status__in=['confirmed', 'checked_in', 'checked_out'],
-            arrival_date__lte=last_date,
-            departure_date__gt=first_date,
-        ).values('arrival_date', 'departure_date')
-
-        for res in reservations:
-            current = res['arrival_date']
-            while current < res['departure_date']:
-                if first_date <= current <= last_date:
-                    occupancy_map[current] = occupancy_map.get(current, 0) + 1
-                current += timedelta(days=1)
+        # Build per-day occupancy map
+        from pricing.utils import build_daily_occupancy_map
+        occupancy_map = build_daily_occupancy_map(prop, first_date, last_date)
 
         # Build season map for the month
         seasons = Season.objects.filter(

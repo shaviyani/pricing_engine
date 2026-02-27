@@ -96,12 +96,12 @@ class PlatformDashboardView(SuperuserRequiredMixin, TemplateView):
                 'reservation_count': reservation_count,
                 'last_import': last_import,
                 'last_import_date': last_import.created_at if last_import else None,
-                'country_code': getattr(prop, 'country_code', 'MV'),
+                'country_code': prop.country_code,
             })
         context['property_status'] = prop_status
         
         # Platform data freshness
-        countries = set(getattr(p, 'country_code', 'MV') for p in properties)
+        countries = set(p.country_code for p in properties)
         from .services import MarketSignalService
         freshness = {}
         for cc in countries:
@@ -393,7 +393,7 @@ class PlatformPropertyListAPIView(SuperuserRequiredMixin, View):
             'currency_symbol': p.currency_symbol,
             'service_charge_percent': float(p.service_charge_percent),
             'tax_percent': float(p.tax_percent),
-            'country_code': getattr(p, 'country_code', 'MV'),
+            'country_code': p.country_code,
         } for p in qs]
         
         return success_response(data={'properties': data})

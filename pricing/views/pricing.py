@@ -397,7 +397,7 @@ class PricingMatrixView(PropertyMixin, TemplateView):
             # Blended ADR per season
             blended_adr = {}
             for season in seasons:
-                total_rooms = sum(r.number_of_rooms for r in room_types)
+                total_rooms = hotel.get_total_rooms()
                 if total_rooms > 0:
                     weighted_sum = Decimal('0')
                     for room in room_types:
@@ -1727,7 +1727,7 @@ def calendar_rates_ajax(request, org_code, prop_code):
         return JsonResponse({'error': 'No room types found'}, status=404)
     
     # Calculate total rooms for occupancy
-    total_rooms = sum(rt.number_of_rooms for rt in RoomType.objects.filter(hotel=hotel))
+    total_rooms = hotel.get_total_rooms()
     
     # Get month date range
     _, last_day = cal_module.monthrange(year, month)
@@ -1757,30 +1757,11 @@ def calendar_rates_ajax(request, org_code, prop_code):
         pass
     
     # Calculate occupancy for each date
-    # A room night is occupied on a date if: arrival_date <= date < departure_date
-    occupancy_map = {}
-    
+    from pricing.utils import build_daily_occupancy_map
     try:
-        # Get all confirmed reservations that overlap with this month
-        reservations = Reservation.objects.filter(
-            hotel=hotel,
-            status__in=['confirmed', 'checked_in', 'checked_out'],
-            arrival_date__lte=last_date,
-            departure_date__gt=first_date
-        ).values('arrival_date', 'departure_date', 'nights')
-        
-        # Count room nights for each date
-        for res in reservations:
-            # For each night of the stay
-            current = res['arrival_date']
-            while current < res['departure_date']:
-                if first_date <= current <= last_date:
-                    if current not in occupancy_map:
-                        occupancy_map[current] = 0
-                    occupancy_map[current] += 1
-                current += timedelta(days=1)
+        occupancy_map = build_daily_occupancy_map(hotel, first_date, last_date)
     except Exception as e:
-        # If Reservation model doesn't exist or error, continue without occupancy
+        occupancy_map = {}
         print(f"Occupancy calculation error: {e}")
     
     # Calculate rates for each date

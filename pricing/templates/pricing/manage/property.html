@@ -294,6 +294,8 @@
 {% endblock %}
 
 {% block section_js %}
+var CURRENCY = '{{ property.get_currency_symbol|escapejs }}';
+
 function getReferenceBaseRate() {
     var i = document.querySelector('input[data-field="reference_base_rate"]');
     return i ? parseFloat(i.value) || 0 : 0;
@@ -310,7 +312,7 @@ function updateEffectiveRateForRow(row) {
     if (m === 'index') r = ref * (parseFloat(row.querySelector('input[data-field="room_index"]').value) || 1);
     else if (m === 'adjustment') r = ref + (parseFloat(row.querySelector('input[data-field="room_adjustment"]').value) || 0);
     else if (m === 'direct') r = parseFloat(row.querySelector('input[data-field="base_rate"]').value) || 0;
-    var s = row.querySelector('.effective-rate'); if (s) s.textContent = '$' + r.toFixed(2);
+    var s = row.querySelector('.effective-rate'); if (s) s.textContent = CURRENCY + r.toFixed(2);
 }
 function updateEffectiveRate(input) { updateEffectiveRateForRow(input.closest('tr')); }
 function toggleRoomPricingFields(m) {

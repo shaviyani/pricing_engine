@@ -578,6 +578,8 @@
 // Chart data from Django
 var chartData = {{ chart_data_json|safe }};
 
+var CURRENCY = '{{ property.get_currency_symbol|escapejs }}';
+
 // Chart instances
 var bookingPaceChart, leadTimeChart, channelChart, velocityChart, pickupCurvesChart;
 
@@ -656,7 +658,7 @@ function initBookingPaceChart() {
                     callbacks: {
                         label: function(context) {
                             if (context.dataset.label === 'Revenue ($)') {
-                                return 'Revenue: $' + context.parsed.y.toLocaleString();
+                                return 'Revenue: ' + CURRENCY + context.parsed.y.toLocaleString();
                             }
                             return context.dataset.label + ': ' + context.parsed.y;
                         }
@@ -679,7 +681,7 @@ function initBookingPaceChart() {
                     grid: { display: false },
                     ticks: {
                         callback: function(value) {
-                            return '$' + (value / 1000).toFixed(0) + 'k';
+                            return CURRENCY + (value / 1000).toFixed(0) + 'k';
                         }
                     }
                 },
@@ -720,7 +722,7 @@ function initLeadTimeChart() {
                     callbacks: {
                         afterLabel: function(context) {
                             var idx = context.dataIndex;
-                            return 'Revenue: $' + data.revenue[idx].toLocaleString();
+                            return 'Revenue: ' + CURRENCY + data.revenue[idx].toLocaleString();
                         }
                     }
                 }
@@ -807,7 +809,7 @@ function initVelocityChart() {
                     callbacks: {
                         label: function(context) {
                             if (context.dataset.label === 'Daily Revenue') {
-                                return 'Revenue: $' + context.parsed.y.toLocaleString();
+                                return 'Revenue: ' + CURRENCY + context.parsed.y.toLocaleString();
                             }
                             return 'Bookings: ' + context.parsed.y;
                         }
@@ -830,7 +832,7 @@ function initVelocityChart() {
                     grid: { display: false },
                     ticks: {
                         callback: function(value) {
-                            return '$' + (value / 1000).toFixed(1) + 'k';
+                            return CURRENCY + (value / 1000).toFixed(1) + 'k';
                         }
                     }
                 },
@@ -968,13 +970,13 @@ function showMonthDetail(year, month) {
                 <p class="text-xs text-blue-700 font-medium uppercase">OTB (Current)</p>\
                 <p class="text-3xl font-bold text-blue-900 mt-1">' + forecast.otb_occupancy + '%</p>\
                 <p class="text-sm text-blue-700">' + forecast.otb_nights.toLocaleString() + ' room nights</p>\
-                <p class="text-sm text-blue-600">$' + forecast.otb_revenue.toLocaleString() + ' revenue</p>\
+                <p class="text-sm text-blue-600">' + CURRENCY + forecast.otb_revenue.toLocaleString() + ' revenue</p>\
             </div>\
             <div class="bg-green-50 rounded-lg p-4">\
                 <p class="text-xs text-green-700 font-medium uppercase">Pickup Forecast</p>\
                 <p class="text-3xl font-bold text-green-900 mt-1">' + forecast.forecast_occupancy + '%</p>\
                 <p class="text-sm text-green-700">' + forecast.forecast_nights.toLocaleString() + ' room nights</p>\
-                <p class="text-sm text-green-600">$' + forecast.forecast_revenue.toLocaleString() + ' revenue</p>\
+                <p class="text-sm text-green-600">' + CURRENCY + forecast.forecast_revenue.toLocaleString() + ' revenue</p>\
             </div>\
             <div class="bg-amber-50 rounded-lg p-4">\
                 <p class="text-xs text-amber-700 font-medium uppercase">Your Scenario</p>\

@@ -152,7 +152,7 @@ class Guest(models.Model):
         from django.db.models import Min, Max
         
         stats = self.reservations.filter(
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         ).aggregate(
             count=Count('id'),
             nights=Sum('nights'),
@@ -424,6 +424,11 @@ class Reservation(models.Model):
         ('checked_out', 'Checked Out'),
         ('no_show', 'No Show'),
     ]
+
+    # Canonical status lists — use these everywhere instead of inline lists
+    ACTIVE_STATUSES = ['confirmed', 'checked_in', 'checked_out']
+    FUTURE_STATUSES = ['confirmed', 'checked_in']  # OTB not yet departed
+    LOST_STATUSES = ['cancelled', 'no_show']
     
     hotel = models.ForeignKey(
         Property,
@@ -601,7 +606,7 @@ class Reservation(models.Model):
     @classmethod
     def get_lead_time_distribution(cls, hotel=None, start_date=None, end_date=None, channel=None):
         """Get lead time distribution for analysis."""
-        queryset = cls.objects.filter(status__in=['confirmed', 'checked_in', 'checked_out'])
+        queryset = cls.objects.filter(status__in=Reservation.ACTIVE_STATUSES)
         
         if hotel:
             queryset = queryset.filter(hotel=hotel)

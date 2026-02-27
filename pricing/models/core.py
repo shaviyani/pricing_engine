@@ -202,6 +202,23 @@ class Property(models.Model):
         if self.total_rooms != total:
             Property.objects.filter(pk=self.pk).update(total_rooms=total)
     
+    def get_total_rooms(self):
+        """Single source of truth for total room count.
+
+        Returns the cached ``total_rooms`` field when valid, otherwise
+        recomputes from RoomType, updates the cache, and returns the value.
+        Never returns 0 (returns 1 minimum to avoid division-by-zero).
+        """
+        if self.total_rooms and self.total_rooms > 0:
+            return self.total_rooms
+        total = self.room_types.aggregate(
+            t=Sum('number_of_rooms')
+        )['t'] or 0
+        if total != self.total_rooms:
+            Property.objects.filter(pk=self.pk).update(total_rooms=total)
+            self.total_rooms = total
+        return total or 1
+
     def get_currency_symbol(self):
         """Get currency symbol (property or organization default)."""
         return self.currency_symbol or self.organization.currency_symbol

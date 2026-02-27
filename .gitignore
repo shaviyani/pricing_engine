@@ -8,8 +8,6 @@ dist/
 build/
 
 # Django
-db.sqlite3
-db.sqlite3.*
 *.log
 media/uploads/
 

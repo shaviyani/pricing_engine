@@ -1062,6 +1062,7 @@
 
 {% block extra_js %}
 <script>
+var CURRENCY = '{{ property.get_currency_symbol|escapejs }}';
 var currentYear = {{ year }};
 var currentMonth = {{ month }};
 var currentModalData = null;
@@ -1121,7 +1122,7 @@ function updateCalendarRates(data) {
         
         if (rateEl) {
             rateEl.classList.remove('loading');
-            rateEl.textContent = d.rate ? '$' + d.rate : '—';
+            rateEl.textContent = d.rate ? CURRENCY + d.rate : '—';
         }
         
         if (overrideEl && d.has_override) {
@@ -1253,8 +1254,8 @@ function renderModalRates(data, roomFilter, channelFilter) {
         for (var j = 0; j < filtered.length; j++) {
             var r = filtered[j];
             html += '<tr><td>' + r.rate_plan_name + '</td><td>' + r.channel_name + '</td>';
-            html += '<td class="bar-value">$' + r.bar_rate + '</td>';
-            html += '<td class="rate-value">$' + r.final_rate;
+            html += '<td class="bar-value">' + CURRENCY + r.bar_rate + '</td>';
+            html += '<td class="rate-value">' + CURRENCY + r.final_rate;
             if (r.override_applied) html += '<span class="override-dot ' + (isInc ? 'increase' : 'decrease') + '"></span>';
             html += '</td></tr>';
         }

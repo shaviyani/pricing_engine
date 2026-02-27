@@ -46,6 +46,9 @@ from .analytics import (
     BookingAnalysisDashboardView,
     booking_analysis_data_ajax,
     MonthDetailAPIView,
+    DemandIndexAjaxView,
+    BookingTrendsView,
+    booking_trends_data_ajax,
 )
 
 # Forecast views

@@ -462,8 +462,10 @@ class PickupAnalysisService:
         return qs
     
     def _get_total_rooms(self):
-        """Get total room count, filtered by property if set."""
-        return sum(room.number_of_rooms for room in self._get_room_types()) or 20
+        """Total rooms for this property."""
+        if self.property:
+            return self.property.get_total_rooms()
+        return sum(room.number_of_rooms for room in self._get_room_types()) or 1
     
     def _get_seasons_queryset(self):
         """Get Season queryset, filtered by property if set."""
@@ -481,29 +483,21 @@ class PickupAnalysisService:
         ).first()
     
     def _get_season_type(self, target_date):
-        """Determine season type for a date (peak, high, shoulder, low)."""
+        """Determine season type for a date.
+
+        Uses the authoritative ``Season.season_type`` model field.
+        For pickup-curve granularity, peak seasons with index >= 1.1
+        but < 1.3 are reported as 'high' (pickup curve variant).
+        Falls back to 'shoulder' when no season covers the date.
+        """
         season = self._get_season_for_date(target_date)
         if season:
-            idx = float(season.season_index)
-            if idx >= 1.3:
-                return 'peak'
-            elif idx >= 1.1:
+            stype = season.season_type  # 'peak', 'shoulder', or 'low'
+            # Differentiate high-peak from true-peak for pickup curves
+            if stype == 'peak' and float(season.season_index) < 1.3:
                 return 'high'
-            elif idx >= 0.9:
-                return 'shoulder'
-            else:
-                return 'low'
-        
-        # Default based on month for Maldives seasonality
-        month = target_date.month
-        if month in [12, 1, 2, 3, 4]:
-            if month in [12, 1, 2]:
-                return 'peak'
-            return 'high'
-        elif month in [5, 6, 7, 8, 9]:
-            return 'low'
-        else:
-            return 'shoulder'
+            return stype
+        return 'shoulder'
     
     # =========================================================================
     # OTB CALCULATION (Direct from Reservations)
@@ -520,7 +514,8 @@ class PickupAnalysisService:
             Dict with OTB metrics
         """
         from django.db.models import Sum, Count
-        
+        from pricing.models import Reservation
+
         # Calculate month boundaries
         year = target_month.year
         month = target_month.month
@@ -532,7 +527,7 @@ class PickupAnalysisService:
         reservations = self._get_reservations_queryset().filter(
             arrival_date__gte=month_start,
             arrival_date__lte=month_end,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         )
         
         stats = reservations.aggregate(
@@ -589,7 +584,8 @@ class PickupAnalysisService:
             Dict with velocity metrics
         """
         from django.db.models import Sum, Count
-        
+        from pricing.models import Reservation
+
         today = date.today()
         lookback_start = today - timedelta(days=lookback_days)
         
@@ -606,7 +602,7 @@ class PickupAnalysisService:
             booking_date__lte=today,
             arrival_date__gte=month_start,
             arrival_date__lte=month_end,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         )
         
         stats = recent_bookings.aggregate(
@@ -667,6 +663,7 @@ class PickupAnalysisService:
             Dict with lead time buckets and statistics
         """
         from django.db.models import Avg, Min, Max, Count
+        from pricing.models import Reservation
         
         if end_date is None:
             end_date = date.today()
@@ -677,7 +674,7 @@ class PickupAnalysisService:
         bookings = self._get_reservations_queryset().filter(
             booking_date__gte=start_date,
             booking_date__lte=end_date,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         ).exclude(
             lead_time_days__isnull=True
         )
@@ -818,12 +815,15 @@ class PickupAnalysisService:
             velocity_forecast * 0.2
         )
 
-        # Market signal adjustment
+        # Market signal adjustment — per-month, per-country weighted
         market_factor = 1.0
+        demand_index = {}
         try:
             from platform_data.services import MarketSignalService
-            country_code = getattr(self.property, 'country_code', 'MV') or 'MV'
-            market_factor = MarketSignalService.get_market_yoy_factor(country_code)
+            demand_index = MarketSignalService.get_monthly_demand_index(
+                self.property, target_month
+            )
+            market_factor = demand_index.get('factor', 1.0)
         except Exception:
             pass
 
@@ -924,6 +924,10 @@ class PickupAnalysisService:
 
             # Market signal
             'market_factor': market_factor,
+            'demand_index_pct': demand_index.get('pct', 0.0),
+            'demand_driver': demand_index.get('top_driver', ''),
+            'demand_source': demand_index.get('source', ''),
+            'demand_national_pct': demand_index.get('national_pct'),
         }
     
     def get_default_pickup_curves(self):
@@ -968,19 +972,20 @@ class PickupAnalysisService:
             List of dicts with channel metrics
         """
         from django.db.models import Sum, Count
-        
+        from pricing.models import Reservation
+
         # Calculate month boundaries
         year = target_month.year
         month = target_month.month
         _, last_day = calendar.monthrange(year, month)
         month_start = date(year, month, 1)
         month_end = date(year, month, last_day)
-        
+
         # Get reservations grouped by channel
         reservations = self._get_reservations_queryset().filter(
             arrival_date__gte=month_start,
             arrival_date__lte=month_end,
-            status__in=['confirmed', 'checked_in', 'checked_out']
+            status__in=Reservation.ACTIVE_STATUSES
         )
         
         channel_stats = reservations.values('channel__name').annotate(

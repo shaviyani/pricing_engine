@@ -589,28 +589,8 @@ class MoTReportParser:
 
     def _normalize_country(self, name):
         """Normalize country names to consistent format."""
-        name = name.strip()
-        name = re.sub(r'\s*\*\s*$', '', name)  # Remove trailing *
-
-        # Common normalizations
-        norms = {
-            'U.K': 'United Kingdom',
-            'U.K.': 'United Kingdom',
-            'UK': 'United Kingdom',
-            'U.S.A': 'United States',
-            'U.S.A.': 'United States',
-            'USA': 'United States',
-            'U.A.E': 'United Arab Emirates',
-            'U.A.E.': 'United Arab Emirates',
-            'UAE': 'United Arab Emirates',
-            'Korea': 'South Korea',
-            'Netherlands / Holland': 'Netherlands',
-            'Türkiye': 'Turkey',
-            'Viet Nam': 'Vietnam',
-            'Republic of North Macedonia': 'North Macedonia',
-        }
-
-        return norms.get(name, name)
+        from platform_data.utils import normalize_country
+        return normalize_country(name)
 
 
 def import_mot_report(file_path, country_code='MV', user=None):
@@ -671,17 +651,17 @@ def import_mot_report(file_path, country_code='MV', user=None):
 
     # Save key indicators (if parsed)
     ki = result.get('key_indicators', {})
-    if ki.get('total_arrivals'):
+    if ki.get('current_year_total'):
         try:
             MarketKeyIndicator.objects.update_or_create(
                 country_code=country_code,
                 report_period=report_period,
                 defaults={
-                    'total_arrivals': ki['total_arrivals'],
-                    'occupancy_rate': Decimal(str(ki['occupancy_rate'])) if ki.get('occupancy_rate') else None,
-                    'avg_stay_days': Decimal(str(ki['avg_duration_stay'])) if ki.get('avg_duration_stay') else None,
-                    'total_bed_nights': ki.get('total_bednights'),
-                    'total_beds_operational': ki.get('total_beds_operational'),
+                    'total_arrivals': ki['current_year_total'],
+                    'occupancy_rate': Decimal(str(ki['current_year_occupancy'])) if ki.get('current_year_occupancy') else None,
+                    'avg_stay_days': Decimal(str(ki['current_year_avg_stay'])) if ki.get('current_year_avg_stay') else None,
+                    'total_bed_nights': ki.get('current_year_bed_nights'),
+                    'total_beds_operational': ki.get('current_year_beds'),
                     'source_report': source,
                     'file_import': file_import,
                 }

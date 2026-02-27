@@ -441,6 +441,8 @@
 {% endblock %}
 
 {% block section_js %}
+var CURRENCY = '{{ property.get_currency_symbol|escapejs }}';
+
 function toggleModifier(id) {
     fetch(getApiUrl('modifier','toggle',id), {
         method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')}
@@ -499,8 +501,8 @@ function renderRTSeasonModGrid(data){
     seasons.forEach(function(s){var th=document.createElement('th');th.style.textAlign='center';th.style.minWidth='130px';th.innerHTML='<div style="font-weight:600;">'+s.name+'</div><div style="font-size:11px;color:#6b7280;">Index: '+s.index.toFixed(2)+'</div>';thead.appendChild(th);});
     var tbody=document.getElementById('rtSeasonModBody');tbody.innerHTML='';
     grid.forEach(function(room){var tr=document.createElement('tr');
-    var td1=document.createElement('td');td1.style.fontWeight='600';td1.innerHTML=room.room_type_name+'<div style="font-size:11px;color:#6b7280;font-weight:400;">$'+room.effective_rate.toFixed(0)+(room.premium_percent>0?' (+'+room.premium_percent.toFixed(0)+'%)':'')+'</div>';tr.appendChild(td1);
-    var td2=document.createElement('td');td2.style.textAlign='right';td2.textContent='$'+room.effective_rate.toFixed(0);tr.appendChild(td2);
+    var td1=document.createElement('td');td1.style.fontWeight='600';td1.innerHTML=room.room_type_name+'<div style="font-size:11px;color:#6b7280;font-weight:400;">'+CURRENCY+room.effective_rate.toFixed(0)+(room.premium_percent>0?' (+'+room.premium_percent.toFixed(0)+'%)':'')+'</div>';tr.appendChild(td1);
+    var td2=document.createElement('td');td2.style.textAlign='right';td2.textContent=CURRENCY+room.effective_rate.toFixed(0);tr.appendChild(td2);
     var td3=document.createElement('td');td3.style.textAlign='right';td3.textContent=room.target_occupancy.toFixed(0)+'%';tr.appendChild(td3);
     seasons.forEach(function(season){var td=document.createElement('td');td.style.textAlign='center';td.style.padding='6px 4px';var md=room.seasons[season.id]||{modifier:1.0,effective_index:season.index};
     var inp=document.createElement('input');inp.type='number';inp.step='0.01';inp.min='0.01';inp.max='5.00';inp.value=md.modifier.toFixed(2);inp.style.cssText='width:70px;text-align:center;padding:4px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;';inp.dataset.roomTypeId=room.room_type_id;inp.dataset.seasonId=season.id;inp.className='rt-season-mod-input';
