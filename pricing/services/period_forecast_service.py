@@ -38,7 +38,7 @@ class PeriodForecastService:
     DEFAULT_HB_SUPPLEMENT = 25   # per pax
     DEFAULT_FB_SUPPLEMENT = 40   # per pax
     DEFAULT_PAX = 2
-    DEFAULT_CANCEL_RATE = 0.10   # 10% cancellation assumption
+    DEFAULT_CANCEL_RATE = 0.45   # Based on actual Biosphere Inn cancel rate
 
     def __init__(self, property):
         self.property = property
@@ -86,7 +86,12 @@ class PeriodForecastService:
 
         bb_floor = bb_floor if bb_floor is not None else self.DEFAULT_BB_FLOOR
         bb_ceiling = bb_ceiling if bb_ceiling is not None else self.DEFAULT_BB_CEILING
-        cancel_rate = cancel_rate if cancel_rate is not None else self.DEFAULT_CANCEL_RATE
+
+        # Calculate actual cancel rate if not overridden
+        if cancel_rate is None:
+            cancel_rate = self._calculate_cancel_rate()
+            if cancel_rate is None:
+                cancel_rate = self.DEFAULT_CANCEL_RATE
 
         total_rooms = self.property.total_rooms or self.property.get_total_rooms()
         if total_rooms <= 0:
@@ -251,12 +256,16 @@ class PeriodForecastService:
 
         # ── 4. Demand signal from MoT ──
         demand_signal = 1.0
+        demand_source = 'default'
+        demand_national_pct = None
         try:
             from platform_data.services import MarketSignalService
             idx = MarketSignalService.get_monthly_demand_index(
                 self.property, date(p_start.year, p_start.month, 1)
             )
             demand_signal = idx.get('factor', 1.0)
+            demand_source = idx.get('source', 'unknown')
+            demand_national_pct = idx.get('national_pct')
         except Exception:
             pass
 
@@ -264,20 +273,32 @@ class PeriodForecastService:
         # Velocity projection: OTB + remaining days * pace
         vel_forecast = otb_rn + int(vel_per_day * max(days_out, 0))
 
-        # STLY-based forecast: use STLY as direct estimate (adjusted for demand)
-        stly_forecast = stly_rn if stly_rn > 0 else otb_rn
-
-        # Weighted blend: 40% OTB-momentum, 40% STLY, 20% velocity
-        if days_out <= 7:
-            # Very close: trust OTB heavily
-            raw_forecast = int(otb_rn * 0.90 + stly_forecast * 0.10)
-        elif days_out <= 30:
-            raw_forecast = int(otb_rn * 0.50 + stly_forecast * 0.30 + vel_forecast * 0.20)
+        # STLY-based forecast
+        if stly_rn > 0:
+            stly_forecast = stly_rn
         else:
-            raw_forecast = int(otb_rn * 0.30 + stly_forecast * 0.40 + vel_forecast * 0.30)
+            # No STLY data — estimate from national seasonality
+            stly_forecast = self._estimate_from_seasonality(
+                period, capacity, demand_signal
+            )
 
-        # Apply demand signal
-        raw_forecast = int(raw_forecast * demand_signal)
+        # ── 5. Blended forecast ──
+        if stly_rn > 0:
+            # Have STLY: use 3-way blend
+            if days_out <= 7:
+                raw_forecast = int(otb_rn * 0.90 + stly_forecast * 0.10)
+            elif days_out <= 30:
+                raw_forecast = int(otb_rn * 0.50 + stly_forecast * 0.30 + vel_forecast * 0.20)
+            else:
+                raw_forecast = int(otb_rn * 0.30 + stly_forecast * 0.40 + vel_forecast * 0.30)
+        else:
+            # No STLY: use seasonality estimate + velocity
+            if days_out <= 7:
+                raw_forecast = int(otb_rn * 0.95 + vel_forecast * 0.05)
+            elif days_out <= 30:
+                raw_forecast = int(otb_rn * 0.55 + stly_forecast * 0.25 + vel_forecast * 0.20)
+            else:
+                raw_forecast = int(otb_rn * 0.25 + stly_forecast * 0.45 + vel_forecast * 0.30)
 
         # Apply cancellation haircut
         net_forecast = int(raw_forecast * (1 - cancel_rate))
@@ -314,6 +335,8 @@ class PeriodForecastService:
             'rate_hb': rates['hb'],
             'rate_fb': rates['fb'],
             'demand_signal': round(demand_signal, 3),
+            'demand_source': demand_source,
+            'demand_national_pct': demand_national_pct,
             'offers_recommended': occupancy < 0.30,
             # Velocity
             'velocity_per_day': round(vel_per_day, 1),
@@ -380,6 +403,85 @@ class PeriodForecastService:
             'hb': base_bb + hb_supp,
             'fb': base_bb + fb_supp,
         }
+
+    # -----------------------------------------------------------------
+    # Dynamic cancel rate
+    # -----------------------------------------------------------------
+
+    def _calculate_cancel_rate(self):
+        """Calculate cancel rate from property's own booking history."""
+        from pricing.models import Reservation
+
+        today = date.today()
+        # Look at bookings from last 6 months
+        window_start = today - timedelta(days=180)
+
+        confirmed = Reservation.objects.filter(
+            hotel=self.property,
+            booking_date__gte=window_start,
+            status='confirmed',
+        ).count()
+
+        cancelled = Reservation.objects.filter(
+            hotel=self.property,
+            booking_date__gte=window_start,
+            status='cancelled',
+        ).count()
+
+        total = confirmed + cancelled
+        if total < 10:
+            return None  # Not enough data
+
+        return round(cancelled / total, 2)
+
+    # -----------------------------------------------------------------
+    # Seasonality estimate (STLY proxy)
+    # -----------------------------------------------------------------
+
+    def _estimate_from_seasonality(self, period, capacity, demand_signal):
+        """
+        Estimate expected room nights from national arrival seasonality
+        when no STLY data exists.
+
+        Uses MoT data to determine what fraction of peak-month demand
+        this month typically represents, then applies that to capacity.
+        """
+        try:
+            from platform_data.models import MarketArrivalData
+            from django.db.models import Sum
+
+            month = period['month']
+            country_code = getattr(self.property, 'country_code', 'MV') or 'MV'
+
+            # Get 2025 arrivals for this month and peak month
+            this_month_arrivals = MarketArrivalData.objects.filter(
+                country_code=country_code,
+                report_period__year=2025,
+                report_period__month=month,
+            ).aggregate(t=Sum('arrivals'))['t'] or 0
+
+            peak_arrivals = MarketArrivalData.objects.filter(
+                country_code=country_code,
+                report_period__year=2025,
+            ).values('report_period').annotate(
+                total=Sum('arrivals')
+            ).order_by('-total').first()
+
+            if not peak_arrivals or peak_arrivals['total'] == 0:
+                return 0
+
+            # Seasonal ratio: this month as fraction of peak
+            seasonal_ratio = this_month_arrivals / peak_arrivals['total']
+
+            # Apply to capacity with a reasonable occupancy assumption
+            # Peak months typically see 70-85% occupancy on Dharavandhoo
+            peak_occ = 0.75
+            estimated_rn = int(capacity * seasonal_ratio * peak_occ)
+
+            return max(0, min(capacity, estimated_rn))
+
+        except Exception:
+            return 0
 
     # -----------------------------------------------------------------
     # Market context

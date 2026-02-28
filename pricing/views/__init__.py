@@ -140,5 +140,11 @@ from .admin_views import (
     TravelAgentUpdateView,
     TravelAgentDeleteView,
     # Competitive Set
+    ManageCompetitiveView,
     CompetitiveSetUploadView,
+    CompetitorCreateView,
+    CompetitorUpdateView,
+    CompetitorDeleteView,
+    MarketPositionUpdateView,
+    MarketPositionRecalculateView,
 )

@@ -2504,6 +2504,28 @@ class TravelAgentDeleteView(PricingManagementMixin, View):
         )
 
 
+class ManageCompetitiveView(ManageBaseMixin, TemplateView):
+    """Management page for competitive set and market position."""
+    template_name = 'pricing/manage/competitive.html'
+    active_section = 'competitive'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from pricing.models import CompetitiveSet, MarketPosition
+        hotel = context.get('hotel')
+        if hotel:
+            context['competitors'] = CompetitiveSet.objects.filter(
+                hotel=hotel
+            ).order_by('-bb_rate')
+            try:
+                context['market_position'] = MarketPosition.objects.get(hotel=hotel)
+            except MarketPosition.DoesNotExist:
+                context['market_position'] = None
+            context['position_choices'] = CompetitiveSet.POSITION_CHOICES
+            context['strategy_choices'] = MarketPosition.POSITION_STRATEGY
+        return context
+
+
 class CompetitiveSetUploadView(PropertyMixin, View):
     """Handle CSV/Excel upload for competitive set."""
 
@@ -2528,3 +2550,115 @@ class CompetitiveSetUploadView(PropertyMixin, View):
             return JsonResponse({'success': True, 'data': result})
         finally:
             os.unlink(tmp_path)
+
+
+class CompetitorCreateView(PricingManagementMixin, View):
+    """API: Create a competitor."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import CompetitiveSet
+        hotel = self.get_hotel(request)
+        data = json.loads(request.body)
+
+        name = data.get('competitor_name', '').strip()
+        if not name:
+            return self.error_response('Competitor name is required')
+
+        if CompetitiveSet.objects.filter(hotel=hotel, competitor_name=name).exists():
+            return self.error_response(f'Competitor "{name}" already exists')
+
+        CompetitiveSet.objects.create(
+            hotel=hotel,
+            competitor_name=name,
+            bb_rate=data.get('bb_rate') or None,
+            hb_rate=data.get('hb_rate') or None,
+            fb_rate=data.get('fb_rate') or None,
+            rating=data.get('rating') or None,
+            total_rooms=data.get('total_rooms') or 0,
+            position=data.get('position', 'mid'),
+            notes=data.get('notes', ''),
+            source=data.get('source', 'Manual'),
+        )
+        return self.success_response(message=f'Competitor "{name}" added')
+
+
+class CompetitorUpdateView(PricingManagementMixin, View):
+    """API: Update a competitor field."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import CompetitiveSet
+        comp_id = kwargs.get('pk')
+        comp = get_object_or_404(CompetitiveSet, pk=comp_id)
+        data = json.loads(request.body)
+
+        allowed = ['competitor_name', 'bb_rate', 'hb_rate', 'fb_rate', 'rating',
+                    'total_rooms', 'position', 'notes', 'source', 'is_active']
+
+        for field, value in data.items():
+            if field in allowed:
+                if field in ('bb_rate', 'hb_rate', 'fb_rate', 'rating'):
+                    value = Decimal(str(value)) if value not in ('', None) else None
+                elif field == 'total_rooms':
+                    value = int(value) if value not in ('', None) else 0
+                elif field == 'is_active':
+                    value = bool(value)
+                setattr(comp, field, value)
+
+        comp.save()
+        return self.success_response(message='Competitor updated')
+
+
+class CompetitorDeleteView(PricingManagementMixin, View):
+    """API: Delete a competitor."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import CompetitiveSet
+        comp_id = kwargs.get('pk')
+        comp = get_object_or_404(CompetitiveSet, pk=comp_id)
+        name = comp.competitor_name
+        comp.delete()
+        return self.success_response(message=f'Competitor "{name}" deleted')
+
+
+class MarketPositionUpdateView(PricingManagementMixin, View):
+    """API: Update market position settings."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import MarketPosition
+        hotel = self.get_hotel(request)
+        mp, _ = MarketPosition.objects.get_or_create(hotel=hotel)
+        data = json.loads(request.body)
+
+        allowed = ['strategy', 'bb_floor', 'bb_ceiling', 'hb_supplement',
+                    'fb_supplement', 'notes']
+
+        for field, value in data.items():
+            if field in allowed:
+                if field in ('bb_floor', 'bb_ceiling', 'hb_supplement', 'fb_supplement'):
+                    value = Decimal(str(value)) if value not in ('', None) else Decimal('0')
+                setattr(mp, field, value)
+
+        mp.save()
+        return self.success_response(message='Market position updated')
+
+
+class MarketPositionRecalculateView(PricingManagementMixin, View):
+    """API: Recalculate market position from competitors."""
+
+    def post(self, request, *args, **kwargs):
+        from pricing.models import MarketPosition
+        hotel = self.get_hotel(request)
+        mp, _ = MarketPosition.objects.get_or_create(hotel=hotel)
+        stats = mp.recalculate_from_competitors()
+        return self.success_response(
+            message='Market position recalculated',
+            data={
+                'avg_bb': float(stats['avg_bb'] or 0),
+                'median_bb': float(stats['median_bb'] or 0),
+                'min_bb': float(stats['min_bb'] or 0),
+                'max_bb': float(stats['max_bb'] or 0),
+                'count': stats['count'],
+                'bb_floor': float(mp.bb_floor),
+                'bb_ceiling': float(mp.bb_ceiling),
+            }
+        )

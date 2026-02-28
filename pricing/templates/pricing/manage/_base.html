@@ -236,6 +236,11 @@
             Agents
             <span class="hotkey">7</span>
         </a>
+        <a href="{% url 'pricing:manage_competitive' org_code=org.code prop_code=prop_code %}" class="section-btn {% if active_section == 'competitive' %}active{% endif %}">
+            <svg class="w-4 h-4 mr-1 inline -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            Competitive
+            <span class="hotkey">8</span>
+        </a>
     </div>
 
     <!-- Section Content -->
@@ -426,7 +431,7 @@ document.addEventListener('keydown', function(e) {
         return;
     }
     var idx = parseInt(e.key);
-    if (!isNaN(idx) && idx >= 0 && idx <= 7 && sectionLinks[idx]) {
+    if (!isNaN(idx) && idx >= 0 && idx <= 8 && sectionLinks[idx]) {
         sectionLinks[idx].click();
     }
 });

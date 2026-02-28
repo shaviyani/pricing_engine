@@ -1,0 +1,561 @@
+{% extends "pricing/manage/_base.html" %}
+
+{% block section_title %}Competitive Set{% endblock %}
+{% block page_heading %}Competitive Set{% endblock %}
+
+{% block section_css %}
+    .upload-zone {
+        border: 2px dashed #d1d5db; border-radius: 8px; padding: 24px;
+        text-align: center; cursor: pointer; transition: all 0.2s;
+        background: #f9fafb;
+    }
+    .upload-zone:hover { border-color: #93c5fd; background: #eff6ff; }
+    .upload-zone.dragover { border-color: #2563eb; background: #dbeafe; }
+    .mp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+    .mp-stat {
+        background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
+        padding: 12px; text-align: center;
+    }
+    .mp-stat-value { font-size: 20px; font-weight: 700; color: #111827; }
+    .mp-stat-label { font-size: 11px; color: #6b7280; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .rate-input {
+        width: 80px; padding: 4px 6px; border: 1px solid transparent; border-radius: 4px;
+        font-size: 14px; text-align: right; background: transparent; transition: all 0.15s;
+    }
+    .rate-input:hover { border-color: #d1d5db; background: white; }
+    .rate-input:focus { outline: none; border-color: #2563eb; background: white; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+    .position-select {
+        padding: 4px 6px; border: 1px solid transparent; border-radius: 4px;
+        font-size: 13px; background: transparent; cursor: pointer; transition: all 0.15s;
+    }
+    .position-select:hover { border-color: #d1d5db; background: white; }
+    .position-select:focus { outline: none; border-color: #2563eb; background: white; }
+{% endblock %}
+
+{% block section_content %}
+
+<div class="tab-nav" role="tablist">
+    <button class="tab-btn active" data-tab="competitors">Competitors</button>
+    <button class="tab-btn" data-tab="market-position">Market Position</button>
+    <button class="tab-btn" data-tab="upload">Import CSV</button>
+</div>
+
+<!-- Tab: Competitors -->
+<div id="tab-competitors" class="tab-content active">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <div>
+                <h3 class="mgmt-card-title">Competitive Set</h3>
+                <p class="text-sm text-gray-500 mt-1">Track competitor rates to calibrate your pricing strategy.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openModal('competitorModal')">+ Add Competitor</button>
+        </div>
+        <div class="mgmt-card-body">
+            {% if competitors %}
+            <div style="overflow-x:auto;">
+            <table class="mgmt-table">
+                <thead>
+                    <tr>
+                        <th>Competitor</th>
+                        <th style="text-align:right;">BB Rate</th>
+                        <th style="text-align:right;">HB Rate</th>
+                        <th style="text-align:right;">FB Rate</th>
+                        <th style="text-align:right;">Rating</th>
+                        <th style="text-align:right;">Rooms</th>
+                        <th>Position</th>
+                        <th>Active</th>
+                        <th style="width:60px;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for comp in competitors %}
+                    <tr data-id="{{ comp.id }}">
+                        <td>
+                            <input type="text" class="editable-input" style="font-weight:600; min-width:160px;"
+                                   value="{{ comp.competitor_name }}"
+                                   data-field="competitor_name" data-id="{{ comp.id }}"
+                                   onchange="updateCompetitor(this)">
+                        </td>
+                        <td style="text-align:right;">
+                            <span style="color:#6b7280;">$</span>
+                            <input type="number" step="0.01" class="rate-input"
+                                   value="{{ comp.bb_rate|default_if_none:'' }}"
+                                   data-field="bb_rate" data-id="{{ comp.id }}"
+                                   onchange="updateCompetitor(this)" placeholder="—">
+                        </td>
+                        <td style="text-align:right;">
+                            <span style="color:#6b7280;">$</span>
+                            <input type="number" step="0.01" class="rate-input"
+                                   value="{{ comp.hb_rate|default_if_none:'' }}"
+                                   data-field="hb_rate" data-id="{{ comp.id }}"
+                                   onchange="updateCompetitor(this)" placeholder="—">
+                        </td>
+                        <td style="text-align:right;">
+                            <span style="color:#6b7280;">$</span>
+                            <input type="number" step="0.01" class="rate-input"
+                                   value="{{ comp.fb_rate|default_if_none:'' }}"
+                                   data-field="fb_rate" data-id="{{ comp.id }}"
+                                   onchange="updateCompetitor(this)" placeholder="—">
+                        </td>
+                        <td style="text-align:right;">
+                            <input type="number" step="0.1" class="rate-input" style="width:60px;"
+                                   value="{{ comp.rating|default_if_none:'' }}"
+                                   data-field="rating" data-id="{{ comp.id }}"
+                                   onchange="updateCompetitor(this)" placeholder="—">
+                        </td>
+                        <td style="text-align:right;">
+                            <input type="number" class="rate-input" style="width:60px;"
+                                   value="{{ comp.total_rooms }}"
+                                   data-field="total_rooms" data-id="{{ comp.id }}"
+                                   onchange="updateCompetitor(this)">
+                        </td>
+                        <td>
+                            <select class="position-select"
+                                    data-field="position" data-id="{{ comp.id }}"
+                                    onchange="updateCompetitor(this)">
+                                {% for val, label in position_choices %}
+                                <option value="{{ val }}" {% if comp.position == val %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                        <td>
+                            <label class="toggle">
+                                <input type="checkbox" {% if comp.is_active %}checked{% endif %}
+                                       onchange="toggleCompetitor({{ comp.id }}, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </td>
+                        <td>
+                            <div class="row-actions">
+                                <button class="action-btn danger" onclick="deleteCompetitor({{ comp.id }}, '{{ comp.competitor_name|escapejs }}')">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>No competitors added yet.</p>
+                <p class="text-sm text-gray-400 mt-2">Add competitors manually or import from a CSV file.</p>
+                <button class="btn btn-primary mt-4" onclick="openModal('competitorModal')">Add Your First Competitor</button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Tab: Market Position -->
+<div id="tab-market-position" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <div>
+                <h3 class="mgmt-card-title">Market Position</h3>
+                <p class="text-sm text-gray-500 mt-1">Your property's competitive positioning and rate boundaries.</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="recalculateMarketPosition()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline; vertical-align:-2px;">
+                    <path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path>
+                    <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path>
+                </svg>
+                Recalculate
+            </button>
+        </div>
+        <div class="mgmt-card-body-padded">
+
+            <!-- Market Stats (read-only) -->
+            <h4 class="text-sm font-semibold text-gray-700 mb-3">Market Statistics</h4>
+            {% if market_position %}
+            <div class="mp-grid" id="marketStats">
+                <div class="mp-stat">
+                    <div class="mp-stat-value" id="stat-avg">${{ market_position.market_avg_bb|floatformat:0|default:"—" }}</div>
+                    <div class="mp-stat-label">Avg BB</div>
+                </div>
+                <div class="mp-stat">
+                    <div class="mp-stat-value" id="stat-median">${{ market_position.market_median_bb|floatformat:0|default:"—" }}</div>
+                    <div class="mp-stat-label">Median BB</div>
+                </div>
+                <div class="mp-stat">
+                    <div class="mp-stat-value" id="stat-min">${{ market_position.market_min_bb|floatformat:0|default:"—" }}</div>
+                    <div class="mp-stat-label">Min BB</div>
+                </div>
+                <div class="mp-stat">
+                    <div class="mp-stat-value" id="stat-max">${{ market_position.market_max_bb|floatformat:0|default:"—" }}</div>
+                    <div class="mp-stat-label">Max BB</div>
+                </div>
+                <div class="mp-stat">
+                    <div class="mp-stat-value" id="stat-count">{{ market_position.competitor_count }}</div>
+                    <div class="mp-stat-label">Competitors</div>
+                </div>
+            </div>
+            {% else %}
+            <div class="mp-grid" id="marketStats">
+                <div class="mp-stat"><div class="mp-stat-value" id="stat-avg">—</div><div class="mp-stat-label">Avg BB</div></div>
+                <div class="mp-stat"><div class="mp-stat-value" id="stat-median">—</div><div class="mp-stat-label">Median BB</div></div>
+                <div class="mp-stat"><div class="mp-stat-value" id="stat-min">—</div><div class="mp-stat-label">Min BB</div></div>
+                <div class="mp-stat"><div class="mp-stat-value" id="stat-max">—</div><div class="mp-stat-label">Max BB</div></div>
+                <div class="mp-stat"><div class="mp-stat-value" id="stat-count">0</div><div class="mp-stat-label">Competitors</div></div>
+            </div>
+            <div class="alert alert-info mt-4">
+                Add competitors and click "Recalculate" to generate market statistics.
+            </div>
+            {% endif %}
+
+            <!-- Configurable Settings -->
+            <h4 class="text-sm font-semibold text-gray-700 mb-3 mt-6">Rate Strategy</h4>
+            <div class="form-row" style="margin-bottom:16px;">
+                <div class="form-group">
+                    <label class="form-label">Positioning Strategy</label>
+                    <select class="form-select" id="mp-strategy" onchange="updateMarketPosition()">
+                        {% for val, label in strategy_choices %}
+                        <option value="{{ val }}" {% if market_position and market_position.strategy == val %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row" style="margin-bottom:16px;">
+                <div class="form-group">
+                    <label class="form-label">BB Floor ($)</label>
+                    <input type="number" step="1" class="form-input" id="mp-bb-floor"
+                           value="{{ market_position.bb_floor|default:'50' }}"
+                           onchange="updateMarketPosition()">
+                    <p class="form-hint">Minimum BB rate — never sell below this.</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">BB Ceiling ($)</label>
+                    <input type="number" step="1" class="form-input" id="mp-bb-ceiling"
+                           value="{{ market_position.bb_ceiling|default:'80' }}"
+                           onchange="updateMarketPosition()">
+                    <p class="form-hint">Maximum BB rate for peak demand.</p>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">HB Supplement ($)</label>
+                    <input type="number" step="1" class="form-input" id="mp-hb-supp"
+                           value="{{ market_position.hb_supplement|default:'50' }}"
+                           onchange="updateMarketPosition()">
+                    <p class="form-hint">Total HB supplement added to BB rate.</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">FB Supplement ($)</label>
+                    <input type="number" step="1" class="form-input" id="mp-fb-supp"
+                           value="{{ market_position.fb_supplement|default:'80' }}"
+                           onchange="updateMarketPosition()">
+                    <p class="form-hint">Total FB supplement added to BB rate.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tab: Import CSV -->
+<div id="tab-upload" class="tab-content">
+    <div class="mgmt-card">
+        <div class="mgmt-card-header">
+            <h3 class="mgmt-card-title">Import Competitive Set</h3>
+        </div>
+        <div class="mgmt-card-body-padded">
+            <p class="text-sm text-gray-600 mb-4">
+                Upload a CSV or Excel file with competitor data. Expected columns:
+                <strong>Competitor Name</strong> (required), BB Rate, HB Rate, FB Rate, Rating, Rooms, Position, Notes, Source, Date Surveyed, Active.
+            </p>
+            <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()"
+                 ondragover="event.preventDefault(); this.classList.add('dragover');"
+                 ondragleave="this.classList.remove('dragover');"
+                 ondrop="handleDrop(event)">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" style="margin:0 auto 12px;">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <p class="text-gray-600 font-medium">Click to select or drag & drop</p>
+                <p class="text-xs text-gray-400 mt-1">CSV, XLSX, or XLS files</p>
+                <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display:none;" onchange="uploadFile(this.files[0])">
+            </div>
+            <div id="uploadResult" style="display:none; margin-top:16px;"></div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block section_modals %}
+<!-- Add Competitor Modal -->
+<div id="competitorModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <form id="competitorForm" onsubmit="createCompetitor(event)">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Competitor</h3>
+                <button type="button" class="modal-close" onclick="closeModal('competitorModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Competitor Name *</label>
+                    <input type="text" name="competitor_name" class="form-input" required placeholder="e.g. Beach Villa Resort">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">BB Rate ($)</label>
+                        <input type="number" step="0.01" name="bb_rate" class="form-input" placeholder="65.00">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">HB Rate ($)</label>
+                        <input type="number" step="0.01" name="hb_rate" class="form-input" placeholder="115.00">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">FB Rate ($)</label>
+                        <input type="number" step="0.01" name="fb_rate" class="form-input" placeholder="145.00">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Rating</label>
+                        <input type="number" step="0.1" min="0" max="10" name="rating" class="form-input" placeholder="8.5">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Total Rooms</label>
+                        <input type="number" name="total_rooms" class="form-input" placeholder="20">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Position</label>
+                        <select name="position" class="form-select">
+                            {% for val, label in position_choices %}
+                            <option value="{{ val }}" {% if val == 'mid' %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Source</label>
+                    <input type="text" name="source" class="form-input" placeholder="Booking.com" value="Booking.com">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notes</label>
+                    <textarea name="notes" class="form-input" rows="2" placeholder="Differentiators, amenities, etc."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('competitorModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Competitor</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block section_js %}
+/* ── Competitor CRUD ── */
+function createCompetitor(event) {
+    event.preventDefault();
+    var data = {};
+    new FormData(event.target).forEach(function(v, k) { data[k] = v; });
+
+    fetch(API_BASE + '/api/competitors/create/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(data)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+        if (resp.success) {
+            showToast(resp.message || 'Competitor added');
+            closeModal('competitorModal');
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(resp.error || 'Failed', 'error');
+        }
+    })
+    .catch(function() { showToast('Network error', 'error'); });
+}
+
+function updateCompetitor(input) {
+    var id = input.dataset.id;
+    var field = input.dataset.field;
+    var value = input.value;
+    input.classList.add('saving');
+
+    var data = {};
+    data[field] = value;
+
+    fetch(API_BASE + '/api/competitors/' + id + '/update/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(data)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+        input.classList.remove('saving');
+        if (resp.success) {
+            input.classList.add('saved');
+            setTimeout(function() { input.classList.remove('saved'); }, 1000);
+        } else {
+            input.classList.add('error');
+            showToast(resp.error || 'Failed', 'error');
+            setTimeout(function() { input.classList.remove('error'); }, 2000);
+        }
+    })
+    .catch(function() {
+        input.classList.remove('saving');
+        input.classList.add('error');
+        showToast('Network error', 'error');
+    });
+}
+
+function toggleCompetitor(id, isActive) {
+    fetch(API_BASE + '/api/competitors/' + id + '/update/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ is_active: isActive })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+        if (resp.success) showToast(isActive ? 'Competitor activated' : 'Competitor deactivated');
+        else showToast(resp.error || 'Failed', 'error');
+    })
+    .catch(function() { showToast('Network error', 'error'); });
+}
+
+function deleteCompetitor(id, name) {
+    document.getElementById('deleteItemName').textContent = name;
+    document.getElementById('confirmDeleteBtn').onclick = function() {
+        fetch(API_BASE + '/api/competitors/' + id + '/delete/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') }
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+            if (resp.success) {
+                showToast(resp.message || 'Deleted');
+                closeModal('deleteModal');
+                var row = document.querySelector('tr[data-id="' + id + '"]');
+                if (row) row.remove();
+            } else {
+                showToast(resp.error || 'Failed', 'error');
+            }
+        })
+        .catch(function() { showToast('Network error', 'error'); });
+    };
+    openModal('deleteModal');
+}
+
+/* ── Market Position ── */
+var mpSaveTimer = null;
+function updateMarketPosition() {
+    clearTimeout(mpSaveTimer);
+    mpSaveTimer = setTimeout(function() {
+        var data = {
+            strategy: document.getElementById('mp-strategy').value,
+            bb_floor: document.getElementById('mp-bb-floor').value,
+            bb_ceiling: document.getElementById('mp-bb-ceiling').value,
+            hb_supplement: document.getElementById('mp-hb-supp').value,
+            fb_supplement: document.getElementById('mp-fb-supp').value
+        };
+
+        fetch(API_BASE + '/api/market-position/update/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify(data)
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+            if (resp.success) showToast('Market position saved');
+            else showToast(resp.error || 'Failed', 'error');
+        })
+        .catch(function() { showToast('Network error', 'error'); });
+    }, 600);
+}
+
+function recalculateMarketPosition() {
+    fetch(API_BASE + '/api/market-position/recalculate/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+        if (resp.success && resp.data) {
+            var d = resp.data;
+            document.getElementById('stat-avg').textContent = '$' + Math.round(d.avg_bb);
+            document.getElementById('stat-median').textContent = '$' + Math.round(d.median_bb);
+            document.getElementById('stat-min').textContent = '$' + Math.round(d.min_bb);
+            document.getElementById('stat-max').textContent = '$' + Math.round(d.max_bb);
+            document.getElementById('stat-count').textContent = d.count;
+            document.getElementById('mp-bb-floor').value = Math.round(d.bb_floor);
+            document.getElementById('mp-bb-ceiling').value = Math.round(d.bb_ceiling);
+            showToast(resp.message || 'Recalculated');
+        } else {
+            showToast(resp.error || 'Failed', 'error');
+        }
+    })
+    .catch(function() { showToast('Network error', 'error'); });
+}
+
+/* ── CSV Upload ── */
+function handleDrop(event) {
+    event.preventDefault();
+    document.getElementById('uploadZone').classList.remove('dragover');
+    var file = event.dataTransfer.files[0];
+    if (file) uploadFile(file);
+}
+
+function uploadFile(file) {
+    if (!file) return;
+    var zone = document.getElementById('uploadZone');
+    var resultDiv = document.getElementById('uploadResult');
+
+    zone.innerHTML = '<p class="text-gray-500">Uploading <strong>' + file.name + '</strong>...</p>';
+
+    var formData = new FormData();
+    formData.append('file', file);
+
+    fetch(API_BASE + '/manage/competitive/upload/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: formData
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+        if (resp.success && resp.data) {
+            var d = resp.data;
+            var html = '<div class="alert alert-info" style="flex-direction:column; align-items:flex-start;">';
+            html += '<strong>Import Complete</strong>';
+            html += '<div class="mt-2" style="font-size:14px;">';
+            html += '<span class="badge badge-green mr-2">' + (d.created || 0) + ' created</span> ';
+            html += '<span class="badge badge-blue mr-2">' + (d.updated || 0) + ' updated</span> ';
+            if (d.skipped) html += '<span class="badge badge-yellow mr-2">' + d.skipped + ' skipped</span> ';
+            html += '</div>';
+            if (d.errors && d.errors.length) {
+                html += '<div class="mt-2 text-sm" style="color:#991b1b;">';
+                d.errors.forEach(function(e) { html += '<div>' + e + '</div>'; });
+                html += '</div>';
+            }
+            if (d.market_stats) {
+                html += '<div class="mt-2 text-sm">Market avg BB: $' + Math.round(d.market_stats.avg_bb) + ' | Median: $' + Math.round(d.market_stats.median_bb) + ' | ' + d.market_stats.count + ' competitors</div>';
+            }
+            html += '</div>';
+            html += '<button class="btn btn-primary mt-2" onclick="location.reload()">Refresh Page</button>';
+            resultDiv.innerHTML = html;
+            resultDiv.style.display = 'block';
+            showToast('Import complete: ' + (d.created || 0) + ' created, ' + (d.updated || 0) + ' updated');
+        } else {
+            resultDiv.innerHTML = '<div class="alert alert-error">' + (resp.data && resp.data.error || resp.error || 'Import failed') + '</div>';
+            resultDiv.style.display = 'block';
+            showToast(resp.error || 'Import failed', 'error');
+        }
+        // Reset upload zone
+        zone.innerHTML = '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" style="margin:0 auto 12px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><p class="text-gray-600 font-medium">Click to select or drag & drop</p><p class="text-xs text-gray-400 mt-1">CSV, XLSX, or XLS files</p><input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display:none;" onchange="uploadFile(this.files[0])">';
+    })
+    .catch(function() {
+        zone.innerHTML = '<p class="text-red-500">Upload failed. Please try again.</p>';
+        showToast('Network error', 'error');
+    });
+}
+{% endblock %}

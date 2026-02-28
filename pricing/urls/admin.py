@@ -26,7 +26,13 @@ from pricing.views import (
     RoomTypeMappingListView, RoomTypeMappingUpdateView,
     ManageAgentsView,
     TravelAgentListView, TravelAgentCreateView, TravelAgentUpdateView, TravelAgentDeleteView,
+    ManageCompetitiveView,
     CompetitiveSetUploadView,
+    CompetitorCreateView,
+    CompetitorUpdateView,
+    CompetitorDeleteView,
+    MarketPositionUpdateView,
+    MarketPositionRecalculateView,
 )
 
 # Property-scoped management URLs
@@ -126,8 +132,20 @@ urlpatterns = [
          RoomTypeMappingUpdateView.as_view(), name='api_room_type_mapping_update'),
 
     # Competitive Set
+    path('org/<slug:org_code>/<slug:prop_code>/manage/competitive/',
+         ManageCompetitiveView.as_view(), name='manage_competitive'),
     path('org/<slug:org_code>/<slug:prop_code>/manage/competitive/upload/',
          CompetitiveSetUploadView.as_view(), name='competitive_upload'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/competitors/create/',
+         CompetitorCreateView.as_view(), name='api_competitor_create'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/competitors/<int:pk>/update/',
+         CompetitorUpdateView.as_view(), name='api_competitor_update'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/competitors/<int:pk>/delete/',
+         CompetitorDeleteView.as_view(), name='api_competitor_delete'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/market-position/update/',
+         MarketPositionUpdateView.as_view(), name='api_market_position_update'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/market-position/recalculate/',
+         MarketPositionRecalculateView.as_view(), name='api_market_position_recalculate'),
 
     # Travel Agents
     path('org/<slug:org_code>/<slug:prop_code>/manage/agents/',

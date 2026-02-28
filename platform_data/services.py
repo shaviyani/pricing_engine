@@ -1236,6 +1236,11 @@ class MarketSignalService:
                 prop, year, month
             )
 
+            # Minimum sample: need at least 10 room nights to use property mix
+            total_mix_nights = sum(m['nights'] for m in guest_mix) if guest_mix else 0
+            if total_mix_nights < 10:
+                guest_mix = []  # Force national fallback path
+
             if not guest_mix:
                 national = MarketSignalService._get_national_yoy_for_month(
                     country_code, year, month
