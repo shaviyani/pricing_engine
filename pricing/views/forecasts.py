@@ -23,6 +23,7 @@ from pricing.models import (
     OccupancyForecast,
 )
 from pricing.services import RevenueForecastService, PickupAnalysisService, PricingService
+from pricing.services.period_forecast_service import PeriodForecastService
 
 from .mixins import PropertyMixin
 
@@ -854,3 +855,64 @@ def occupancy_calendar_ajax(request, org_code, prop_code):
     except Exception as e:
         logger.exception("Occupancy calendar AJAX error")
         return JsonResponse({'success': False, 'message': str(e)}, status=500)
+
+
+class DemandForecastView(PropertyMixin, TemplateView):
+    """
+    Demand Forecast dashboard: bi-weekly occupancy forecast with rate suggestions.
+    """
+    template_name = 'pricing/forecasts/demand_forecast.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['nav_active'] = 'forecasts'
+        prop = context['property']
+
+        has_data = Reservation.objects.filter(hotel=prop).exists()
+        context['has_data'] = has_data
+        context['total_rooms'] = prop.total_rooms or prop.get_total_rooms()
+
+        # Load market position defaults for input fields
+        context['bb_floor'] = 50
+        context['bb_ceiling'] = 80
+        try:
+            from pricing.models import MarketPosition
+            mp = MarketPosition.objects.get(hotel=prop)
+            context['bb_floor'] = int(mp.bb_floor)
+            context['bb_ceiling'] = int(mp.bb_ceiling)
+        except Exception:
+            pass
+
+        return context
+
+
+def generate_demand_forecast_ajax(request, org_code, prop_code):
+    """AJAX: generate bi-weekly demand forecast."""
+    try:
+        org = get_object_or_404(Organization, code=org_code, is_active=True)
+        prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+
+        months_ahead = int(request.GET.get('months', 3))
+        months_ahead = max(1, min(6, months_ahead))
+
+        bb_floor = request.GET.get('bb_floor')
+        bb_ceiling = request.GET.get('bb_ceiling')
+        cancel_rate = request.GET.get('cancel_rate')
+
+        bb_floor = int(bb_floor) if bb_floor else None
+        bb_ceiling = int(bb_ceiling) if bb_ceiling else None
+        cancel_rate = float(cancel_rate) / 100 if cancel_rate else None
+
+        svc = PeriodForecastService(property=prop)
+        result = svc.generate_forecast(
+            months_ahead=months_ahead,
+            bb_floor=bb_floor,
+            bb_ceiling=bb_ceiling,
+            cancel_rate=cancel_rate,
+        )
+
+        return JsonResponse({'success': True, **result})
+
+    except Exception as e:
+        logger.exception("Demand forecast AJAX error")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)

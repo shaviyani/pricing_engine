@@ -1,0 +1,387 @@
+{% extends 'pricing/base.html' %}
+{% load humanize %}
+
+{% block title %}Demand Forecast - {{ prop.name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Demand Forecast</h1>
+            <p class="text-sm text-gray-500">Bi-weekly occupancy forecast with rate suggestions · {{ prop.name }}</p>
+        </div>
+    </div>
+
+    {% if not has_data %}
+    <div class="text-center py-16 bg-white rounded-xl shadow-sm border">
+        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">Import reservation data to generate demand forecasts.</p>
+    </div>
+    {% elif total_rooms == 0 %}
+    <div class="text-center py-16 bg-white rounded-xl shadow-sm border">
+        <svg class="mx-auto h-12 w-12 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">Set the total room count in Property settings to enable forecasting.</p>
+    </div>
+    {% else %}
+
+    <!-- Assumptions Panel -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-6">
+        <div class="flex items-end gap-4 flex-wrap">
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Months Ahead</label>
+                <select id="input-months" class="text-sm border-gray-300 rounded-lg px-3 py-2">
+                    <option value="2">2 months</option>
+                    <option value="3" selected>3 months</option>
+                    <option value="4">4 months</option>
+                    <option value="6">6 months</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">BB Floor ($)</label>
+                <input id="input-floor" type="number" value="{{ bb_floor }}" min="10" max="500"
+                    class="text-sm border-gray-300 rounded-lg px-3 py-2 w-24">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">BB Ceiling ($)</label>
+                <input id="input-ceiling" type="number" value="{{ bb_ceiling }}" min="20" max="1000"
+                    class="text-sm border-gray-300 rounded-lg px-3 py-2 w-24">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Cancel Rate (%)</label>
+                <input id="input-cancel" type="number" value="10" min="0" max="50" step="1"
+                    class="text-sm border-gray-300 rounded-lg px-3 py-2 w-24">
+            </div>
+            <button id="btn-generate" onclick="generateForecast()"
+                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Generate Forecast
+            </button>
+        </div>
+    </div>
+
+    <!-- KPI Cards (hidden until generated) -->
+    <div id="kpi-cards" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Rooms</p>
+            <p id="kpi-rooms" class="text-2xl font-bold text-gray-900 mt-1">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Avg Forecast Occ</p>
+            <p id="kpi-avg-occ" class="text-2xl font-bold text-gray-900 mt-1">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Avg BB Rate</p>
+            <p id="kpi-avg-bb" class="text-2xl font-bold text-gray-900 mt-1">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Periods Below 30%</p>
+            <p id="kpi-low-periods" class="text-2xl font-bold text-red-600 mt-1">—</p>
+        </div>
+    </div>
+
+    <!-- Market Context (hidden until generated) -->
+    <div id="market-context" class="hidden bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-6">
+        <div class="flex items-center justify-between flex-wrap gap-4">
+            <div class="flex items-center space-x-8">
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase">Market Avg BB</p>
+                    <p id="ctx-market-avg" class="text-lg font-bold text-gray-900">—</p>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase">Your Position</p>
+                    <p id="ctx-strategy" class="text-lg font-bold text-blue-700">—</p>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase">Rate Range</p>
+                    <p id="ctx-range" class="text-lg font-bold text-gray-900">—</p>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-gray-500 uppercase">Competitors Tracked</p>
+                    <p id="ctx-comp-count" class="text-lg font-bold text-gray-900">—</p>
+                </div>
+            </div>
+            <div id="ctx-survey-date" class="text-xs text-gray-400"></div>
+        </div>
+    </div>
+
+    <!-- Chart -->
+    <div id="chart-container" class="hidden bg-white rounded-xl shadow-sm border p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900 mb-4">Forecast Overview</h2>
+        <div style="height: 320px;">
+            <canvas id="forecastChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Forecast Table -->
+    <div id="table-container" class="hidden bg-white rounded-xl shadow-sm border overflow-hidden mb-6">
+        <div class="px-6 py-4 border-b border-gray-100">
+            <h2 class="text-lg font-semibold text-gray-900">Period Detail</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-600">Period</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">OTB</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Forecast</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Capacity</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Occ %</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">BB</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">HB</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">FB</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">vs STLY</th>
+                    </tr>
+                </thead>
+                <tbody id="forecastTable" class="divide-y divide-gray-100"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Loading state -->
+    <div id="loading-state" class="hidden text-center py-12">
+        <svg class="animate-spin h-8 w-8 text-blue-600 mx-auto" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">Generating forecast...</p>
+    </div>
+
+    <!-- Error state -->
+    <div id="error-state" class="hidden text-center py-12 bg-white rounded-xl shadow-sm border">
+        <p id="error-message" class="text-sm text-red-600"></p>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if has_data and total_rooms > 0 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script>
+var forecastChart = null;
+
+function generateForecast() {
+    var months = document.getElementById('input-months').value;
+    var floor = document.getElementById('input-floor').value;
+    var ceiling = document.getElementById('input-ceiling').value;
+    var cancel = document.getElementById('input-cancel').value;
+
+    // Show loading, hide others
+    document.getElementById('loading-state').classList.remove('hidden');
+    document.getElementById('kpi-cards').classList.add('hidden');
+    document.getElementById('market-context').classList.add('hidden');
+    document.getElementById('chart-container').classList.add('hidden');
+    document.getElementById('table-container').classList.add('hidden');
+    document.getElementById('error-state').classList.add('hidden');
+
+    var url = '{% url "pricing:demand_forecast_ajax" org_code=org.code prop_code=prop.code %}';
+    url += '?months=' + months + '&bb_floor=' + floor + '&bb_ceiling=' + ceiling + '&cancel_rate=' + cancel;
+
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            document.getElementById('loading-state').classList.add('hidden');
+            if (data.success) {
+                renderForecast(data);
+            } else {
+                document.getElementById('error-message').textContent = data.error || 'Forecast generation failed.';
+                document.getElementById('error-state').classList.remove('hidden');
+            }
+        })
+        .catch(function(err) {
+            document.getElementById('loading-state').classList.add('hidden');
+            document.getElementById('error-message').textContent = 'Network error: ' + err.message;
+            document.getElementById('error-state').classList.remove('hidden');
+        });
+}
+
+function renderForecast(data) {
+    var periods = data.periods || [];
+    if (!periods.length) {
+        document.getElementById('error-message').textContent = data.error || 'No forecast periods generated.';
+        document.getElementById('error-state').classList.remove('hidden');
+        return;
+    }
+
+    // KPIs
+    var totalOcc = 0;
+    var totalBB = 0;
+    var lowPeriods = 0;
+    periods.forEach(function(p) {
+        totalOcc += p.occupancy_pct;
+        totalBB += p.rate_bb;
+        if (p.occupancy_pct < 30) lowPeriods++;
+    });
+    var avgOcc = (totalOcc / periods.length).toFixed(1);
+    var avgBB = Math.round(totalBB / periods.length);
+
+    document.getElementById('kpi-rooms').textContent = data.assumptions.total_rooms;
+    document.getElementById('kpi-avg-occ').textContent = avgOcc + '%';
+    document.getElementById('kpi-avg-bb').textContent = '$' + avgBB;
+    document.getElementById('kpi-low-periods').textContent = lowPeriods;
+    document.getElementById('kpi-cards').classList.remove('hidden');
+
+    // Market context
+    var ctx = data.market_context || {};
+    document.getElementById('market-context').classList.remove('hidden');
+    document.getElementById('ctx-market-avg').textContent = '$' + (ctx.market_avg_bb || '\u2014');
+    document.getElementById('ctx-strategy').textContent = ctx.strategy || 'Mid-Premium';
+    document.getElementById('ctx-range').textContent = '$' + data.assumptions.bb_floor + '\u2013$' + data.assumptions.bb_ceiling;
+    document.getElementById('ctx-comp-count').textContent = ctx.competitor_count || '\u2014';
+    if (ctx.last_survey) {
+        document.getElementById('ctx-survey-date').textContent = 'Rates surveyed: ' + ctx.last_survey;
+    }
+
+    // Table
+    renderTable(periods);
+
+    // Chart
+    renderChart(periods, data.assumptions);
+
+    document.getElementById('chart-container').classList.remove('hidden');
+    document.getElementById('table-container').classList.remove('hidden');
+}
+
+function renderTable(periods) {
+    var html = '';
+    periods.forEach(function(p) {
+        var occClass = p.occupancy_pct >= 70 ? 'text-green-600' :
+                       p.occupancy_pct >= 50 ? 'text-blue-600' :
+                       p.occupancy_pct >= 30 ? 'text-amber-600' : 'text-red-600';
+
+        var vsStly = '\u2014';
+        if (p.vs_stly !== null && p.vs_stly !== undefined) {
+            var stlyClass = p.vs_stly >= 0 ? 'text-green-600' : 'text-red-600';
+            vsStly = '<span class="' + stlyClass + '">' + (p.vs_stly > 0 ? '+' : '') + p.vs_stly.toFixed(1) + '%</span>';
+        }
+
+        html += '<tr class="hover:bg-gray-50">' +
+            '<td class="px-4 py-3 text-sm font-medium text-gray-900 whitespace-nowrap">' + p.label +
+                (p.offers_recommended ? ' <span class="inline-block ml-1 px-1.5 py-0.5 text-xs font-medium bg-red-100 text-red-700 rounded">OFFERS</span>' : '') +
+            '</td>' +
+            '<td class="px-4 py-3 text-sm text-right text-gray-700">' + p.otb_rn + '</td>' +
+            '<td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">' + p.net_forecast + '</td>' +
+            '<td class="px-4 py-3 text-sm text-right text-gray-500">' + p.capacity + '</td>' +
+            '<td class="px-4 py-3 text-sm text-right font-semibold ' + occClass + '">' + p.occupancy_pct.toFixed(1) + '%</td>' +
+            '<td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">$' + p.rate_bb + '</td>' +
+            '<td class="px-4 py-3 text-sm text-right text-gray-700">$' + p.rate_hb + '</td>' +
+            '<td class="px-4 py-3 text-sm text-right text-gray-700">$' + p.rate_fb + '</td>' +
+            '<td class="px-4 py-3 text-sm text-right">' + vsStly + '</td>' +
+            '</tr>';
+    });
+    document.getElementById('forecastTable').innerHTML = html;
+}
+
+function renderChart(periods, assumptions) {
+    var labels = periods.map(function(p) { return p.label; });
+    var otbData = periods.map(function(p) { return p.otb_rn; });
+    var fcstData = periods.map(function(p) { return p.net_forecast; });
+    var capData = periods.map(function(p) { return p.capacity; });
+    var bbData = periods.map(function(p) { return p.rate_bb; });
+
+    if (forecastChart) {
+        forecastChart.destroy();
+    }
+
+    var ctx = document.getElementById('forecastChart').getContext('2d');
+    forecastChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'OTB Room Nights',
+                    data: otbData,
+                    backgroundColor: '#93c5fd',
+                    borderRadius: 4,
+                    order: 2,
+                },
+                {
+                    label: 'Forecast Room Nights',
+                    data: fcstData,
+                    backgroundColor: '#3b82f6',
+                    borderRadius: 4,
+                    order: 3,
+                },
+                {
+                    label: 'Capacity',
+                    data: capData,
+                    type: 'line',
+                    borderColor: '#d1d5db',
+                    borderDash: [5, 3],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    order: 1,
+                    yAxisID: 'y',
+                },
+                {
+                    label: 'BB Rate ($)',
+                    data: bbData,
+                    type: 'line',
+                    borderColor: '#f59e0b',
+                    borderWidth: 2,
+                    pointBackgroundColor: '#f59e0b',
+                    pointRadius: 4,
+                    fill: false,
+                    order: 0,
+                    yAxisID: 'y2',
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
+                tooltip: {
+                    callbacks: {
+                        afterBody: function(items) {
+                            var idx = items[0].dataIndex;
+                            var p = periods[idx];
+                            var lines = [];
+                            lines.push('Occupancy: ' + p.occupancy_pct.toFixed(1) + '%');
+                            lines.push('HB: $' + p.rate_hb + '  FB: $' + p.rate_fb);
+                            if (p.offers_recommended) lines.push('>>> OFFERS RECOMMENDED');
+                            return lines;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { display: false } },
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Room Nights' },
+                    position: 'left',
+                },
+                y2: {
+                    beginAtZero: false,
+                    title: { display: true, text: 'BB Rate ($)' },
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    min: assumptions.bb_floor - 5,
+                    max: assumptions.bb_ceiling + 10,
+                }
+            }
+        }
+    });
+}
+
+// Auto-generate on page load
+document.addEventListener('DOMContentLoaded', function() {
+    generateForecast();
+});
+</script>
+{% endif %}
+{% endblock %}

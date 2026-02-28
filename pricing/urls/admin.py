@@ -26,6 +26,7 @@ from pricing.views import (
     RoomTypeMappingListView, RoomTypeMappingUpdateView,
     ManageAgentsView,
     TravelAgentListView, TravelAgentCreateView, TravelAgentUpdateView, TravelAgentDeleteView,
+    CompetitiveSetUploadView,
 )
 
 # Property-scoped management URLs
@@ -123,6 +124,10 @@ urlpatterns = [
          RoomTypeMappingListView.as_view(), name='api_room_type_mapping_list'),
     path('org/<slug:org_code>/<slug:prop_code>/api/reservations/room-type-mapping/update/',
          RoomTypeMappingUpdateView.as_view(), name='api_room_type_mapping_update'),
+
+    # Competitive Set
+    path('org/<slug:org_code>/<slug:prop_code>/manage/competitive/upload/',
+         CompetitiveSetUploadView.as_view(), name='competitive_upload'),
 
     # Travel Agents
     path('org/<slug:org_code>/<slug:prop_code>/manage/agents/',

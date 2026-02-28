@@ -5,3 +5,4 @@ from .forecasts import *
 from .overrides import *
 from .modifiers import *
 from .versions import *
+from .competitive import *

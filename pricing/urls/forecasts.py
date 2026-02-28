@@ -6,6 +6,8 @@ from pricing.views import (
     revenue_forecast_ajax,
     pickup_summary_ajax,
     occupancy_calendar_ajax,
+    DemandForecastView,
+    generate_demand_forecast_ajax,
 )
 
 urlpatterns = [
@@ -17,4 +19,8 @@ urlpatterns = [
          pickup_summary_ajax, name='pickup_summary_ajax'),
     path('org/<slug:org_code>/<slug:prop_code>/api/occupancy-calendar/',
          occupancy_calendar_ajax, name='occupancy_calendar_ajax'),
+    path('org/<slug:org_code>/<slug:prop_code>/demand-forecast/',
+         DemandForecastView.as_view(), name='demand_forecast'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/demand-forecast/',
+         generate_demand_forecast_ajax, name='demand_forecast_ajax'),
 ]

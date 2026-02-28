@@ -23,7 +23,7 @@ from pricing.models import (
 )
 from pricing.services import PricingService
 
-from .mixins import PricingManagementMixin, SettingsMixin
+from .mixins import PricingManagementMixin, PropertyMixin, SettingsMixin
 
 logger = logging.getLogger(__name__)
 
@@ -2502,3 +2502,29 @@ class TravelAgentDeleteView(PricingManagementMixin, View):
         return self.success_response(
             message=f'Agent "{name}" deleted successfully'
         )
+
+
+class CompetitiveSetUploadView(PropertyMixin, View):
+    """Handle CSV/Excel upload for competitive set."""
+
+    def post(self, request, *args, **kwargs):
+        prop = self.get_property()
+        file = request.FILES.get('file')
+
+        if not file:
+            return JsonResponse({'success': False, 'error': 'No file uploaded'})
+
+        import tempfile, os
+        ext = os.path.splitext(file.name)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            for chunk in file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+
+        try:
+            from pricing.services import CompetitiveImportService
+            svc = CompetitiveImportService(property=prop)
+            result = svc.import_file(tmp_path)
+            return JsonResponse({'success': True, 'data': result})
+        finally:
+            os.unlink(tmp_path)

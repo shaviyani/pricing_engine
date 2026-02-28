@@ -100,6 +100,7 @@
                                 <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Booking Analysis</a>
                                 <a href="{% url 'pricing:booking_trends' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Booking Trends</a>
                                 <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Pickup & Forecast</a>
+                                <a href="{% url 'pricing:demand_forecast' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Demand Forecast</a>
                             </div>
                         </div>
 
@@ -287,6 +288,10 @@
                     <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}"
                         class="block text-gray-700 hover:bg-gray-100 px-3 py-2 rounded-md text-sm">
                         Pickup & Forecast
+                    </a>
+                    <a href="{% url 'pricing:demand_forecast' org_code=org.code prop_code=prop.code %}"
+                        class="block text-gray-700 hover:bg-gray-100 px-3 py-2 rounded-md text-sm">
+                        Demand Forecast
                     </a>
                 </div>
                 <div class="pl-3 border-l-2 border-gray-200 ml-3 space-y-1">

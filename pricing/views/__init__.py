@@ -59,6 +59,8 @@ from .forecasts import (
     revenue_forecast_ajax,
     pickup_summary_ajax,
     occupancy_calendar_ajax,
+    DemandForecastView,
+    generate_demand_forecast_ajax,
 )
 
 # Admin / Management views
@@ -137,4 +139,6 @@ from .admin_views import (
     TravelAgentCreateView,
     TravelAgentUpdateView,
     TravelAgentDeleteView,
+    # Competitive Set
+    CompetitiveSetUploadView,
 )

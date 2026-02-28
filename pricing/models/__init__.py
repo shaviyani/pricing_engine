@@ -54,6 +54,12 @@ from .forecasts import (
     OccupancyForecast,
 )
 
+# Competitive intelligence
+from .competitive import (
+    CompetitiveSet,
+    MarketPosition,
+)
+
 __all__ = [
     # Core
     'Organization', 'Property', 'ModifierTemplate', 'PropertyModifier', 'ModifierRule',
@@ -69,4 +75,6 @@ __all__ = [
     'BookingSource', 'Guest', 'ImportTemplate', 'FileImport', 'Reservation',
     # Forecasts
     'DailyPickupSnapshot', 'MonthlyPickupSnapshot', 'PickupCurve', 'OccupancyForecast',
+    # Competitive
+    'CompetitiveSet', 'MarketPosition',
 ]
