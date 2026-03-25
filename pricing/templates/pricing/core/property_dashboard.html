@@ -36,7 +36,7 @@
     </div>
 
     <!-- Section 2: KPI Strip -->
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+    <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
         <!-- Next 30 Days OCC -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Next 30d OCC</p>
@@ -45,6 +45,9 @@
             <p class="text-xs {% if kpi_30d.delta >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
                 {% if kpi_30d.delta >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ kpi_30d.delta }}pp vs STLY
             </p>
+            {% endif %}
+            {% if kpi_30d.occ < 60 %}
+            <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop_code %}" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Adjust rates &rarr;</a>
             {% endif %}
         </div>
 
@@ -57,17 +60,35 @@
                 {% if kpi_90d.delta >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ kpi_90d.delta }}pp vs STLY
             </p>
             {% endif %}
+            {% if kpi_90d.occ < 60 %}
+            <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop_code %}" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Adjust rates &rarr;</a>
+            {% endif %}
         </div>
 
         <!-- This Month Revenue -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">This Month Rev</p>
             <p class="mt-1 text-2xl font-bold text-gray-900">${{ kpi_month_rev.revenue|floatformat:0|intcomma }}</p>
-            {% if kpi_month_rev.stly_revenue > 0 %}
+            <p class="text-xs text-gray-500">net ${{ kpi_month_rev.net_revenue|floatformat:0|intcomma }}</p>
+            {% if budget_month.has_budget %}
+            <div class="mt-1">
+                <div class="flex items-center gap-1">
+                    <div class="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div class="h-full rounded-full {% if budget_month.revenue_pct >= 100 %}bg-green-500{% elif budget_month.revenue_pct >= 70 %}bg-amber-500{% else %}bg-red-400{% endif %}"
+                             style="width: {{ budget_month.revenue_pct|floatformat:0 }}%"></div>
+                    </div>
+                    <span class="text-[10px] {% if budget_month.revenue_pct >= 100 %}text-green-600{% elif budget_month.revenue_pct >= 70 %}text-amber-600{% else %}text-red-500{% endif %} font-medium">
+                        {{ budget_month.revenue_pct|floatformat:0 }}%
+                    </span>
+                </div>
+                <p class="text-[10px] text-gray-400">of ${{ budget_month.revenue_target|floatformat:0|intcomma }} budget</p>
+            </div>
+            {% elif kpi_month_rev.stly_revenue > 0 %}
             <p class="text-xs {% if kpi_month_rev.delta_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
                 {% if kpi_month_rev.delta_pct >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ kpi_month_rev.delta_pct }}% vs STLY
             </p>
             {% endif %}
+            <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop_code %}" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Full breakdown &rarr;</a>
         </div>
 
         <!-- Demand Index -->
@@ -78,6 +99,7 @@
                 {% if kpi_demand.pct >= 0 %}+{% endif %}{{ kpi_demand.pct }}%
             </p>
             <p class="text-xs text-gray-500">national {% if kpi_demand.national_pct >= 0 %}+{% endif %}{{ kpi_demand.national_pct }}%</p>
+            <a href="/platform/" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Market data &rarr;</a>
             {% else %}
             <p class="mt-1 text-2xl font-bold text-gray-400">&mdash;</p>
             <p class="text-xs text-gray-400">No market data</p>
@@ -94,7 +116,60 @@
             </p>
             {% endif %}
         </div>
+
+        <!-- RevPAR -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">90d RevPAR</p>
+            <p class="mt-1 text-2xl font-bold text-gray-900">${{ kpi_revpar.revpar|floatformat:0 }}</p>
+            {% if kpi_revpar.stly_revpar > 0 %}
+            <p class="text-xs {% if kpi_revpar.delta >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                {% if kpi_revpar.delta >= 0 %}&#9650; +{% else %}&#9660; {% endif %}${{ kpi_revpar.delta|floatformat:0 }} vs STLY
+            </p>
+            {% endif %}
+            <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop_code %}" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Rate card &rarr;</a>
+        </div>
     </div>
+
+    <!-- Setup Checklist (shown only if incomplete) -->
+    {% if not setup_complete %}
+    <div class="bg-white rounded-xl shadow-sm border border-amber-200 mb-6">
+        <div class="px-6 py-4 border-b border-amber-100">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                    </svg>
+                    <h2 class="text-base font-semibold text-gray-900">Setup Checklist</h2>
+                </div>
+                <span class="text-xs text-gray-500">
+                    {{ setup_checklist|length }} items
+                </span>
+            </div>
+        </div>
+        <div class="px-6 py-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+                {% for item in setup_checklist %}
+                <a href="{% url item.link_name org_code=org.code prop_code=prop_code %}"
+                   class="flex items-center gap-2 p-3 rounded-lg border transition
+                   {% if item.done %}border-green-200 bg-green-50{% else %}border-gray-200 bg-gray-50 hover:border-blue-300 hover:bg-blue-50{% endif %}">
+                    {% if item.done %}
+                    <svg class="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                    {% else %}
+                    <svg class="w-5 h-5 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                    </svg>
+                    {% endif %}
+                    <span class="text-sm {% if item.done %}text-green-700{% else %}text-gray-600{% endif %}">
+                        {{ item.label }}
+                    </span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Section 3: 12-Month Chart (no table) -->
     {% if monthly_snapshot %}
@@ -167,6 +242,9 @@
                         </div>
                         <div class="flex items-center gap-1">
                             <span class="inline-block w-3 h-3 rounded-sm border-2 border-blue-500 bg-blue-50"></span> Today
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <span class="inline-block w-3 h-3 rounded-full bg-purple-500"></span> Group Allotment
                         </div>
                     </div>
 
@@ -467,6 +545,18 @@ function renderOccupancyCalendar(data) {
         // Percent (desktop)
         html += '<div class="hidden sm:block text-[9px] text-gray-500 text-right mt-0.5">' + occ + '%</div>';
 
+        // Group allotment indicator
+        if (day.allotments && day.allotments.length > 0) {
+            for (var ai = 0; ai < day.allotments.length; ai++) {
+                var allot = day.allotments[ai];
+                var allotColor = allot.status === 'confirmed' ? 'bg-purple-500' : 'bg-purple-300';
+                html += '<div class="hidden sm:flex items-center gap-0.5 mt-0.5">';
+                html += '<span class="inline-block w-1.5 h-1.5 rounded-full ' + allotColor + ' flex-shrink-0"></span>';
+                html += '<span class="text-[8px] text-purple-700 truncate leading-tight">' + allot.name + '</span>';
+                html += '</div>';
+            }
+        }
+
         html += '</div>'; // mt-auto
 
         // Tooltip
@@ -475,6 +565,12 @@ function renderOccupancyCalendar(data) {
         html += '<div>Rooms: ' + day.rooms_occupied + ' / ' + day.total_rooms + '</div>';
         html += '<div>Occupancy: ' + occ + '%</div>';
         if (day.season_name) html += '<div>Season: ' + day.season_name + '</div>';
+        if (day.allotments && day.allotments.length > 0) {
+            for (var ai = 0; ai < day.allotments.length; ai++) {
+                var allot = day.allotments[ai];
+                html += '<div class="text-purple-300">Group: ' + allot.name + ' (' + allot.picked_up + '/' + allot.rooms + ' rooms)</div>';
+            }
+        }
         html += '<div class="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>';
         html += '</div>';
 

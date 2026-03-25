@@ -131,6 +131,7 @@ class PricingVersionService:
             Season, RoomType, RatePlan, Channel, RateModifier,
             SeasonModifierOverride, RoomTypeSeasonModifier,
             DynamicPricingRule, DynamicPricingBand, DynamicPricingMultiplier,
+            PropertyModifier,
         )
         
         # ID maps: old_id -> new_object
@@ -211,6 +212,21 @@ class PricingVersionService:
             old.save()
             modifier_map[old_id] = old
         
+        # 5b. PropertyModifiers (need season/room_type/channel remap)
+        for old in PropertyModifier.objects.filter(version=source_version):
+            old_season_id = old.season_id
+            old_room_id = old.room_type_id
+            old_channel_id = old.channel_id
+            old.pk = None
+            old.version = target_version
+            if old_season_id:
+                old.season = season_map.get(old_season_id, old.season)
+            if old_room_id:
+                old.room_type = room_map.get(old_room_id, old.room_type)
+            if old_channel_id:
+                old.channel = channel_map.get(old_channel_id, old.channel)
+            old.save()
+
         # 6. SeasonModifierOverrides (from collected data, remap modifier + season)
         for data in smo_data:
             new_modifier = modifier_map.get(data['modifier_id'])
@@ -306,30 +322,35 @@ class DynamicPricingService:
     """
     
     # Default multiplier matrices per season type
-    # Format: (min_occ, max_occ, rationale, [90+, 60-89, 30-59, 7-29])
+    # Format: (min_occ, max_occ, rationale, [90+, 60-89, 30-59, 7-29, 0-6])
+    # Booking windows: 90+ early, 60-89 advance, 30-59 mid, 7-29 short, 0-6 last-minute
+    # Calibrated for typical island/resort hotel with 20-80 rooms
     PEAK_BANDS = [
-        (90, 999, 'Maximum demand - ceiling', [1.20, 1.20, 1.20, 1.25]),
-        (80, 90, 'Very strong demand', [1.15, 1.15, 1.15, 1.20]),
-        (70, 80, 'Strong demand', [1.10, 1.10, 1.10, 1.10]),
-        (60, 70, 'Good pace', [1.00, 1.05, 1.05, 1.05]),
-        (50, 60, 'Below target', [0.95, 1.00, 0.95, 0.90]),
-        (0, 50, 'Need volume - floor', [0.90, 0.90, 0.85, 0.80]),
+        (90, 999, 'Maximum demand - ceiling',    [1.15, 1.18, 1.20, 1.25, 1.30]),
+        (80, 90,  'Very strong demand',           [1.10, 1.12, 1.15, 1.18, 1.22]),
+        (70, 80,  'Strong demand',                [1.05, 1.08, 1.10, 1.12, 1.15]),
+        (60, 70,  'Good pace',                    [1.00, 1.02, 1.05, 1.05, 1.08]),
+        (50, 60,  'Below target',                 [0.95, 0.97, 1.00, 1.00, 1.00]),
+        (35, 50,  'Need volume',                  [0.90, 0.92, 0.95, 0.95, 0.95]),
+        (0,  35,  'Distressed inventory - floor',  [0.85, 0.85, 0.88, 0.90, 0.90]),
     ]
-    
+
     SHOULDER_BANDS = [
-        (85, 999, 'Exceptional demand', [1.15, 1.15, 1.15, 1.20]),
-        (70, 85, 'Strong demand', [1.10, 1.10, 1.10, 1.15]),
-        (55, 70, 'Good pace', [1.05, 1.05, 1.05, 1.10]),
-        (40, 55, 'On target', [1.00, 1.00, 1.00, 1.00]),
-        (0, 40, 'Need volume', [0.85, 0.85, 0.85, 0.80]),
+        (85, 999, 'Exceptional demand',      [1.10, 1.12, 1.15, 1.18, 1.22]),
+        (70, 85,  'Strong demand',            [1.05, 1.08, 1.10, 1.12, 1.15]),
+        (55, 70,  'Good pace',                [1.00, 1.02, 1.05, 1.05, 1.08]),
+        (40, 55,  'On target',                [0.95, 0.97, 1.00, 1.00, 1.00]),
+        (25, 40,  'Below target',             [0.90, 0.92, 0.95, 0.95, 0.95]),
+        (0,  25,  'Need volume - floor',       [0.85, 0.85, 0.88, 0.90, 0.90]),
     ]
-    
+
     LOW_BANDS = [
-        (70, 999, 'Exceptional for monsoon', [1.15, 1.15, 1.15, 1.20]),
-        (55, 70, 'Strong for low season', [1.10, 1.10, 1.10, 1.15]),
-        (40, 55, 'Good pace', [1.05, 1.05, 1.05, 1.10]),
-        (25, 40, 'Acceptable', [1.00, 1.00, 1.00, 1.00]),
-        (0, 25, 'Emergency pricing', [0.80, 0.80, 0.70, 0.70]),
+        (70, 999, 'Exceptional for low season', [1.08, 1.10, 1.12, 1.15, 1.18]),
+        (55, 70,  'Strong for low season',       [1.03, 1.05, 1.08, 1.10, 1.12]),
+        (40, 55,  'Good pace',                   [1.00, 1.00, 1.03, 1.05, 1.05]),
+        (25, 40,  'Acceptable',                  [0.95, 0.95, 0.97, 1.00, 1.00]),
+        (10, 25,  'Below target',                [0.88, 0.88, 0.90, 0.92, 0.92]),
+        (0,  10,  'Emergency pricing - floor',    [0.80, 0.80, 0.82, 0.85, 0.85]),
     ]
     
     SEASON_BAND_MAP = {
@@ -572,31 +593,33 @@ class DynamicPricingService:
         # Get or create default booking window config
         bw_config = BookingWindowConfig.get_or_create_default(self.hotel)
         window_bands = list(bw_config.bands.order_by('sort_order'))
-        
-        if len(window_bands) != 4:
-            return  # Can't seed without standard 4 windows
-        
-        # Window bands order: 7-29, 30-59, 60-89, 90+
-        wb_7, wb_30, wb_60, wb_90 = window_bands
-        
+
+        if len(window_bands) < 4:
+            return  # Can't seed without standard windows
+
+        # Build ordered list: longest-lead first → last-minute last
+        # Expected order by sort_order: 0-6, 7-29, 30-59, 60-89, 90+
+        wbs_by_min = sorted(window_bands, key=lambda wb: -(wb.min_days or 0))
+        # wbs_by_min is now: 90+, 60-89, 30-59, 7-29, [0-6]
+
         seasons = Season.objects.filter(hotel=self.hotel, version=version)
-        
+
         for season in seasons:
             band_defs = self.SEASON_BAND_MAP.get(season.season_type, self.SHOULDER_BANDS)
-            
+
             # Check if rule already exists
             existing = DynamicPricingRule.objects.filter(
                 hotel=self.hotel, version=version, season=season
             ).first()
             if existing:
                 continue
-            
+
             rule = DynamicPricingRule.objects.create(
                 hotel=self.hotel, version=version,
                 season=season, booking_window_config=bw_config,
                 is_active=True,
             )
-            
+
             for idx, (min_occ, max_occ, rationale, multipliers) in enumerate(band_defs):
                 occ_band = DynamicPricingBand.objects.create(
                     rule=rule,
@@ -605,9 +628,9 @@ class DynamicPricingService:
                     rationale=rationale,
                     sort_order=idx,
                 )
-                
-                # multipliers order: [90+, 60-89, 30-59, 7-29]
-                for wb, mult_val in zip([wb_90, wb_60, wb_30, wb_7], multipliers):
+
+                # multipliers order matches wbs_by_min: [90+, 60-89, 30-59, 7-29, 0-6]
+                for wb, mult_val in zip(wbs_by_min, multipliers):
                     DynamicPricingMultiplier.objects.create(
                         band=occ_band,
                         window_band=wb,
@@ -1027,70 +1050,3 @@ class DynamicPricingOptimizer:
         
         return " ".join(parts)
     
-    def generate_suggestions(self, version=None):
-        """
-        Run analysis and save suggestions to database.
-        Expires any previous pending suggestions for this hotel first.
-        
-        Returns:
-            list of DynamicPricingSuggestion objects created
-        """
-        from pricing.models import DynamicPricingSuggestion
-        
-        # Expire old pending suggestions
-        DynamicPricingSuggestion.objects.filter(
-            hotel=self.hotel, status='pending'
-        ).update(status='expired')
-        
-        # Run analysis
-        raw_suggestions = self.analyze(version)
-        
-        # Save to database
-        created = []
-        for s in raw_suggestions:
-            obj = DynamicPricingSuggestion.objects.create(**s)
-            created.append(obj)
-        
-        return created
-    
-    @staticmethod
-    def apply_suggestion(suggestion_id):
-        """
-        Accept a suggestion: update the DynamicPricingMultiplier cell
-        and mark the suggestion as accepted.
-        """
-        from pricing.models import DynamicPricingSuggestion, DynamicPricingMultiplier
-        
-        suggestion = DynamicPricingSuggestion.objects.get(pk=suggestion_id)
-        
-        if suggestion.status != 'pending':
-            raise ValueError(f"Suggestion is {suggestion.status}, not pending.")
-        
-        if suggestion.band and suggestion.window_band:
-            mult_obj, _ = DynamicPricingMultiplier.objects.update_or_create(
-                band=suggestion.band,
-                window_band=suggestion.window_band,
-                defaults={'multiplier': suggestion.suggested_multiplier},
-            )
-        
-        suggestion.status = 'accepted'
-        suggestion.reviewed_at = timezone.now()
-        suggestion.save()
-        
-        return suggestion
-    
-    @staticmethod
-    def reject_suggestion(suggestion_id):
-        """Mark a suggestion as rejected."""
-        from pricing.models import DynamicPricingSuggestion
-        
-        suggestion = DynamicPricingSuggestion.objects.get(pk=suggestion_id)
-        
-        if suggestion.status != 'pending':
-            raise ValueError(f"Suggestion is {suggestion.status}, not pending.")
-        
-        suggestion.status = 'rejected'
-        suggestion.reviewed_at = timezone.now()
-        suggestion.save()
-        
-        return suggestion

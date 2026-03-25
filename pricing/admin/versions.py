@@ -1,6 +1,6 @@
 """
 Versions admin configuration - PricingMatrixVersion, BookingWindowConfig,
-DynamicPricingRule, DynamicPricingBand, EventUplift, DynamicPricingSuggestion.
+DynamicPricingRule, DynamicPricingBand, EventUplift.
 """
 
 from django.contrib import admin
@@ -8,7 +8,7 @@ from django.contrib import admin
 from pricing.models import (
     PricingMatrixVersion, BookingWindowConfig, BookingWindowBand,
     DynamicPricingRule, DynamicPricingBand, DynamicPricingMultiplier,
-    EventUplift, DynamicPricingSuggestion,
+    EventUplift,
 )
 
 
@@ -65,13 +65,3 @@ admin.site.register(DynamicPricingBand, DynamicPricingBandAdmin)
 admin.site.register(EventUplift, EventUpliftAdmin)
 
 
-class DynamicPricingSuggestionAdmin(admin.ModelAdmin):
-    list_display = ['season_type', 'occupancy_band_label', 'window_band_label',
-                    'current_multiplier', 'suggested_multiplier', 'direction',
-                    'confidence', 'sample_size', 'status', 'generated_at']
-    list_filter = ['hotel', 'status', 'confidence', 'season_type', 'direction']
-    readonly_fields = ['generated_at', 'reviewed_at']
-    ordering = ['-generated_at']
-
-
-admin.site.register(DynamicPricingSuggestion, DynamicPricingSuggestionAdmin)

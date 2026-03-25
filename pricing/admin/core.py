@@ -6,12 +6,20 @@ from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
 
-from pricing.models import Organization, Property, RoomType, Season
+from pricing.models import Organization, Property, RoomType, Season, UserOrganizationRole
 
 
 # =============================================================================
 # ORGANIZATION & PROPERTY ADMIN
 # =============================================================================
+
+class UserOrganizationRoleInline(admin.TabularInline):
+    """Inline for user roles within an organization."""
+    model = UserOrganizationRole
+    extra = 1
+    fields = ['user', 'role', 'is_active']
+    autocomplete_fields = ['user']
+
 
 class PropertyInline(admin.TabularInline):
     """Inline for properties within an organization."""
@@ -20,6 +28,13 @@ class PropertyInline(admin.TabularInline):
     fields = ['name', 'code', 'location', 'total_rooms', 'is_active']
     readonly_fields = ['total_rooms']
     show_change_link = True
+
+
+@admin.register(UserOrganizationRole)
+class UserOrganizationRoleAdmin(admin.ModelAdmin):
+    list_display = ['user', 'organization', 'role', 'is_active', 'created_at']
+    list_filter = ['organization', 'role', 'is_active']
+    search_fields = ['user__username', 'user__email', 'organization__name']
 
 
 @admin.register(Organization)
@@ -40,7 +55,7 @@ class OrganizationAdmin(admin.ModelAdmin):
         }),
     )
 
-    inlines = [PropertyInline]
+    inlines = [UserOrganizationRoleInline, PropertyInline]
 
     def property_count_display(self, obj):
         """Display count of active properties."""

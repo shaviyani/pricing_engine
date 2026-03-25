@@ -10,6 +10,7 @@ from pricing.views import (
     ItineraryQuoteAPIView,
     AgentRatesView,
     AgentRateCardView,
+    AgentRateCardPDFView,
     DateRateOverrideCalendarView,
     parity_data_ajax,
     update_room,
@@ -22,6 +23,8 @@ urlpatterns = [
     # Agent token-based rate card (public, no org/prop in URL)
     path('agent/<slug:token>/',
          AgentRateCardView.as_view(), name='agent_rate_card'),
+    path('agent/<slug:token>/pdf/',
+         AgentRateCardPDFView.as_view(), name='agent_rate_card_pdf'),
 
     # Rate Lookup (operational - front desk, sales)
     path('org/<slug:org_code>/<slug:prop_code>/rates/',
@@ -32,6 +35,8 @@ urlpatterns = [
          ItineraryQuoteAPIView.as_view(), name='itinerary_quote_api'),
     path('org/<slug:org_code>/<slug:prop_code>/agent-rates/',
          AgentRatesView.as_view(), name='agent_rates'),
+    path('org/<slug:org_code>/<slug:prop_code>/agent-rates/pdf/',
+         AgentRateCardPDFView.as_view(), name='agent_rates_pdf'),
 
     # Matrix views
     path('org/<slug:org_code>/<slug:prop_code>/matrix/',

@@ -33,6 +33,13 @@ from pricing.views import (
     CompetitorDeleteView,
     MarketPositionUpdateView,
     MarketPositionRecalculateView,
+    # Revenue management
+    ManageBudgetView,
+    BudgetSaveView,
+    ManageGroupsView,
+    GroupAllotmentCreateView,
+    GroupAllotmentUpdateView,
+    GroupAllotmentDeleteView,
 )
 
 # Property-scoped management URLs
@@ -146,6 +153,20 @@ urlpatterns = [
          MarketPositionUpdateView.as_view(), name='api_market_position_update'),
     path('org/<slug:org_code>/<slug:prop_code>/api/market-position/recalculate/',
          MarketPositionRecalculateView.as_view(), name='api_market_position_recalculate'),
+
+    # Budget & Groups (Revenue Management)
+    path('org/<slug:org_code>/<slug:prop_code>/manage/budget/',
+         ManageBudgetView.as_view(), name='manage_budget'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/budget/save/',
+         BudgetSaveView.as_view(), name='api_budget_save'),
+    path('org/<slug:org_code>/<slug:prop_code>/manage/groups/',
+         ManageGroupsView.as_view(), name='manage_groups'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/groups/create/',
+         GroupAllotmentCreateView.as_view(), name='api_group_create'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/groups/<int:pk>/update/',
+         GroupAllotmentUpdateView.as_view(), name='api_group_update'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/groups/<int:pk>/delete/',
+         GroupAllotmentDeleteView.as_view(), name='api_group_delete'),
 
     # Travel Agents
     path('org/<slug:org_code>/<slug:prop_code>/manage/agents/',

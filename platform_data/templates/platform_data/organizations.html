@@ -37,6 +37,7 @@
         <div style="display:flex; gap:8px;">
             <button class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;" onclick="showPropertyModal({{ org_item.org.pk }},'{{ org_item.org.name|escapejs }}')">+ Property</button>
             <button class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;" onclick="showOrgModal({{ org_item.org.pk }},'{{ org_item.org.name|escapejs }}','{{ org_item.org.default_currency|escapejs }}','{{ org_item.org.currency_symbol|escapejs }}')">Edit</button>
+            <a href="{% url 'platform:org_detail' pk=org_item.org.pk %}#users" class="btn btn-sm" style="background:#eff6ff; border:1px solid #bfdbfe; color:#2563eb;">Users</a>
             <a href="{% url 'platform:org_detail' pk=org_item.org.pk %}" class="btn btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0;">Detail</a>
         </div>
     </div>

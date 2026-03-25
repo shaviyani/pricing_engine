@@ -44,6 +44,7 @@
                 <table class="mgmt-table">
                     <thead>
                         <tr>
+                            <th style="width: 50px;">Order</th>
                             <th>Name</th>
                             <th>Meal Supplement (per person)</th>
                             <th>Cost for 2 pax</th>
@@ -53,6 +54,7 @@
                     <tbody>
                         {% for plan in rate_plans %}
                         <tr data-id="{{ plan.id }}">
+                            <td><input type="number" class="editable-input" style="width:50px;" value="{{ plan.sort_order }}" data-field="sort_order" data-id="{{ plan.id }}" data-type="rateplan" onchange="updateField(this)"></td>
                             <td><input type="text" class="editable-input" value="{{ plan.name }}" data-field="name" data-id="{{ plan.id }}" data-type="rateplan" onchange="updateField(this)"></td>
                             <td><div class="input-prefix"><span>$</span><input type="number" step="0.01" class="editable-input" style="width:80px;" value="{{ plan.meal_supplement }}" data-field="meal_supplement" data-id="{{ plan.id }}" data-type="rateplan" onchange="updateField(this)"></div></td>
                             <td><span class="text-gray-600">${{ plan.meal_supplement|add:plan.meal_supplement }}</span></td>

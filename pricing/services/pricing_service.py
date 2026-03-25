@@ -62,14 +62,16 @@ class PricingService:
             print(f"Final Rate: ${result['final_rate']}")
         """
         
-    def __init__(self, hotel):
+    def __init__(self, hotel, version=None):
         """
-        Initialize service with hotel/property.
-        
+        Initialize service with hotel/property and optional version.
+
         Args:
             hotel: Property instance
+            version: PricingMatrixVersion instance (optional, filters modifiers)
         """
         self.hotel = hotel
+        self.version = version
         self.service_charge_percent = getattr(hotel, 'service_charge_percent', Decimal('10.00'))
         self.tax_percent = getattr(hotel, 'tax_percent', Decimal('16.00'))
         self.tax_on_service_charge = getattr(hotel, 'tax_on_service_charge', True)
@@ -95,11 +97,17 @@ class PricingService:
             list: PropertyModifier objects that pass all rules, ordered by stack_order
         """
         from pricing.models import PropertyModifier
-        
-        # Get all active modifiers for this hotel
+        from django.db.models import Q
+
+        # Get active modifiers: version-specific + global (no version)
+        version_q = Q(version__isnull=True)
+        if self.version:
+            version_q |= Q(version=self.version)
+
         all_modifiers = PropertyModifier.objects.filter(
+            version_q,
             hotel=self.hotel,
-            is_active=True
+            is_active=True,
         ).select_related(
             'season', 'room_type', 'channel'
         ).prefetch_related(
@@ -258,6 +266,26 @@ class PricingService:
                 'message': "Room rate is zero or negative due to excessive discounts",
                 'severity': 'error',
             })
+
+        # Check against market position floor/ceiling
+        try:
+            from pricing.models.competitive import MarketPosition
+            mp = MarketPosition.objects.filter(hotel=self.hotel).first()
+            if mp:
+                if mp.bb_floor and adjusted_room_rate < mp.bb_floor:
+                    warnings.append({
+                        'type': 'below_floor',
+                        'message': f"Rate ${adjusted_room_rate} is below market floor ${mp.bb_floor}",
+                        'severity': 'error',
+                    })
+                if mp.bb_ceiling and adjusted_room_rate > mp.bb_ceiling:
+                    warnings.append({
+                        'type': 'above_ceiling',
+                        'message': f"Rate ${adjusted_room_rate} exceeds market ceiling ${mp.bb_ceiling}",
+                        'severity': 'warning',
+                    })
+        except Exception:
+            pass
         
         return {
             # Input
@@ -299,85 +327,6 @@ class PricingService:
             # Warnings
             'warnings': warnings,
             'has_warnings': len(warnings) > 0,
-        }
-
-    def calculate_rate_simple(self, bar_rate, season_index=Decimal('1.00'), 
-                                channel_discount=Decimal('0.00'),
-                                additional_discounts=None,
-                                meal_plan_amount=Decimal('0.00'), pax=2):
-        """
-        Simplified calculation without PropertyModifier objects.
-        
-        Useful for quick calculations or testing.
-        
-        Args:
-            bar_rate: Room base rate
-            season_index: Season multiplier (e.g., 1.20 for +20%)
-            channel_discount: Channel discount percentage (e.g., 15 for 15%)
-            additional_discounts: List of additional discount percentages
-            meal_plan_amount: Meal cost per person
-            pax: Number of guests
-        
-        Returns:
-            dict with breakdown
-        """
-        additional_discounts = additional_discounts or []
-        
-        # Calculate total adjustment
-        total_adjustment = Decimal('0.00')
-        
-        # Season index (1.20 means +20%)
-        total_adjustment += (season_index - Decimal('1.00'))
-        
-        # Channel discount (15 means -15%)
-        total_adjustment -= (channel_discount / Decimal('100.00'))
-        
-        # Additional discounts
-        for discount in additional_discounts:
-            total_adjustment -= (Decimal(str(discount)) / Decimal('100.00'))
-        
-        # Apply to BAR
-        multiplier = Decimal('1.00') + total_adjustment
-        if multiplier < Decimal('0.00'):
-            multiplier = Decimal('0.00')
-        
-        adjusted_room_rate = (bar_rate * multiplier).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        
-        # Meal plan
-        meal_plan_total = (meal_plan_amount * pax).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        subtotal = adjusted_room_rate + meal_plan_total
-        
-        # Service charge
-        service_charge = (subtotal * self.service_charge_percent / Decimal('100.00')).quantize(
-            Decimal('0.01'), rounding=ROUND_HALF_UP
-        )
-        after_service = subtotal + service_charge
-        
-        # Tax
-        if self.tax_on_service_charge:
-            tax_base = after_service
-        else:
-            tax_base = subtotal
-        
-        tax_amount = (tax_base * self.tax_percent / Decimal('100.00')).quantize(
-            Decimal('0.01'), rounding=ROUND_HALF_UP
-        )
-        
-        final_rate = after_service + tax_amount
-        
-        return {
-            'bar_rate': bar_rate,
-            'season_index': season_index,
-            'channel_discount': channel_discount,
-            'additional_discounts': additional_discounts,
-            'total_adjustment_percent': total_adjustment * Decimal('100.00'),
-            'multiplier': multiplier,
-            'adjusted_room_rate': adjusted_room_rate,
-            'meal_plan_total': meal_plan_total,
-            'subtotal': subtotal,
-            'service_charge': service_charge,
-            'tax_amount': tax_amount,
-            'final_rate': final_rate,
         }
 
     def get_matrix_data(self, room_type=None, rate_plan=None):
@@ -469,8 +418,14 @@ class PricingService:
         """
         Get complete rate card for a specific date.
 
-        Returns rates for all room types × channels × rate plans,
-        including dynamic pricing multiplier and season info.
+        Calculation Flow (unified):
+        1. Base Rate × Room Index = Room Base Rate
+        2. Room Base Rate × Season Index = Seasonal Rate
+        3. Seasonal Rate × Dynamic Multiplier = Dynamic Rate
+        4. Dynamic Rate + Date Override = Adjusted Rate
+        5. Adjusted Rate × PropertyModifier stack = Final Room Rate
+        6. Final Room Rate + Meal Supplement = Subtotal
+        7. Subtotal + Service Charge + Tax = Final Guest Rate
 
         Args:
             target_date: date to calculate rates for
@@ -488,6 +443,7 @@ class PricingService:
         from pricing.models import (
             Season, RoomType, RatePlan, Channel, PricingMatrixVersion, Reservation
         )
+        from pricing.models.pricing import apply_override_to_bar
         from pricing.services.version_service import DynamicPricingService
 
         version = PricingMatrixVersion.get_published(self.hotel)
@@ -565,6 +521,10 @@ class PricingService:
             dp_rate = (seasonal_rate * dp_multiplier).quantize(
                 Decimal('0.01'), rounding=ROUND_HALF_UP)
 
+            # Apply date override on top of dynamic-adjusted rate
+            adjusted_dp_rate, override, has_override = apply_override_to_bar(
+                self.hotel, target_date, dp_rate)
+
             room_channels = []
             for channel in channels:
                 channel_rate_plans = []
@@ -583,7 +543,7 @@ class PricingService:
                     modifiers = self.get_applicable_modifiers(context)
 
                     result = self.calculate_rate(
-                        bar_rate=dp_rate,
+                        bar_rate=adjusted_dp_rate,
                         modifiers=modifiers,
                         meal_plan_amount=rp.meal_supplement,
                         pax=pax,
@@ -615,6 +575,8 @@ class PricingService:
                 'base_rate': float(room_base),
                 'seasonal_rate': float(seasonal_rate),
                 'dp_rate': float(dp_rate),
+                'override_rate': float(adjusted_dp_rate) if has_override else None,
+                'has_override': has_override,
                 'season_index': float(effective_season_index),
                 'channels': room_channels,
             })
@@ -639,84 +601,6 @@ class PricingService:
     # =============================================================================
     # HELPER FUNCTIONS
     # =============================================================================
-
-    def calculate_rate_standalone(bar_rate, modifiers_data, meal_plan_amount=Decimal('0.00'),
-                        pax=2, service_charge=Decimal('10.00'), tax=Decimal('16.00'),
-                        tax_on_service=True):
-        """
-        Standalone function for rate calculation without hotel context.
-        
-        Args:
-            bar_rate: Room base rate (BAR)
-            modifiers_data: List of dicts with 'type' and 'value' keys:
-                - type: 'index', 'discount', or 'surcharge'
-                - value: Decimal value (1.20 for index, 10.00 for discount/surcharge)
-                - name: Optional name for display
-            meal_plan_amount: Meal cost per person
-            pax: Number of guests
-            service_charge: Service charge percentage
-            tax: Tax percentage
-            tax_on_service: Whether tax applies to service charge
-        
-        Returns:
-            dict with full breakdown
-        """
-        # Calculate additive adjustment
-        total_adjustment = Decimal('0.00')
-        modifier_details = []
-        
-        for mod in modifiers_data:
-            mod_type = mod.get('type', 'discount')
-            value = Decimal(str(mod.get('value', 0)))
-            
-            if mod_type == 'index':
-                adjustment = value - Decimal('1.00')
-            elif mod_type == 'discount':
-                adjustment = -value / Decimal('100.00')
-            else:  # surcharge
-                adjustment = value / Decimal('100.00')
-            
-            total_adjustment += adjustment
-            
-            modifier_details.append({
-                'name': mod.get('name', ''),
-                'type': mod_type,
-                'value': value,
-                'adjustment': adjustment,
-                'adjustment_percent': adjustment * Decimal('100.00'),
-                'cumulative': total_adjustment * Decimal('100.00'),
-            })
-        
-        # Apply to BAR
-        multiplier = max(Decimal('0.00'), Decimal('1.00') + total_adjustment)
-        adjusted_room_rate = (bar_rate * multiplier).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        
-        # Meal plan
-        meal_total = (meal_plan_amount * pax).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        subtotal = adjusted_room_rate + meal_total
-        
-        # Service charge
-        svc = (subtotal * service_charge / Decimal('100.00')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        after_svc = subtotal + svc
-        
-        # Tax
-        tax_base = after_svc if tax_on_service else subtotal
-        tax_amt = (tax_base * tax / Decimal('100.00')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        final = after_svc + tax_amt
-        
-        return {
-            'bar_rate': bar_rate,
-            'modifiers': modifier_details,
-            'total_adjustment_percent': total_adjustment * Decimal('100.00'),
-            'multiplier': multiplier,
-            'adjusted_room_rate': adjusted_room_rate,
-            'meal_plan_total': meal_total,
-            'subtotal': subtotal,
-            'service_charge': svc,
-            'tax_amount': tax_amt,
-            'final_rate': final,
-        }
-
 
     def format_rate_breakdown(result, currency='$'):
         """
@@ -775,8 +659,11 @@ Calculates projected revenue based on:
 
 
 # =============================================================================
-# Legacy standalone calculation functions (referenced by views)
-# Updated with dynamic_multiplier support
+# DEPRECATED: Legacy standalone calculation functions
+# These use the old RateModifier + Channel.base_discount_percent path.
+# New code should use PricingService.calculate_rate() instead, which uses
+# the unified PropertyModifier system.
+# Kept for backward compatibility with agent rates, PDF exports, etc.
 # =============================================================================
 
 import math
@@ -866,18 +753,4 @@ def calculate_final_rate(room_base_rate, season_index, meal_supplement,
     return final_rate, breakdown
 
 
-def calculate_final_rate_with_modifier(room_base_rate, season_index, meal_supplement,
-                                        channel_base_discount, modifier_discount,
-                                        commission_percent, occupancy=2,
-                                        apply_ceiling=False, ceiling_increment=5,
-                                        room_type_season_modifier=Decimal('1.00'),
-                                        dynamic_multiplier=Decimal('1.00')):
-    """Alias for calculate_final_rate for backward compatibility."""
-    return calculate_final_rate(
-        room_base_rate, season_index, meal_supplement,
-        channel_base_discount, modifier_discount,
-        commission_percent, occupancy,
-        apply_ceiling, ceiling_increment,
-        room_type_season_modifier, dynamic_multiplier
-    )
 

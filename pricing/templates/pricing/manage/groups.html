@@ -1,0 +1,163 @@
+{% extends "pricing/manage/_base.html" %}
+{% load humanize %}
+
+{% block section_title %}Group Allotments{% endblock %}
+
+{% block section_content %}
+
+<!-- Displacement Summary -->
+{% if displacement.allotment_count > 0 %}
+<div class="mgmt-card mb-6">
+    <div class="mgmt-card-header">
+        <h2 class="mgmt-card-title">Displacement Analysis</h2>
+        <span class="text-sm {% if displacement.total_displacement > 0 %}text-red-600{% else %}text-green-600{% endif %}">
+            {% if displacement.total_displacement > 0 %}
+            Potential lost revenue: ${{ displacement.total_displacement|floatformat:0|intcomma }}
+            {% else %}
+            No revenue displacement detected
+            {% endif %}
+        </span>
+    </div>
+    <div class="mgmt-card-body">
+        <table class="mgmt-table">
+            <thead>
+                <tr>
+                    <th>Group</th>
+                    <th class="text-right">Group Rate</th>
+                    <th class="text-right">Avg Individual</th>
+                    <th class="text-right">Rooms</th>
+                    <th class="text-right">Nights</th>
+                    <th class="text-right">Displacement</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in displacement.analyses %}
+                <tr>
+                    <td class="font-medium">{{ a.allotment.group_name }}</td>
+                    <td class="text-right">${{ a.group_rate|floatformat:0 }}</td>
+                    <td class="text-right">${{ a.avg_individual_rate|floatformat:0 }}</td>
+                    <td class="text-right">{{ a.rooms }}</td>
+                    <td class="text-right">{{ a.nights }}</td>
+                    <td class="text-right {% if a.displacement_cost > 0 %}text-red-600{% else %}text-green-600{% endif %}">
+                        {% if a.displacement_cost > 0 %}-{% endif %}${{ a.displacement_cost|floatformat:0|intcomma }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Expiring Soon -->
+{% if expiring_allotments %}
+<div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
+    <h3 class="text-sm font-semibold text-amber-800 mb-2">Approaching Release Date</h3>
+    <ul class="text-sm text-amber-700 space-y-1">
+        {% for a in expiring_allotments %}
+        <li>{{ a.group_name }} — {{ a.rooms_remaining }} rooms release on {{ a.release_date|date:"M d" }} (pickup: {{ a.pickup_percent }}%)</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<!-- Active Allotments -->
+<div class="mgmt-card">
+    <div class="mgmt-card-header">
+        <h2 class="mgmt-card-title">Active & Upcoming Allotments</h2>
+        <span class="text-sm text-gray-500">{{ active_allotments|length }} allotments</span>
+    </div>
+    <div class="mgmt-card-body">
+        <table class="mgmt-table">
+            <thead>
+                <tr>
+                    <th>Group</th>
+                    <th>Dates</th>
+                    <th class="text-right">Rooms</th>
+                    <th class="text-right">Rate</th>
+                    <th class="text-center">Pickup</th>
+                    <th>Release</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in active_allotments %}
+                <tr>
+                    <td>
+                        <div class="font-medium">{{ a.group_name }}</div>
+                        {% if a.contact_name %}<div class="text-xs text-gray-500">{{ a.contact_name }}</div>{% endif %}
+                    </td>
+                    <td>
+                        <div class="text-sm">{{ a.arrival_date|date:"M d" }} - {{ a.departure_date|date:"M d" }}</div>
+                        <div class="text-xs text-gray-500">{{ a.nights }} nights</div>
+                    </td>
+                    <td class="text-right">{{ a.rooms_blocked }}</td>
+                    <td class="text-right">${{ a.agreed_rate|floatformat:0 }}</td>
+                    <td class="text-center">
+                        <div class="inline-flex items-center gap-2">
+                            <div class="w-16 bg-gray-200 rounded-full h-2">
+                                <div class="h-2 rounded-full {% if a.pickup_percent >= 80 %}bg-green-500{% elif a.pickup_percent >= 50 %}bg-yellow-500{% else %}bg-red-500{% endif %}"
+                                     style="width:{{ a.pickup_percent }}%"></div>
+                            </div>
+                            <span class="text-xs">{{ a.rooms_picked_up }}/{{ a.rooms_blocked }}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="text-sm {% if a.is_past_release %}text-red-600 font-medium{% endif %}">
+                            {{ a.release_date|date:"M d" }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="inline-block px-2 py-0.5 rounded text-xs font-medium
+                            {% if a.status == 'confirmed' %}bg-green-100 text-green-800
+                            {% elif a.status == 'tentative' %}bg-yellow-100 text-yellow-800
+                            {% elif a.status == 'cancelled' %}bg-red-100 text-red-800
+                            {% else %}bg-gray-100 text-gray-800{% endif %}">
+                            {{ a.get_status_display }}
+                        </span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="text-center text-gray-400 py-8">No active group allotments</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Past Allotments -->
+{% if past_allotments %}
+<div class="mgmt-card mt-6">
+    <div class="mgmt-card-header">
+        <h2 class="mgmt-card-title">Recent Past Allotments</h2>
+    </div>
+    <div class="mgmt-card-body">
+        <table class="mgmt-table">
+            <thead>
+                <tr>
+                    <th>Group</th>
+                    <th>Dates</th>
+                    <th class="text-right">Rooms</th>
+                    <th class="text-right">Rate</th>
+                    <th class="text-center">Final Pickup</th>
+                    <th class="text-right">Revenue</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in past_allotments %}
+                <tr>
+                    <td class="font-medium">{{ a.group_name }}</td>
+                    <td class="text-sm">{{ a.arrival_date|date:"M d" }} - {{ a.departure_date|date:"M d, Y" }}</td>
+                    <td class="text-right">{{ a.rooms_blocked }}</td>
+                    <td class="text-right">${{ a.agreed_rate|floatformat:0 }}</td>
+                    <td class="text-center">{{ a.rooms_picked_up }}/{{ a.rooms_blocked }} ({{ a.pickup_percent }}%)</td>
+                    <td class="text-right">${{ a.total_revenue|floatformat:0|intcomma }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

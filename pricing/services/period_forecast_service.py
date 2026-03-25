@@ -269,6 +269,17 @@ class PeriodForecastService:
         except Exception:
             pass
 
+        # ── 4b. Guesthouse demand context ──
+        gh_context = {}
+        try:
+            from platform_data.services import MarketSignalService
+            gh_context = MarketSignalService.get_guesthouse_demand_for_month(
+                getattr(self.property, 'country_code', 'MV') or 'MV',
+                p_start.year, p_start.month
+            )
+        except Exception:
+            pass
+
         # ── 5. Blended forecast ──
         # Velocity projection: OTB + remaining days * pace
         vel_forecast = otb_rn + int(vel_per_day * max(days_out, 0))
@@ -282,7 +293,6 @@ class PeriodForecastService:
                 period, capacity, demand_signal
             )
 
-        # ── 5. Blended forecast ──
         if stly_rn > 0:
             # Have STLY: use 3-way blend
             if days_out <= 7:
@@ -340,6 +350,10 @@ class PeriodForecastService:
             'offers_recommended': occupancy < 0.30,
             # Velocity
             'velocity_per_day': round(vel_per_day, 1),
+            # Guesthouse market
+            'gh_arrivals': gh_context.get('guesthouse_arrivals'),
+            'gh_share_pct': gh_context.get('guesthouse_share_pct'),
+            'seasonal_ratio': gh_context.get('seasonal_ratio'),
         }
 
     # -----------------------------------------------------------------
@@ -440,12 +454,52 @@ class PeriodForecastService:
 
     def _estimate_from_seasonality(self, period, capacity, demand_signal):
         """
-        Estimate expected room nights from national arrival seasonality
-        when no STLY data exists.
+        Estimate expected room nights when no STLY data exists.
 
-        Uses MoT data to determine what fraction of peak-month demand
-        this month typically represents, then applies that to capacity.
+        Uses the arrival-to-guesthouse pipeline:
+        1. Get national guesthouse arrivals for this month
+        2. Calculate seasonal ratio (this month vs peak)
+        3. Scale peak occupancy by seasonal ratio
+        4. Apply to property capacity
+
+        Falls back to raw seasonal ratio x 75% peak occ if
+        guesthouse data is unavailable.
         """
+        try:
+            from platform_data.services import MarketSignalService
+
+            month = period['month']
+            year = period['year']
+            country_code = getattr(self.property, 'country_code', 'MV') or 'MV'
+
+            gh_demand = MarketSignalService.get_guesthouse_demand_for_month(
+                country_code, year, month
+            )
+
+            if gh_demand.get('has_data') and gh_demand.get('seasonal_ratio', 0) > 0:
+                seasonal_ratio = gh_demand['seasonal_ratio']
+
+                # Peak months see ~70-80% occ on Dharavandhoo guesthouses
+                # Scale down proportionally for off-peak
+                peak_occ = 0.75
+                estimated_occ = seasonal_ratio * peak_occ
+
+                # Apply YoY growth trend (dampened: half weight)
+                yoy = gh_demand.get('yoy_growth_pct', 0)
+                growth_factor = 1 + (yoy / 200)  # half-weight
+                growth_factor = max(0.85, min(1.15, growth_factor))
+
+                estimated_rn = int(capacity * estimated_occ * growth_factor)
+                return max(0, min(capacity, estimated_rn))
+
+            # Fallback: use raw arrival seasonality
+            return self._fallback_seasonality(period, capacity)
+
+        except Exception:
+            return self._fallback_seasonality(period, capacity)
+
+    def _fallback_seasonality(self, period, capacity):
+        """Simple seasonality estimate from national arrival volumes."""
         try:
             from platform_data.models import MarketArrivalData
             from django.db.models import Sum
@@ -453,32 +507,24 @@ class PeriodForecastService:
             month = period['month']
             country_code = getattr(self.property, 'country_code', 'MV') or 'MV'
 
-            # Get 2025 arrivals for this month and peak month
-            this_month_arrivals = MarketArrivalData.objects.filter(
+            this_month = MarketArrivalData.objects.filter(
                 country_code=country_code,
                 report_period__year=2025,
                 report_period__month=month,
             ).aggregate(t=Sum('arrivals'))['t'] or 0
 
-            peak_arrivals = MarketArrivalData.objects.filter(
+            peak = MarketArrivalData.objects.filter(
                 country_code=country_code,
                 report_period__year=2025,
             ).values('report_period').annotate(
                 total=Sum('arrivals')
             ).order_by('-total').first()
 
-            if not peak_arrivals or peak_arrivals['total'] == 0:
+            if not peak or peak['total'] == 0:
                 return 0
 
-            # Seasonal ratio: this month as fraction of peak
-            seasonal_ratio = this_month_arrivals / peak_arrivals['total']
-
-            # Apply to capacity with a reasonable occupancy assumption
-            # Peak months typically see 70-85% occupancy on Dharavandhoo
-            peak_occ = 0.75
-            estimated_rn = int(capacity * seasonal_ratio * peak_occ)
-
-            return max(0, min(capacity, estimated_rn))
+            ratio = this_month / peak['total']
+            return max(0, min(capacity, int(capacity * ratio * 0.75)))
 
         except Exception:
             return 0

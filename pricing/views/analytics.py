@@ -25,6 +25,19 @@ from .mixins import PropertyMixin
 logger = logging.getLogger(__name__)
 
 
+class AnalyticsBaseView(PropertyMixin, TemplateView):
+    """Shared base for all analytics views — sets nav and data check."""
+    nav_sub = ''
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['nav_active'] = 'analytics'
+        context['nav_sub'] = self.nav_sub
+        prop = context['property']
+        context['has_data'] = Reservation.objects.filter(hotel=prop).exists()
+        return context
+
+
 def _attach_demand_indices(prop, monthly_data, year):
     """Attach per-month demand index to monthly_data list in place."""
     try:
@@ -52,10 +65,10 @@ def _attach_demand_indices(prop, monthly_data, year):
             m['demand_source'] = ''
 
 
-class BookingAnalysisDashboardView(PropertyMixin, TemplateView):
+class BookingAnalysisDashboardView(AnalyticsBaseView):
     """
     Booking Analysis Dashboard.
-    
+
     Shows:
     - KPI cards (Revenue, Room Nights, ADR, Occupancy, Reservations)
     - Monthly revenue/occupancy charts
@@ -64,29 +77,26 @@ class BookingAnalysisDashboardView(PropertyMixin, TemplateView):
     - Room type performance
     """
     template_name = 'pricing/analytics/booking_analysis_dashboard.html'
-    
+    nav_sub = 'booking_analysis'
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['nav_active'] = 'analytics'
         prop = context['property']
 
         from pricing.services import BookingAnalysisService
-        
+
         # Get year from query param
         year = self.request.GET.get('year')
         try:
             year = int(year) if year else date.today().year
         except ValueError:
             year = date.today().year
-        
-        # Check if property has reservation data
-        has_data = Reservation.objects.filter(hotel=prop).exists()
-        context['has_data'] = has_data
+
         context['year'] = year
         
-        if not has_data:
+        if not context['has_data']:
             return context
-        
+
         # Get dashboard data filtered by hotel
         # FIX: Use single = (keyword argument), not == (comparison)
         service = BookingAnalysisService(property=prop)
@@ -282,22 +292,19 @@ class DemandIndexAjaxView(PropertyMixin, View):
         return JsonResponse({'success': True, 'indices': serialized})
 
 
-class BookingTrendsView(PropertyMixin, TemplateView):
+class BookingTrendsView(AnalyticsBaseView):
     """
     30-day booking trends: pace, arrival mix, source markets, rooms.
     Answers "what happened recently and how does it compare?"
     """
     template_name = 'pricing/analytics/booking_trends.html'
+    nav_sub = 'booking_trends'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['nav_active'] = 'analytics'
         prop = context['property']
 
-        has_data = Reservation.objects.filter(hotel=prop).exists()
-        context['has_data'] = has_data
-
-        if not has_data:
+        if not context['has_data']:
             return context
 
         # Period from query param (default 30)
@@ -316,6 +323,63 @@ class BookingTrendsView(PropertyMixin, TemplateView):
         context['country_mix_json'] = json.dumps(trends['country_mix'])
         context['room_mix_json'] = json.dumps(trends['room_mix'])
         context['channel_mix_json'] = json.dumps(trends['channel_mix'])
+
+        return context
+
+
+class BookingOriginMatrixView(AnalyticsBaseView):
+    """
+    Booking Origin Matrix: heatmap of booking-month vs arrival-month room nights.
+    Shows when bookings were made and what stay months they are for.
+    """
+    template_name = 'pricing/analytics/booking_origin_matrix.html'
+    nav_sub = 'booking_origin'
+
+    def get_context_data(self, **kwargs):
+        from django.db.models.functions import TruncMonth
+        context = super().get_context_data(**kwargs)
+        prop = context['property']
+
+        if not context['has_data']:
+            return context
+
+        # Query: group active reservations by booking month & arrival month
+        qs = Reservation.objects.filter(
+            hotel=prop,
+            status__in=Reservation.ACTIVE_STATUSES,
+        ).annotate(
+            booking_month=TruncMonth('booking_date'),
+            arrival_month=TruncMonth('arrival_date'),
+        ).values('booking_month', 'arrival_month').annotate(
+            room_nights=Sum('nights'),
+        ).order_by('booking_month', 'arrival_month')
+
+        # Build sorted unique month lists and matrix dict
+        booking_months_set = set()
+        arrival_months_set = set()
+        matrix = {}
+        for row in qs:
+            bm = row['booking_month'].strftime('%Y-%m')
+            am = row['arrival_month'].strftime('%Y-%m')
+            rn = row['room_nights'] or 0
+            booking_months_set.add(bm)
+            arrival_months_set.add(am)
+            matrix.setdefault(bm, {})[am] = rn
+
+        booking_months = sorted(booking_months_set)
+        arrival_months = sorted(arrival_months_set)
+
+        # Booking totals per booking month
+        booking_totals = {}
+        for bm in booking_months:
+            booking_totals[bm] = sum(matrix.get(bm, {}).values())
+
+        context['matrix_json'] = json.dumps({
+            'booking_months': booking_months,
+            'arrival_months': arrival_months,
+            'matrix': matrix,
+            'booking_totals': booking_totals,
+        })
 
         return context
 

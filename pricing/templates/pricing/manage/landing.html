@@ -74,15 +74,6 @@
         </div>
     </a>
 
-    <a href="{% url 'pricing:manage_offers' org_code=org.code prop_code=prop_code %}" class="landing-card">
-        <span class="landing-card-key">5</span>
-        <div class="landing-card-icon"><svg class="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg></div>
-        <div class="landing-card-title">Offers & Overrides</div>
-        <div class="landing-card-desc">Date-specific rate overrides and promotional offers with booking window controls.</div>
-        <div class="landing-card-stats">
-            <span class="landing-card-stat">{{ override_count }} active overrides</span>
-        </div>
-    </a>
 
     <a href="{% url 'pricing:manage_import' org_code=org.code prop_code=prop_code %}" class="landing-card">
         <span class="landing-card-key">6</span>

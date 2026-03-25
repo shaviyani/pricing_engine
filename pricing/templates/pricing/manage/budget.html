@@ -1,0 +1,87 @@
+{% extends "pricing/manage/_base.html" %}
+{% load humanize %}
+
+{% block section_title %}Budget{% endblock %}
+
+{% block section_content %}
+<div class="mgmt-card">
+    <div class="mgmt-card-header">
+        <div>
+            <h2 class="mgmt-card-title">Monthly Budget vs Actual</h2>
+            <p class="text-sm text-gray-500 mt-1">Track revenue, occupancy, and ADR against targets</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <select id="yearSelect" onchange="changeYear(this.value)" class="editable-input" style="width:auto;">
+                {% for y in years %}
+                <option value="{{ y }}" {% if y == selected_year %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    <div class="mgmt-card-body">
+        <table class="mgmt-table">
+            <thead>
+                <tr>
+                    <th>Month</th>
+                    <th class="text-right">Revenue Target</th>
+                    <th class="text-right">Actual Revenue</th>
+                    <th class="text-right">Variance</th>
+                    <th class="text-right">Occ Target</th>
+                    <th class="text-right">Actual Occ</th>
+                    <th class="text-right">ADR Target</th>
+                    <th class="text-right">Actual ADR</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in months %}
+                <tr>
+                    <td class="font-medium">{{ m.month_name }}</td>
+                    <td class="text-right">
+                        {% if m.has_budget %}
+                        ${{ m.budget.revenue|floatformat:0|intcomma }}
+                        {% else %}
+                        <span class="text-gray-400">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right">${{ m.actuals.revenue|floatformat:0|intcomma }}</td>
+                    <td class="text-right">
+                        {% if m.has_budget %}
+                        <span class="{% if m.variance.revenue >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                            {% if m.variance.revenue >= 0 %}+{% endif %}${{ m.variance.revenue|floatformat:0|intcomma }}
+                            <span class="text-xs">({% if m.variance.revenue_pct >= 0 %}+{% endif %}{{ m.variance.revenue_pct }}%)</span>
+                        </span>
+                        {% else %}
+                        <span class="text-gray-400">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right">
+                        {% if m.has_budget %}{{ m.budget.occupancy|floatformat:0 }}%{% else %}<span class="text-gray-400">—</span>{% endif %}
+                    </td>
+                    <td class="text-right">{{ m.actuals.occupancy|floatformat:1 }}%</td>
+                    <td class="text-right">
+                        {% if m.has_budget %}${{ m.budget.adr|floatformat:0 }}{% else %}<span class="text-gray-400">—</span>{% endif %}
+                    </td>
+                    <td class="text-right">${{ m.actuals.adr|floatformat:0 }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" class="text-center text-gray-400 py-8">No data for this year</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if budget_count == 0 %}
+<div class="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-700">
+    No budget targets set for {{ selected_year }}. Use the Django admin to enter monthly budgets, or contact your administrator.
+</div>
+{% endif %}
+
+<script>
+function changeYear(year) {
+    var url = new URL(window.location.href);
+    url.searchParams.set('year', year);
+    window.location.href = url.toString();
+}
+</script>
+{% endblock %}

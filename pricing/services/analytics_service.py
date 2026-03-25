@@ -361,8 +361,9 @@ class ReservationImportService:
             # Filter invalid confirmation numbers (footer rows, etc.)
             if 'confirmation_no' in df.columns:
                 initial_count = len(df)
-                df['_conf_str'] = df['confirmation_no'].astype(str)
-                df = df[df['_conf_str'].str.match(r'^\d+$', na=False)]
+                df['_conf_str'] = df['confirmation_no'].astype(str).str.strip()
+                # Allow: pure digits (336) and hyphenated multi-room (332-6)
+                df = df[df['_conf_str'].str.match(r'^\d+(-\d+)?$', na=False)]
                 df = df.drop(columns=['_conf_str'])
                 
                 invalid_filtered = initial_count - len(df)
@@ -2227,7 +2228,7 @@ class BookingAnalysisService:
                 'new_nights': new_nights,
                 'cancellations': lost_data.get('lost_bookings', 0) or 0,
                 'cancelled_nights': lost_nights,
-                'net_pickup': new_nights,  # Only active bookings count
+                'net_pickup': new_nights - lost_nights,
             })
         
         return velocity

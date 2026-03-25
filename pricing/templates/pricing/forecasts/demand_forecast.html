@@ -54,8 +54,13 @@
             </div>
             <div>
                 <label class="block text-xs font-medium text-gray-500 mb-1">Cancel Rate (%)</label>
-                <input id="input-cancel" type="number" value="10" min="0" max="50" step="1"
-                    class="text-sm border-gray-300 rounded-lg px-3 py-2 w-24">
+                <div class="flex items-center gap-2">
+                    <input id="input-cancel" type="number" value="{{ cancel_rate_pct }}" min="0" max="80" step="1"
+                        class="text-sm border-gray-300 rounded-lg px-3 py-2 w-24">
+                    {% if cancel_rate_source == 'dynamic' %}
+                    <span class="text-xs text-green-600 font-medium" title="Calculated from last 6 months of booking history">Auto</span>
+                    {% endif %}
+                </div>
             </div>
             <button id="btn-generate" onclick="generateForecast()"
                 class="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition">
@@ -68,7 +73,7 @@
     </div>
 
     <!-- KPI Cards (hidden until generated) -->
-    <div id="kpi-cards" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div id="kpi-cards" class="hidden grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div class="bg-white rounded-xl shadow-sm border p-4">
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Rooms</p>
             <p id="kpi-rooms" class="text-2xl font-bold text-gray-900 mt-1">—</p>
@@ -80,6 +85,10 @@
         <div class="bg-white rounded-xl shadow-sm border p-4">
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Avg BB Rate</p>
             <p id="kpi-avg-bb" class="text-2xl font-bold text-gray-900 mt-1">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Cancel Rate</p>
+            <p id="kpi-cancel-rate" class="text-2xl font-bold text-gray-900 mt-1">—</p>
         </div>
         <div class="bg-white rounded-xl shadow-sm border p-4">
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Periods Below 30%</p>
@@ -227,6 +236,7 @@ function renderForecast(data) {
     document.getElementById('kpi-rooms').textContent = data.assumptions.total_rooms;
     document.getElementById('kpi-avg-occ').textContent = avgOcc + '%';
     document.getElementById('kpi-avg-bb').textContent = '$' + avgBB;
+    document.getElementById('kpi-cancel-rate').textContent = Math.round(data.assumptions.cancel_rate * 100) + '%';
     document.getElementById('kpi-low-periods').textContent = lowPeriods;
     document.getElementById('kpi-cards').classList.remove('hidden');
 

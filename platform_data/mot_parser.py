@@ -669,6 +669,35 @@ def import_mot_report(file_path, country_code='MV', user=None):
         except Exception as e:
             errors.append({'key_indicators': True, 'message': str(e)})
 
+    # Save facility distribution (from daily reports)
+    facility_dist = result.get('facility_distribution', {})
+    if facility_dist:
+        from platform_data.models import FacilityDistribution
+
+        type_map = {
+            'Resorts': 'resorts',
+            'Hotels': 'hotels',
+            'Guesthouses': 'guesthouses',
+            'Safari Vessels': 'safari',
+        }
+
+        for ftype_label, data in facility_dist.items():
+            ftype = type_map.get(ftype_label)
+            if ftype and data.get('arrivals'):
+                try:
+                    FacilityDistribution.objects.update_or_create(
+                        country_code=country_code,
+                        report_period=report_period,
+                        facility_type=ftype,
+                        defaults={
+                            'arrivals': data['arrivals'],
+                            'share_pct': Decimal(str(data['share_pct'])) if data.get('share_pct') else None,
+                            'source_report': source,
+                        }
+                    )
+                except Exception as e:
+                    errors.append({'facility': ftype_label, 'message': str(e)})
+
     file_import.rows_created = created
     file_import.rows_updated = updated
     file_import.rows_skipped = skipped

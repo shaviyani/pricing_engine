@@ -1,5 +1,5 @@
 """
-Modifiers admin configuration - ModifierTemplate, PropertyModifier, ModifierRule.
+Modifiers admin configuration - PropertyModifier, ModifierRule.
 Also includes bulk action helpers for creating season/channel modifiers.
 """
 
@@ -7,79 +7,8 @@ from django.contrib import admin
 from django.utils.html import format_html
 
 from pricing.models import (
-    ModifierTemplate, ModifierRule, PropertyModifier,
+    ModifierRule, PropertyModifier,
 )
-
-
-# =============================================================================
-# MODIFIER TEMPLATE ADMIN (Organization Level)
-# =============================================================================
-
-@admin.register(ModifierTemplate)
-class ModifierTemplateAdmin(admin.ModelAdmin):
-    """Admin for organization-level modifier templates."""
-
-    list_display = [
-        'name',
-        'organization',
-        'modifier_type_badge',
-        'applies_to_badge',
-        'default_value_display',
-        'stack_order',
-        'is_active',
-    ]
-
-    list_filter = [
-        'organization',
-        'modifier_type',
-        'applies_to',
-        'is_active',
-    ]
-
-    search_fields = ['name', 'code', 'description']
-
-    ordering = ['organization', 'stack_order']
-
-    fieldsets = (
-        (None, {
-            'fields': ('organization', 'name', 'code', 'description')
-        }),
-        ('Configuration', {
-            'fields': ('modifier_type', 'applies_to', 'default_value', 'stack_order')
-        }),
-        ('Status', {
-            'fields': ('is_active',)
-        }),
-    )
-
-    prepopulated_fields = {'code': ('name',)}
-
-    def modifier_type_badge(self, obj):
-        colors = {
-            'index': '#3b82f6',      # blue
-            'discount': '#22c55e',    # green
-            'surcharge': '#f59e0b',   # amber
-        }
-        color = colors.get(obj.modifier_type, '#6b7280')
-        return format_html(
-            '<span style="background: {}; color: white; padding: 2px 8px; '
-            'border-radius: 4px; font-size: 11px;">{}</span>',
-            color,
-            obj.get_modifier_type_display()
-        )
-    modifier_type_badge.short_description = 'Type'
-
-    def applies_to_badge(self, obj):
-        return format_html(
-            '<span style="background: #e5e7eb; padding: 2px 8px; '
-            'border-radius: 4px; font-size: 11px;">{}</span>',
-            obj.get_applies_to_display()
-        )
-    applies_to_badge.short_description = 'Applies To'
-
-    def default_value_display(self, obj):
-        return obj.get_default_adjustment_display()
-    default_value_display.short_description = 'Default'
 
 
 # =============================================================================
@@ -118,18 +47,17 @@ class PropertyModifierAdmin(admin.ModelAdmin):
         'modifier_type',
         'applies_to',
         'is_active',
-        'template',
     ]
 
     search_fields = ['name', 'code', 'description']
 
     ordering = ['hotel', 'stack_order']
 
-    raw_id_fields = ['hotel', 'template', 'season', 'room_type', 'channel']
+    raw_id_fields = ['hotel', 'version', 'season', 'room_type', 'channel']
 
     fieldsets = (
         (None, {
-            'fields': ('hotel', 'template', 'name', 'code', 'description')
+            'fields': ('hotel', 'version', 'name', 'code', 'description')
         }),
         ('Configuration', {
             'fields': ('modifier_type', 'applies_to', 'value', 'stack_order')
@@ -319,22 +247,16 @@ def create_season_modifiers(modeladmin, request, queryset):
     """
     Bulk action to create PropertyModifier for each season.
     """
-    from pricing.models import PropertyModifier, Season, ModifierTemplate
+    from pricing.models import PropertyModifier, Season
 
     created = 0
     for hotel in queryset:
-        org = hotel.organization
-        template = ModifierTemplate.objects.filter(
-            organization=org, code='season-index'
-        ).first()
-
         for season in Season.objects.filter(hotel=hotel):
             code = f"season-{season.id}"
             _, is_new = PropertyModifier.objects.get_or_create(
                 hotel=hotel,
                 code=code,
                 defaults={
-                    'template': template,
                     'name': season.name,
                     'modifier_type': 'index',
                     'applies_to': 'season',
@@ -355,22 +277,16 @@ def create_channel_modifiers(modeladmin, request, queryset):
     """
     Bulk action to create PropertyModifier for each channel.
     """
-    from pricing.models import PropertyModifier, Channel, ModifierTemplate
+    from pricing.models import PropertyModifier, Channel
 
     created = 0
     for hotel in queryset:
-        org = hotel.organization
-        template = ModifierTemplate.objects.filter(
-            organization=org, code='channel-discount'
-        ).first()
-
         for channel in Channel.objects.all():
             code = f"channel-{channel.id}"
             _, is_new = PropertyModifier.objects.get_or_create(
                 hotel=hotel,
                 code=code,
                 defaults={
-                    'template': template,
                     'name': f"{channel.name}",
                     'modifier_type': 'discount',
                     'applies_to': 'channel',

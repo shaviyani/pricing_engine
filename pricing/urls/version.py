@@ -7,8 +7,6 @@ from pricing.views.version_views import (
     DynamicPricingRuleListView, DynamicPricingMultiplierUpdateView,
     DynamicPricingSeedView, DynamicPricingPreviewView,
     EventUpliftListView, EventUpliftCreateView, EventUpliftUpdateView, EventUpliftDeleteView,
-    DPSuggestionAnalyzeView, DPSuggestionListView,
-    DPSuggestionAcceptView, DPSuggestionRejectView, DPSuggestionAcceptAllView,
 )
 
 urlpatterns = [
@@ -46,15 +44,4 @@ urlpatterns = [
     path('org/<slug:org_code>/<slug:prop_code>/api/event-uplifts/<int:pk>/delete/',
          EventUpliftDeleteView.as_view(), name='api_event_uplift_delete'),
 
-    # Dynamic pricing suggestions
-    path('org/<slug:org_code>/<slug:prop_code>/api/dynamic-pricing/analyze/',
-         DPSuggestionAnalyzeView.as_view(), name='api_dp_analyze'),
-    path('org/<slug:org_code>/<slug:prop_code>/api/dynamic-pricing/suggestions/',
-         DPSuggestionListView.as_view(), name='api_dp_suggestion_list'),
-    path('org/<slug:org_code>/<slug:prop_code>/api/dynamic-pricing/suggestions/<int:pk>/accept/',
-         DPSuggestionAcceptView.as_view(), name='api_dp_suggestion_accept'),
-    path('org/<slug:org_code>/<slug:prop_code>/api/dynamic-pricing/suggestions/<int:pk>/reject/',
-         DPSuggestionRejectView.as_view(), name='api_dp_suggestion_reject'),
-    path('org/<slug:org_code>/<slug:prop_code>/api/dynamic-pricing/suggestions/accept-all/',
-         DPSuggestionAcceptAllView.as_view(), name='api_dp_suggestion_accept_all'),
 ]

@@ -628,7 +628,7 @@
     ];
 
     // Monthly Revenue Chart
-    new Chart(document.getElementById('revenueChart'), {
+    var revenueChartInstance = new Chart(document.getElementById('revenueChart'), {
         type: 'bar',
         data: {
             labels: chartData.months,
@@ -642,13 +642,20 @@
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            onClick: function(evt, elements) {
+                if (elements.length > 0) {
+                    var monthIdx = elements[0].index;
+                    openMonthModal(monthIdx + 1, {{ year }});
+                }
+            },
             plugins: {
                 legend: { display: false },
                 tooltip: {
                     callbacks: {
                         label: function(context) {
                             return CURRENCY + (context.raw * 1000).toLocaleString();
-                        }
+                        },
+                        footer: function() { return 'Click for details'; }
                     }
                 }
             },
@@ -663,12 +670,15 @@
                     }
                 },
                 x: { grid: { display: false } }
+            },
+            onHover: function(evt, elements) {
+                evt.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
             }
         }
     });
 
     // Monthly Occupancy Chart
-    new Chart(document.getElementById('occupancyChart'), {
+    var occupancyChartInstance = new Chart(document.getElementById('occupancyChart'), {
         type: 'bar',
         data: {
             labels: chartData.months,
@@ -690,16 +700,30 @@
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            onClick: function(evt, elements) {
+                if (elements.length > 0) {
+                    var monthIdx = elements[0].index;
+                    openMonthModal(monthIdx + 1, {{ year }});
+                }
+            },
             plugins: {
                 legend: {
                     display: true,
                     position: 'top',
                     labels: { usePointStyle: true, padding: 15 }
+                },
+                tooltip: {
+                    callbacks: {
+                        footer: function() { return 'Click for details'; }
+                    }
                 }
             },
             scales: {
                 y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
                 x: { grid: { display: false } }
+            },
+            onHover: function(evt, elements) {
+                evt.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
             }
         }
     });

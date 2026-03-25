@@ -17,7 +17,7 @@ import calendar
 
 from pricing.models import (
     Organization, Property, Season, RoomType, RatePlan, Channel,
-    RateModifier, SeasonModifierOverride, Reservation,
+    RateModifier, SeasonModifierOverride, Reservation, UserOrganizationRole,
 )
 from pricing.services import PricingService, BookingAnalysisService
 from pricing.utils import calculate_adr
@@ -36,6 +36,15 @@ class RootRedirectView(View):
     3. Organization selector (if multiple)
     """
     
+    def _get_user_orgs(self, user):
+        """Get organizations the user has access to."""
+        if user.is_superuser:
+            return Organization.objects.filter(is_active=True)
+        user_org_ids = UserOrganizationRole.objects.filter(
+            user=user, is_active=True
+        ).values_list('organization_id', flat=True)
+        return Organization.objects.filter(id__in=user_org_ids, is_active=True)
+
     def get(self, request):
         # Check session for last used property
         property_id = request.session.get('current_property_id')
@@ -46,15 +55,23 @@ class RootRedirectView(View):
                     is_active=True,
                     organization__is_active=True
                 )
-                return redirect('pricing:property_dashboard',
-                                org_code=prop.organization.code,
-                                prop_code=prop.code)
+                # Verify user has access to this org
+                user = request.user
+                if user.is_superuser or UserOrganizationRole.objects.filter(
+                    user=user, organization=prop.organization, is_active=True
+                ).exists():
+                    return redirect('pricing:property_dashboard',
+                                    org_code=prop.organization.code,
+                                    prop_code=prop.code)
+                else:
+                    request.session.pop('current_property_id', None)
+                    request.session.pop('current_org_id', None)
             except Property.DoesNotExist:
                 # Clear invalid session data
                 request.session.pop('current_property_id', None)
-        
-        # Check organization count
-        orgs = Organization.objects.filter(is_active=True)
+
+        # Check organization count — filtered by user access
+        orgs = self._get_user_orgs(request.user)
         org_count = orgs.count()
         
         if org_count == 0:
@@ -82,16 +99,25 @@ class RootRedirectView(View):
 class OrganizationSelectorView(TemplateView):
     """
     Organization selector page.
-    
-    Shows all active organizations with their properties.
+
+    Shows organizations the user has access to, with their properties.
     """
     template_name = 'pricing/core/organization_selector.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['organizations'] = Organization.objects.filter(
-            is_active=True
-        ).prefetch_related('properties')
+        user = self.request.user
+        if user.is_superuser:
+            context['organizations'] = Organization.objects.filter(
+                is_active=True
+            ).prefetch_related('properties')
+        else:
+            user_org_ids = UserOrganizationRole.objects.filter(
+                user=user, is_active=True
+            ).values_list('organization_id', flat=True)
+            context['organizations'] = Organization.objects.filter(
+                id__in=user_org_ids, is_active=True
+            ).prefetch_related('properties')
         return context
 
 
@@ -259,6 +285,7 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
         context['kpi_90d'] = self._calc_occ_kpi(prop, today, 90, total_rooms)
         context['kpi_month_rev'] = self._calc_month_revenue_kpi(prop, today)
         context['kpi_adr'] = self._calc_adr_kpi(prop, today)
+        context['kpi_revpar'] = self._calc_revpar_kpi(prop, today, total_rooms)
 
         # Demand index KPI (from market data)
         try:
@@ -387,6 +414,44 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
         context['today_year'] = today.year
         context['today_month'] = today.month
 
+        # --- Budget vs Actuals for current month ---
+        try:
+            from pricing.models import MonthlyBudget
+            budget = MonthlyBudget.objects.filter(
+                hotel=prop, year=today.year, month=today.month
+            ).first()
+            if budget and float(budget.revenue_target) > 0:
+                actual_rev = context['kpi_month_rev']['revenue']
+                target_rev = float(budget.revenue_target)
+                context['budget_month'] = {
+                    'has_budget': True,
+                    'revenue_target': target_rev,
+                    'revenue_pct': round(actual_rev / target_rev * 100, 1) if target_rev > 0 else 0,
+                    'occupancy_target': float(budget.occupancy_target),
+                    'adr_target': float(budget.adr_target),
+                }
+            else:
+                context['budget_month'] = {'has_budget': False}
+        except Exception:
+            context['budget_month'] = {'has_budget': False}
+
+        # --- Setup checklist ---
+        checklist = []
+        has_seasons = qs['seasons'].exists()
+        has_rooms = qs['rooms'].exists()
+        has_rate_plans = qs['rate_plans'].exists()
+        has_channels = qs['channels'].exists()
+        has_reservations = Reservation.objects.filter(hotel=prop).exists()
+
+        checklist.append({'label': 'Seasons configured', 'done': has_seasons, 'link_name': 'pricing:manage_pricing'})
+        checklist.append({'label': 'Room types defined', 'done': has_rooms, 'link_name': 'pricing:manage_pricing'})
+        checklist.append({'label': 'Rate plans created', 'done': has_rate_plans, 'link_name': 'pricing:manage_pricing'})
+        checklist.append({'label': 'Channels set up', 'done': has_channels, 'link_name': 'pricing:manage_pricing'})
+        checklist.append({'label': 'Reservations imported', 'done': has_reservations, 'link_name': 'pricing:manage_import'})
+
+        context['setup_checklist'] = checklist
+        context['setup_complete'] = all(c['done'] for c in checklist)
+
         return context
 
     # -----------------------------------------------------------------
@@ -423,34 +488,47 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
         }
 
     def _calc_month_revenue_kpi(self, prop, today):
-        """Current month revenue with STLY comparison."""
+        """Current month gross & net revenue with STLY comparison."""
         _, days = calendar.monthrange(today.year, today.month)
         month_start = date(today.year, today.month, 1)
         month_end = date(today.year, today.month, days)
 
-        rev = Reservation.objects.filter(
+        month_qs = Reservation.objects.filter(
             hotel=prop,
             arrival_date__gte=month_start,
             arrival_date__lte=month_end,
-            status__in=Reservation.ACTIVE_STATUSES
-        ).aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
-        rev = float(rev)
+            status__in=Reservation.ACTIVE_STATUSES,
+        )
+        rev = float(month_qs.aggregate(t=Sum('total_amount'))['t'] or 0)
+
+        # Estimate commission from channel mix
+        commission = 0.0
+        for r in month_qs.select_related('channel').values('total_amount', 'channel__commission_percent'):
+            amt = float(r['total_amount'] or 0)
+            pct = float(r['channel__commission_percent'] or 0)
+            commission += amt * pct / 100
+        net_rev = round(rev - commission, 2)
 
         # STLY
         stly_start = date(today.year - 1, today.month, 1)
         _, stly_days = calendar.monthrange(today.year - 1, today.month)
         stly_end = date(today.year - 1, today.month, stly_days)
-        stly_rev = Reservation.objects.filter(
+        stly_rev = float(Reservation.objects.filter(
             hotel=prop,
             arrival_date__gte=stly_start,
             arrival_date__lte=stly_end,
-            status__in=Reservation.ACTIVE_STATUSES
-        ).aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
-        stly_rev = float(stly_rev)
+            status__in=Reservation.ACTIVE_STATUSES,
+        ).aggregate(t=Sum('total_amount'))['t'] or 0)
 
         delta_pct = round((rev - stly_rev) / stly_rev * 100, 1) if stly_rev > 0 else 0
 
-        return {'revenue': rev, 'stly_revenue': stly_rev, 'delta_pct': delta_pct}
+        return {
+            'revenue': rev,
+            'net_revenue': net_rev,
+            'commission': round(commission, 2),
+            'stly_revenue': stly_rev,
+            'delta_pct': delta_pct,
+        }
 
     def _calc_adr_kpi(self, prop, today):
         """Blended ADR for next 90 days, with STLY comparison."""
@@ -482,6 +560,37 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
             'adr': adr,
             'stly_adr': stly_adr,
             'delta': round(adr - stly_adr, 2),
+        }
+
+    def _calc_revpar_kpi(self, prop, today, total_rooms):
+        """RevPAR for next 90 days: revenue / available room-nights."""
+        window_end = today + timedelta(days=90)
+        stats = Reservation.objects.filter(
+            hotel=prop,
+            arrival_date__gte=today,
+            arrival_date__lt=window_end,
+            status__in=Reservation.FUTURE_STATUSES,
+        ).aggregate(rev=Sum('total_amount'))
+        rev = float(stats['rev'] or 0)
+        available = total_rooms * 90
+        revpar = round(rev / available, 2) if available > 0 else 0
+
+        # STLY
+        stly_start = date(today.year - 1, today.month, today.day)
+        stly_end = stly_start + timedelta(days=90)
+        stly_stats = Reservation.objects.filter(
+            hotel=prop,
+            arrival_date__gte=stly_start,
+            arrival_date__lt=stly_end,
+            status__in=Reservation.ACTIVE_STATUSES,
+        ).aggregate(rev=Sum('total_amount'))
+        stly_rev = float(stly_stats['rev'] or 0)
+        stly_revpar = round(stly_rev / available, 2) if available > 0 else 0
+
+        return {
+            'revpar': revpar,
+            'stly_revpar': stly_revpar,
+            'delta': round(revpar - stly_revpar, 2),
         }
 
 class MarketContextAjaxView(PropertyMixin, View):

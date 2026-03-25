@@ -8,6 +8,7 @@ from pricing.views import (
     DemandIndexAjaxView,
     BookingTrendsView,
     booking_trends_data_ajax,
+    BookingOriginMatrixView,
 )
 
 urlpatterns = [
@@ -23,4 +24,6 @@ urlpatterns = [
          BookingTrendsView.as_view(), name='booking_trends'),
     path('org/<slug:org_code>/<slug:prop_code>/api/booking-trends/',
          booking_trends_data_ajax, name='booking_trends_ajax'),
+    path('org/<slug:org_code>/<slug:prop_code>/booking-origin/',
+         BookingOriginMatrixView.as_view(), name='booking_origin_matrix'),
 ]

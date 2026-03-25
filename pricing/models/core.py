@@ -2,6 +2,7 @@
 Core models: Organization, Property, and Modifier configuration.
 """
 
+from django.conf import settings
 from django.db import models
 from django.db.models import Sum, Count, Avg, Q
 from decimal import Decimal, ROUND_HALF_UP
@@ -74,10 +75,54 @@ class Organization(models.Model):
         )['total'] or 0
 
 
+class UserOrganizationRole(models.Model):
+    """
+    Links a Django user to an organization with a specific role.
+
+    Roles:
+    - viewer: Read-only access to all pages within the org
+    - manager: Can edit pricing data (manage views)
+    - admin: Can manage org settings and user assignments
+    """
+    ROLE_CHOICES = [
+        ('viewer', 'Viewer'),
+        ('manager', 'Manager'),
+        ('admin', 'Admin'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='organization_roles',
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='user_roles',
+    )
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default='viewer',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['user', 'organization']
+        ordering = ['organization', 'user']
+        verbose_name = "User Organization Role"
+        verbose_name_plural = "User Organization Roles"
+
+    def __str__(self):
+        return f"{self.user.username} — {self.organization.name} ({self.get_role_display()})"
+
+
 class Property(models.Model):
     """
     Property/hotel configuration.
-    
+
     This holds property-wide settings including the reference base rate
     used for room index calculations.
     """
@@ -272,126 +317,6 @@ def get_current_property(request):
     
     return None
 
-class ModifierTemplate(models.Model):
-    """
-    Organization-level modifier templates.
-    
-    Properties can inherit these templates and customize the values.
-    Templates define the structure; properties define the actual values.
-    
-    Example templates:
-    - Season Index (applies to seasons)
-    - Channel Discount (applies to channels)
-    - Member Discount (applies to guest types)
-    - LOS Discount (applies to length of stay)
-    """
-    organization = models.ForeignKey(
-        'Organization',
-        on_delete=models.CASCADE,
-        related_name='modifier_templates',
-        help_text="Organization this template belongs to"
-    )
-    
-    name = models.CharField(
-        max_length=100,
-        help_text="Template name (e.g., 'Season Index', 'Channel Discount')"
-    )
-    
-    code = models.SlugField(
-        max_length=50,
-        help_text="Unique code (e.g., 'season-index', 'channel-discount')"
-    )
-    
-    description = models.TextField(
-        blank=True,
-        help_text="Description of what this modifier does"
-    )
-    
-    stackable = models.BooleanField(
-        default=False,
-        help_text="Can this modifier be stacked with other stackable modifiers?"
-    )
-    
-    is_stacked = models.BooleanField(
-        default=False,
-        help_text="Is this a combined/stacked modifier?"
-    )
-    
-    stacked_from = models.ManyToManyField(
-        'self',
-        blank=True,
-        symmetrical=False,
-        related_name='stacked_into',
-        help_text="Source modifiers if this is a stacked modifier"
-    )
-    
-    MODIFIER_TYPES = [
-        ('index', 'Index/Multiplier'),      # Value like 1.20 means +20%
-        ('discount', 'Discount'),            # Value like 10 means -10%
-        ('surcharge', 'Surcharge'),          # Value like 5 means +5%
-    ]
-    modifier_type = models.CharField(
-        max_length=20,
-        choices=MODIFIER_TYPES,
-        help_text="How the value is interpreted"
-    )
-    
-    APPLIES_TO_CHOICES = [
-        ('season', 'Season'),
-        ('room_type', 'Room Type'),
-        ('channel', 'Channel'),
-        ('promo', 'Promotion/Offer'),
-        ('los', 'Length of Stay'),
-        ('booking_window', 'Booking Window'),
-        ('guest_type', 'Guest Type'),
-    ]
-    applies_to = models.CharField(
-        max_length=20,
-        choices=APPLIES_TO_CHOICES,
-        help_text="What entity this modifier is linked to"
-    )
-    
-    default_value = models.DecimalField(
-        max_digits=6,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Default value for new property modifiers"
-    )
-    
-    stack_order = models.PositiveIntegerField(
-        default=100,
-        help_text="Order in stacking calculation (lower = applied first)"
-    )
-    
-    is_active = models.BooleanField(
-        default=True,
-        help_text="Whether this template is active"
-    )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        ordering = ['organization', 'stack_order', 'name']
-        unique_together = ['organization', 'code']
-        verbose_name = "Modifier Template"
-        verbose_name_plural = "Modifier Templates"
-    
-    def __str__(self):
-        return f"{self.name} ({self.get_modifier_type_display()})"
-    
-    def get_default_adjustment_display(self):
-        """Display-friendly default value."""
-        if self.modifier_type == 'index':
-            pct = (self.default_value - Decimal('1.00')) * 100
-            if pct >= 0:
-                return f"+{pct:.0f}%"
-            return f"{pct:.0f}%"
-        elif self.modifier_type == 'discount':
-            return f"-{self.default_value}%"
-        else:
-            return f"+{self.default_value}%"
-        
 class PropertyModifier(models.Model):
     """
     Property-specific modifier with actual value.
@@ -410,17 +335,16 @@ class PropertyModifier(models.Model):
         related_name='pricing_modifiers',
         help_text="Property this modifier belongs to"
     )
-    
-    # Link to template (optional)
-    template = models.ForeignKey(
-        ModifierTemplate,
-        on_delete=models.SET_NULL,
+
+    version = models.ForeignKey(
+        'PricingMatrixVersion',
+        on_delete=models.CASCADE,
+        related_name='property_modifiers',
         null=True,
         blank=True,
-        related_name='property_instances',
-        help_text="Template this modifier is based on (optional)"
+        help_text="Pricing version (null = global / unversioned)"
     )
-    
+
     name = models.CharField(
         max_length=100,
         help_text="Modifier name (e.g., 'Peak Season', 'OTA Discount')"
@@ -563,7 +487,7 @@ class PropertyModifier(models.Model):
     
     class Meta:
         ordering = ['hotel', 'stack_order', 'name']
-        unique_together = ['hotel', 'code']
+        unique_together = ['hotel', 'code', 'version']
         verbose_name = "Property Modifier"
         verbose_name_plural = "Property Modifiers"
     
@@ -571,20 +495,6 @@ class PropertyModifier(models.Model):
         return f"{self.name} ({self.get_adjustment_display()})"
     
     def save(self, *args, **kwargs):
-        """Inherit from template if linked and new."""
-        if self.template and not self.pk:
-            if not self.name:
-                self.name = self.template.name
-            if not self.code:
-                self.code = self.template.code
-            if not self.modifier_type:
-                self.modifier_type = self.template.modifier_type
-            if not self.applies_to:
-                self.applies_to = self.template.applies_to
-            if self.stack_order == 100:
-                self.stack_order = self.template.stack_order
-            if self.value == Decimal('0.00'):
-                self.value = self.template.default_value
         super().save(*args, **kwargs)
     
     def get_adjustment(self):

@@ -8,7 +8,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from pricing.models import (
             Organization, Property, Season, RoomType, Reservation, FileImport,
-            DailyPickupSnapshot, MonthlyPickupSnapshot, PickupCurve, OccupancyForecast
         )
         
         # Get the hotel
@@ -25,10 +24,6 @@ class Command(BaseCommand):
             (RoomType, 'room types'),
             (Reservation, 'reservations'),
             (FileImport, 'file imports'),
-            (DailyPickupSnapshot, 'daily snapshots'),
-            (MonthlyPickupSnapshot, 'monthly snapshots'),
-            (PickupCurve, 'pickup curves'),
-            (OccupancyForecast, 'forecasts'),
         ]
         
         self.stdout.write("")

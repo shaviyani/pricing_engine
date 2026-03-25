@@ -1236,10 +1236,11 @@ class MarketSignalService:
                 prop, year, month
             )
 
-            # Minimum sample: need at least 10 room nights to use property mix
+            # Minimum sample: need at least 20 room nights across 3+ countries
             total_mix_nights = sum(m['nights'] for m in guest_mix) if guest_mix else 0
-            if total_mix_nights < 10:
-                guest_mix = []  # Force national fallback path
+            total_mix_countries = len(guest_mix)
+            if total_mix_nights < 20 or total_mix_countries < 3:
+                guest_mix = []  # Force national fallback — sample too thin
 
             if not guest_mix:
                 national = MarketSignalService._get_national_yoy_for_month(
@@ -1357,6 +1358,107 @@ class MarketSignalService:
             'factor': 1.0, 'pct': 0.0, 'national_pct': None,
             'top_driver': 'No data', 'source': '', 'components': [], 'has_data': False,
         })
+
+    # -----------------------------------------------------------------
+    # Guesthouse demand pipeline
+    # -----------------------------------------------------------------
+    @staticmethod
+    def get_guesthouse_demand_for_month(country_code, year, month):
+        """
+        Estimate guesthouse-specific demand for a given month.
+
+        Uses the facility distribution split from MoT daily reports
+        to determine what fraction of national arrivals flow to
+        guesthouses, then applies YoY growth.
+
+        Returns:
+            dict: {
+                'total_arrivals': int,
+                'guesthouse_arrivals': int,
+                'guesthouse_share_pct': float,
+                'yoy_growth_pct': float,
+                'seasonal_ratio': float,
+                'source': str,
+                'has_data': bool,
+            }
+        """
+        from .models import MarketArrivalData, FacilityDistribution
+
+        target_period = date(year, month, 1)
+
+        # --- Get national arrivals for this month ---
+        arrivals_qs = MarketArrivalData.objects.filter(
+            country_code=country_code,
+            report_period=target_period,
+        )
+
+        if not arrivals_qs.exists():
+            # Use prior year same month as base
+            prior_period = date(year - 1, month, 1)
+            arrivals_qs = MarketArrivalData.objects.filter(
+                country_code=country_code,
+                report_period=prior_period,
+            )
+
+        total_arrivals = arrivals_qs.aggregate(t=Sum('arrivals'))['t'] or 0
+
+        if total_arrivals == 0:
+            return {'has_data': False, 'source': 'No arrival data'}
+
+        # --- Get guesthouse share ---
+        gh_dist = FacilityDistribution.objects.filter(
+            country_code=country_code,
+            facility_type='guesthouses',
+            report_period__year__gte=year - 1,
+        ).order_by('-report_period').first()
+
+        if gh_dist and gh_dist.share_pct:
+            gh_share = float(gh_dist.share_pct) / 100
+            gh_source = f"MoT {gh_dist.report_period:%b %Y}"
+        else:
+            # Default: Maldives guesthouses ~25% of arrivals (stable 2023-2025)
+            gh_share = 0.25
+            gh_source = "Default 25%"
+
+        guesthouse_arrivals = int(total_arrivals * gh_share)
+
+        # --- Seasonal ratio: this month vs peak ---
+        ref_year = year - 1 if month > 1 else year - 2
+        monthly_totals = MarketArrivalData.objects.filter(
+            country_code=country_code,
+            report_period__year=ref_year,
+        ).values('report_period').annotate(
+            total=Sum('arrivals')
+        ).order_by('-total')
+
+        peak_total = monthly_totals.first()['total'] if monthly_totals.exists() else 0
+        this_month_ref = MarketArrivalData.objects.filter(
+            country_code=country_code,
+            report_period=date(ref_year, month, 1),
+        ).aggregate(t=Sum('arrivals'))['t'] or 0
+
+        seasonal_ratio = this_month_ref / peak_total if peak_total > 0 else 0.5
+
+        # --- YoY growth ---
+        prior_year_period = date(year - 1, month, 1)
+        prior_total = MarketArrivalData.objects.filter(
+            country_code=country_code,
+            report_period=prior_year_period,
+        ).aggregate(t=Sum('arrivals'))['t'] or 0
+
+        yoy_pct = 0.0
+        if prior_total > 0 and arrivals_qs.filter(report_period=target_period).exists():
+            yoy_pct = round((total_arrivals - prior_total) / prior_total * 100, 1)
+
+        return {
+            'total_arrivals': total_arrivals,
+            'guesthouse_arrivals': guesthouse_arrivals,
+            'guesthouse_share_pct': round(gh_share * 100, 1),
+            'yoy_growth_pct': yoy_pct,
+            'seasonal_ratio': round(seasonal_ratio, 3),
+            'source': gh_source,
+            'has_data': True,
+        }
 
     # -----------------------------------------------------------------
     # Backfill helper

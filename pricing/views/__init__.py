@@ -11,6 +11,7 @@ from .mixins import (
     PropertyMixin,
     PricingManagementMixin,
     SettingsMixin,
+    ModelCrudMixin,
 )
 
 # Core views
@@ -33,6 +34,7 @@ from .pricing import (
     ItineraryQuoteAPIView,
     AgentRatesView,
     AgentRateCardView,
+    AgentRateCardPDFView,
     DateRateOverrideCalendarView,
     parity_data_ajax,
     update_room,
@@ -49,6 +51,7 @@ from .analytics import (
     DemandIndexAjaxView,
     BookingTrendsView,
     booking_trends_data_ajax,
+    BookingOriginMatrixView,
 )
 
 # Forecast views
@@ -147,4 +150,14 @@ from .admin_views import (
     CompetitorDeleteView,
     MarketPositionUpdateView,
     MarketPositionRecalculateView,
+)
+
+# Revenue management views
+from .revenue_views import (
+    ManageBudgetView,
+    BudgetSaveView,
+    ManageGroupsView,
+    GroupAllotmentCreateView,
+    GroupAllotmentUpdateView,
+    GroupAllotmentDeleteView,
 )

@@ -155,17 +155,21 @@ class PlatformOrganizationsView(SuperuserRequiredMixin, TemplateView):
 
 
 class PlatformOrgDetailView(SuperuserRequiredMixin, TemplateView):
-    """Detail view for a single organization and its properties."""
+    """Detail view for a single organization — properties + user management."""
     template_name = 'platform_data/org_detail.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        from pricing.models import Organization
+        context['active_section'] = 'organizations'
+        from pricing.models import Organization, UserOrganizationRole
         from pricing.models.analytics import FileImport, Reservation
-        
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
         org = get_object_or_404(Organization, pk=self.kwargs['pk'], is_active=True)
         context['org'] = org
-        
+
+        # Properties
         props = org.properties.filter(is_active=True)
         prop_list = []
         for prop in props:
@@ -173,14 +177,188 @@ class PlatformOrgDetailView(SuperuserRequiredMixin, TemplateView):
                 hotel=prop, status__in=['completed', 'completed_with_errors']
             ).order_by('-created_at').first()
             res_count = Reservation.objects.filter(hotel=prop).count()
-            
+
             prop_list.append({
                 'property': prop,
                 'reservation_count': res_count,
                 'last_import': last_import,
             })
         context['properties'] = prop_list
+
+        # User roles for this org
+        context['user_roles'] = UserOrganizationRole.objects.filter(
+            organization=org
+        ).select_related('user').order_by('-is_active', 'user__username')
+
+        context['role_choices'] = UserOrganizationRole.ROLE_CHOICES
+
+        # Available users (not already assigned to this org)
+        assigned_user_ids = UserOrganizationRole.objects.filter(
+            organization=org
+        ).values_list('user_id', flat=True)
+        context['available_users'] = User.objects.filter(
+            is_active=True
+        ).exclude(
+            id__in=assigned_user_ids
+        ).order_by('username')
+
         return context
+
+
+class PlatformOrgUserAddView(SuperuserRequiredMixin, View):
+    """POST: Add a user to an organization with a role."""
+
+    def post(self, request, pk):
+        from pricing.models import Organization, UserOrganizationRole
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        org = get_object_or_404(Organization, pk=pk, is_active=True)
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return error_response('Invalid JSON')
+
+        user_id = data.get('user_id')
+        role = data.get('role', 'viewer')
+
+        if not user_id:
+            return error_response('User is required')
+
+        try:
+            user = User.objects.get(pk=user_id, is_active=True)
+        except User.DoesNotExist:
+            return error_response('User not found')
+
+        valid_roles = [r[0] for r in UserOrganizationRole.ROLE_CHOICES]
+        if role not in valid_roles:
+            return error_response(f'Invalid role. Must be one of: {", ".join(valid_roles)}')
+
+        obj, created = UserOrganizationRole.objects.update_or_create(
+            user=user, organization=org,
+            defaults={'role': role, 'is_active': True}
+        )
+
+        return success_response({
+            'id': obj.id,
+            'username': user.username,
+            'email': user.email,
+            'role': obj.role,
+            'is_active': obj.is_active,
+            'created': created,
+        }, message=f'{"Added" if created else "Updated"} {user.username} as {obj.get_role_display()}')
+
+
+class PlatformOrgUserUpdateView(SuperuserRequiredMixin, View):
+    """POST: Update a user's role in an organization."""
+
+    def post(self, request, pk, role_id):
+        from pricing.models import UserOrganizationRole
+
+        role_obj = get_object_or_404(UserOrganizationRole, pk=role_id, organization_id=pk)
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return error_response('Invalid JSON')
+
+        new_role = data.get('role')
+        is_active = data.get('is_active')
+
+        if new_role is not None:
+            valid_roles = [r[0] for r in UserOrganizationRole.ROLE_CHOICES]
+            if new_role not in valid_roles:
+                return error_response(f'Invalid role')
+            role_obj.role = new_role
+
+        if is_active is not None:
+            role_obj.is_active = bool(is_active)
+
+        role_obj.save()
+
+        return success_response({
+            'id': role_obj.id,
+            'role': role_obj.role,
+            'is_active': role_obj.is_active,
+        }, message=f'Updated {role_obj.user.username}')
+
+
+class PlatformOrgUserRemoveView(SuperuserRequiredMixin, View):
+    """POST: Remove a user from an organization."""
+
+    def post(self, request, pk, role_id):
+        from pricing.models import UserOrganizationRole
+
+        role_obj = get_object_or_404(UserOrganizationRole, pk=role_id, organization_id=pk)
+        username = role_obj.user.username
+        role_obj.delete()
+
+        return success_response(message=f'Removed {username} from organization')
+
+
+class PlatformUserCreateView(SuperuserRequiredMixin, View):
+    """POST: Create a new Django user and optionally assign to an organization."""
+
+    def post(self, request):
+        from django.contrib.auth import get_user_model
+        from pricing.models import UserOrganizationRole
+        User = get_user_model()
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return error_response('Invalid JSON')
+
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
+        first_name = data.get('first_name', '').strip()
+        last_name = data.get('last_name', '').strip()
+        org_id = data.get('organization_id')
+        role = data.get('role', 'viewer')
+
+        if not username:
+            return error_response('Username is required')
+        if not password:
+            return error_response('Password is required')
+        if len(password) < 6:
+            return error_response('Password must be at least 6 characters')
+
+        if User.objects.filter(username=username).exists():
+            return error_response(f'Username "{username}" already exists')
+        if email and User.objects.filter(email=email).exists():
+            return error_response(f'Email "{email}" is already in use')
+
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+        )
+
+        # Assign to organization if provided
+        org_role = None
+        if org_id:
+            from pricing.models import Organization
+            try:
+                org = Organization.objects.get(pk=org_id, is_active=True)
+                valid_roles = [r[0] for r in UserOrganizationRole.ROLE_CHOICES]
+                if role not in valid_roles:
+                    role = 'viewer'
+                org_role = UserOrganizationRole.objects.create(
+                    user=user, organization=org, role=role, is_active=True
+                )
+            except Organization.DoesNotExist:
+                pass
+
+        return success_response({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role_id': org_role.id if org_role else None,
+        }, message=f'Created user "{username}"' + (f' as {org_role.get_role_display()}' if org_role else ''))
 
 
 # =============================================================================

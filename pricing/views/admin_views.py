@@ -19,11 +19,11 @@ from django.db import transaction
 from pricing.models import (
     Organization, Property, Season, RoomType, RatePlan, Channel,
     TravelAgent, RateModifier, SeasonModifierOverride,
-    ModifierTemplate, PropertyModifier, ModifierRule,
+    PropertyModifier, ModifierRule,
 )
 from pricing.services import PricingService
 
-from .mixins import PricingManagementMixin, PropertyMixin, SettingsMixin
+from .mixins import PricingManagementMixin, PropertyMixin, SettingsMixin, ModelCrudMixin
 
 logger = logging.getLogger(__name__)
 
@@ -598,22 +598,11 @@ class SeasonUpdateView(PricingManagementMixin, View):
         return self.success_response(message=f'Season "{season.name}" updated successfully')
 
 
-class SeasonDeleteView(PricingManagementMixin, View):
+class SeasonDeleteView(ModelCrudMixin):
     """API: Delete a season."""
-    
-    def post(self, request, *args, **kwargs):
-        from pricing.models import Season
-        
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-        
-        season_id = kwargs.get('pk')
-        season = get_object_or_404(Season, pk=season_id, hotel=hotel)
-        name = season.name
-        season.delete()
-        
-        return self.success_response(message=f'Season "{name}" deleted successfully')
+    model_class = Season
+    model_label = 'Season'
+    post = ModelCrudMixin.delete_instance
 
 
 # =============================================================================
@@ -754,22 +743,11 @@ class RoomTypeUpdateView(PricingManagementMixin, View):
         return self.success_response(message=f'Room type "{room_type.name}" updated successfully')
 
 
-class RoomTypeDeleteView(PricingManagementMixin, View):
+class RoomTypeDeleteView(ModelCrudMixin):
     """API: Delete a room type."""
-    
-    def post(self, request, *args, **kwargs):
-        from pricing.models import RoomType
-        
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-        
-        room_id = kwargs.get('pk')
-        room_type = get_object_or_404(RoomType, pk=room_id, hotel=hotel)
-        name = room_type.name
-        room_type.delete()
-        
-        return self.success_response(message=f'Room type "{name}" deleted successfully')
+    model_class = RoomType
+    model_label = 'Room type'
+    post = ModelCrudMixin.delete_instance
 
 
 class RoomTypeReorderView(PricingManagementMixin, View):
@@ -896,18 +874,11 @@ class RatePlanUpdateView(PricingManagementMixin, View):
         return self.success_response(message=f'Rate plan "{rate_plan.name}" updated successfully')
 
 
-class RatePlanDeleteView(PricingManagementMixin, View):
+class RatePlanDeleteView(ModelCrudMixin):
     """API: Delete a rate plan."""
-    
-    def post(self, request, *args, **kwargs):
-        from pricing.models import RatePlan
-        
-        plan_id = kwargs.get('pk')
-        rate_plan = get_object_or_404(RatePlan, pk=plan_id)
-        name = rate_plan.name
-        rate_plan.delete()
-        
-        return self.success_response(message=f'Rate plan "{name}" deleted successfully')
+    model_class = RatePlan
+    model_label = 'Rate plan'
+    post = ModelCrudMixin.delete_instance
 
 
 # =============================================================================
@@ -1035,18 +1006,11 @@ class ChannelUpdateView(PricingManagementMixin, View):
         return self.success_response(message=f'Channel "{channel.name}" updated successfully')
 
 
-class ChannelDeleteView(PricingManagementMixin, View):
+class ChannelDeleteView(ModelCrudMixin):
     """API: Delete a channel."""
-    
-    def post(self, request, *args, **kwargs):
-        from pricing.models import Channel
-        
-        channel_id = kwargs.get('pk')
-        channel = get_object_or_404(Channel, pk=channel_id)
-        name = channel.name
-        channel.delete()
-        
-        return self.success_response(message=f'Channel "{name}" deleted successfully')
+    model_class = Channel
+    model_label = 'Channel'
+    post = ModelCrudMixin.delete_instance
 
 
 class ChannelNormalizeDistributionView(PricingManagementMixin, View):
@@ -2235,22 +2199,17 @@ class ReservationUpdateView(PricingManagementMixin, View):
         return self.success_response(message='Reservation updated')
 
 
-class ReservationDeleteView(PricingManagementMixin, View):
+class ReservationDeleteView(ModelCrudMixin):
     """POST: Delete a reservation."""
+    model_label = 'Reservation'
+    hotel_field = 'hotel'
 
-    def post(self, request, *args, **kwargs):
+    @property
+    def model_class(self):
         from pricing.models import Reservation
+        return Reservation
 
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-
-        pk = kwargs.get('pk')
-        res = get_object_or_404(Reservation, pk=pk, hotel=hotel)
-        conf = res.confirmation_no
-        res.delete()
-
-        return self.success_response(message=f'Reservation {conf} deleted')
+    post = ModelCrudMixin.delete_instance
 
 
 class ReservationBulkDeleteView(PricingManagementMixin, View):
@@ -2490,18 +2449,12 @@ class TravelAgentUpdateView(PricingManagementMixin, View):
         )
 
 
-class TravelAgentDeleteView(PricingManagementMixin, View):
+class TravelAgentDeleteView(ModelCrudMixin):
     """API: Delete a travel agent."""
-
-    def post(self, request, *args, **kwargs):
-        agent_id = kwargs.get('pk')
-        agent = get_object_or_404(TravelAgent, pk=agent_id)
-        name = agent.name
-        agent.delete()
-
-        return self.success_response(
-            message=f'Agent "{name}" deleted successfully'
-        )
+    model_class = TravelAgent
+    model_label = 'Agent'
+    hotel_field = 'property'
+    post = ModelCrudMixin.delete_instance
 
 
 class ManageCompetitiveView(ManageBaseMixin, TemplateView):
@@ -2608,16 +2561,16 @@ class CompetitorUpdateView(PricingManagementMixin, View):
         return self.success_response(message='Competitor updated')
 
 
-class CompetitorDeleteView(PricingManagementMixin, View):
+class CompetitorDeleteView(ModelCrudMixin):
     """API: Delete a competitor."""
+    model_label = 'Competitor'
 
-    def post(self, request, *args, **kwargs):
+    @property
+    def model_class(self):
         from pricing.models import CompetitiveSet
-        comp_id = kwargs.get('pk')
-        comp = get_object_or_404(CompetitiveSet, pk=comp_id)
-        name = comp.competitor_name
-        comp.delete()
-        return self.success_response(message=f'Competitor "{name}" deleted')
+        return CompetitiveSet
+
+    post = ModelCrudMixin.delete_instance
 
 
 class MarketPositionUpdateView(PricingManagementMixin, View):

@@ -109,12 +109,35 @@ class RevenueForecastService:
         return monthly_data
     
     def _calculate_season_revenue(self, season, total_rooms):
-        """Calculate revenue for a specific season."""
+        """Calculate revenue for a specific season.
+
+        When reservation data exists for the hotel, blends the static
+        ``season.expected_occupancy`` with actual OTB (On The Books)
+        occupancy from ``PickupAnalysisService``.  The blend gives 60 %
+        weight to OTB data and 40 % to the season default so that near-term
+        months (where OTB is meaningful) are grounded in reality while
+        far-out months still lean on the seasonal assumption.
+        """
         from pricing.models import Channel
-        
+
         days = (season.end_date - season.start_date).days + 1
         available_room_nights = total_rooms * days
+
+        # Start with the season's static expected occupancy
         occupancy_rate = season.expected_occupancy / Decimal('100.00')
+
+        # Blend in pickup OTB when we have reservation data
+        if self.hotel:
+            try:
+                pickup_svc = PickupAnalysisService(property=self.hotel)
+                otb = pickup_svc.get_otb_for_month(season.start_date)
+                if otb and otb['total_available'] > 0:
+                    otb_occ = Decimal(str(otb['otb_occupancy'])) / Decimal('100.00')
+                    # Blend: 60% OTB, 40% season default
+                    occupancy_rate = otb_occ * Decimal('0.6') + occupancy_rate * Decimal('0.4')
+            except Exception:
+                pass  # Fall back to season.expected_occupancy
+
         occupied_room_nights = int(available_room_nights * occupancy_rate)
         
         # Channels are shared (no hotel filter)
@@ -176,7 +199,7 @@ class RevenueForecastService:
     def _calculate_channel_adr(self, channel, season):
         """Calculate weighted average ADR for a channel in a season."""
         from pricing.models import RatePlan, RateModifier
-        from pricing.services import calculate_final_rate_with_modifier
+        from pricing.services import calculate_final_rate
         
         room_types = self._get_room_types()
         rate_plans = RatePlan.objects.filter(hotel=self.hotel)
@@ -196,7 +219,7 @@ class RevenueForecastService:
                     for modifier in modifiers:
                         season_discount = modifier.get_discount_for_season(season)
                         
-                        final_rate, _ = calculate_final_rate_with_modifier(
+                        final_rate, _ = calculate_final_rate(
                             room_base_rate=room.get_effective_base_rate(),
                             season_index=season.season_index,
                             meal_supplement=rate_plan.meal_supplement,
@@ -208,7 +231,7 @@ class RevenueForecastService:
                         total_rate += final_rate
                         count += 1
                 else:
-                    final_rate, _ = calculate_final_rate_with_modifier(
+                    final_rate, _ = calculate_final_rate(
                         room_base_rate=room.get_effective_base_rate(),
                         season_index=season.season_index,
                         meal_supplement=rate_plan.meal_supplement,
@@ -379,8 +402,12 @@ class RevenueForecastService:
     def validate_channel_distribution(self):
         """Validate that channel distribution shares equal 100%."""
         from pricing.models import Channel
-        
-        total = Channel.objects.aggregate(
+        from django.db.models import Sum
+
+        qs = Channel.objects.all()
+        if self.hotel:
+            qs = qs.filter(hotel=self.hotel)
+        total = qs.aggregate(
             total=Sum('distribution_share_percent')
         )['total'] or Decimal('0.00')
         
@@ -506,15 +533,19 @@ class PickupAnalysisService:
     def get_otb_for_month(self, target_month):
         """
         Calculate OTB (On The Books) for a specific month from Reservation data.
-        
+
+        Room-nights are counted per calendar day using ``build_daily_occupancy_map``
+        so that a stay spanning two months is correctly split between them.
+
         Args:
             target_month: First day of target month (date)
-        
+
         Returns:
             Dict with OTB metrics
         """
         from django.db.models import Sum, Count
         from pricing.models import Reservation
+        from pricing.utils import build_daily_occupancy_map
 
         # Calculate month boundaries
         year = target_month.year
@@ -522,40 +553,51 @@ class PickupAnalysisService:
         _, last_day = calendar.monthrange(year, month)
         month_start = date(year, month, 1)
         month_end = date(year, month, last_day)
-        
-        # Get confirmed reservations for this month
+
+        # Room-nights via daily occupancy map (handles cross-month stays)
+        if self.property:
+            occ_map = build_daily_occupancy_map(self.property, month_start, month_end)
+            otb_room_nights = sum(occ_map.values())
+        else:
+            # Fallback for no-property mode: use arrival-based sum
+            stats_rn = self._get_reservations_queryset().filter(
+                arrival_date__gte=month_start,
+                arrival_date__lte=month_end,
+                status__in=Reservation.ACTIVE_STATUSES,
+            ).aggregate(room_nights=Sum('nights'))
+            otb_room_nights = stats_rn['room_nights'] or 0
+
+        # Revenue and reservation count (reservations that overlap this month)
         reservations = self._get_reservations_queryset().filter(
-            arrival_date__gte=month_start,
             arrival_date__lte=month_end,
-            status__in=Reservation.ACTIVE_STATUSES
+            departure_date__gt=month_start,
+            status__in=Reservation.ACTIVE_STATUSES,
         )
-        
+
         stats = reservations.aggregate(
-            room_nights=Sum('nights'),
             revenue=Sum('total_amount'),
             count=Count('id'),
         )
-        
-        otb_room_nights = stats['room_nights'] or 0
+
         otb_revenue = stats['revenue'] or Decimal('0.00')
         otb_reservations = stats['count'] or 0
-        
+
         # Calculate occupancy
         total_rooms = self._get_total_rooms()
         total_available = total_rooms * last_day
-        
+
         otb_occupancy = Decimal('0.00')
         if total_available > 0:
             otb_occupancy = (
                 Decimal(str(otb_room_nights)) / Decimal(str(total_available)) * 100
             ).quantize(Decimal('0.1'))
-        
+
         # Calculate days out
         today = date.today()
         days_out = (month_start - today).days
         if days_out < 0:
             days_out = 0
-        
+
         return {
             'target_month': target_month,
             'month_name': target_month.strftime('%B %Y'),
@@ -574,59 +616,89 @@ class PickupAnalysisService:
     
     def calculate_booking_velocity(self, target_month, lookback_days=14):
         """
-        Calculate booking velocity (bookings per day) for a target month.
-        
+        Calculate NET booking velocity (new bookings minus cancellations per day)
+        for a target month.
+
+        With a ~45% cancellation rate, gross-only velocity dramatically
+        overstates actual pickup. This nets out lost room-nights so the
+        velocity-based forecast leg reflects reality.
+
         Args:
             target_month: First day of target month
             lookback_days: Number of days to look back for trend
-        
+
         Returns:
-            Dict with velocity metrics
+            Dict with velocity metrics (net of cancellations)
         """
         from django.db.models import Sum, Count
         from pricing.models import Reservation
 
         today = date.today()
         lookback_start = today - timedelta(days=lookback_days)
-        
+
         # Calculate month boundaries
         year = target_month.year
         month = target_month.month
         _, last_day = calendar.monthrange(year, month)
         month_start = date(year, month, 1)
         month_end = date(year, month, last_day)
-        
-        # Get bookings created in lookback period for target month
-        recent_bookings = self._get_reservations_queryset().filter(
-            booking_date__gte=lookback_start,
-            booking_date__lte=today,
+
+        base_qs = self._get_reservations_queryset().filter(
             arrival_date__gte=month_start,
             arrival_date__lte=month_end,
-            status__in=Reservation.ACTIVE_STATUSES
         )
-        
-        stats = recent_bookings.aggregate(
+
+        # New/active bookings created in lookback period
+        new_bookings = base_qs.filter(
+            booking_date__gte=lookback_start,
+            booking_date__lte=today,
+            status__in=Reservation.ACTIVE_STATUSES,
+        )
+        new_stats = new_bookings.aggregate(
             room_nights=Sum('nights'),
             revenue=Sum('total_amount'),
             count=Count('id'),
         )
-        
-        room_nights = stats['room_nights'] or 0
-        revenue = stats['revenue'] or Decimal('0.00')
-        bookings = stats['count'] or 0
-        
+
+        # Cancellations that occurred in the lookback period (for this target month)
+        lost_bookings = base_qs.filter(
+            updated_at__date__gte=lookback_start,
+            updated_at__date__lte=today,
+            status__in=Reservation.LOST_STATUSES,
+        )
+        lost_stats = lost_bookings.aggregate(
+            room_nights=Sum('nights'),
+            revenue=Sum('total_amount'),
+            count=Count('id'),
+        )
+
+        new_nights = new_stats['room_nights'] or 0
+        new_revenue = new_stats['revenue'] or Decimal('0.00')
+        new_count = new_stats['count'] or 0
+
+        lost_nights = lost_stats['room_nights'] or 0
+        lost_revenue = lost_stats['revenue'] or Decimal('0.00')
+        lost_count = lost_stats['count'] or 0
+
+        # Net pickup = new minus lost
+        net_nights = max(new_nights - lost_nights, 0)
+        net_revenue = max(new_revenue - lost_revenue, Decimal('0.00'))
+        net_count = max(new_count - lost_count, 0)
+
         # Calculate daily averages
         days = lookback_days or 1
-        
+
         return {
             'target_month': target_month,
             'lookback_days': lookback_days,
-            'total_bookings': bookings,
-            'total_room_nights': room_nights,
-            'total_revenue': float(revenue),
-            'bookings_per_day': round(bookings / days, 2),
-            'room_nights_per_day': round(room_nights / days, 2),
-            'revenue_per_day': float((revenue / days).quantize(Decimal('0.01'))),
+            'total_bookings': net_count,
+            'total_room_nights': net_nights,
+            'total_revenue': float(net_revenue),
+            'bookings_per_day': round(net_count / days, 2),
+            'room_nights_per_day': round(net_nights / days, 2),
+            'revenue_per_day': float((net_revenue / days).quantize(Decimal('0.01'))),
+            'gross_new_nights': new_nights,
+            'lost_nights': lost_nights,
         }
     
     def get_stly_otb(self, target_month):
@@ -843,22 +915,10 @@ class PickupAnalysisService:
         if stly_room_nights > 0:
             vs_stly = round(pace_variance / stly_room_nights * 100, 1)
         
-        # Get scenario occupancy from Season expected_occupancy or OccupancyForecast
+        # Get scenario occupancy from Season expected_occupancy
         scenario_occupancy = forecast_occupancy  # Default to forecast
         if season and hasattr(season, 'expected_occupancy') and season.expected_occupancy:
             scenario_occupancy = float(season.expected_occupancy)
-        else:
-            # Try OccupancyForecast
-            try:
-                from pricing.models import OccupancyForecast
-                occ_qs = OccupancyForecast.objects.filter(target_month=target_month)
-                if self.property:
-                    occ_qs = occ_qs.filter(hotel=self.property)
-                occ_forecast = occ_qs.first()
-                if occ_forecast and occ_forecast.scenario_occupancy:
-                    scenario_occupancy = float(occ_forecast.scenario_occupancy)
-            except:
-                pass
         
         # Determine confidence level (as percentage and label)
         if days_out <= 14:

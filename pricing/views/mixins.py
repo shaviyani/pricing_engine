@@ -4,36 +4,64 @@ View mixins: OrganizationMixin, PropertyMixin, PricingManagementMixin, SettingsM
 
 import json
 import logging
+from datetime import datetime
 from decimal import Decimal
+from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 from django.views.generic import TemplateView, View
 from django.http import JsonResponse
 
-from pricing.models import Organization, Property, Season, RoomType, RatePlan, Channel, PricingMatrixVersion
+from pricing.models import Organization, Property, Season, RoomType, RatePlan, Channel, PricingMatrixVersion, UserOrganizationRole
 
 logger = logging.getLogger(__name__)
 
 class OrganizationMixin:
     """
     Mixin to get organization from URL kwargs.
-    
+    Enforces that the logged-in user has a role in the organization.
+    Superusers bypass the check.
+
     Adds to context:
         - organization: Organization instance
         - org: Shorthand alias
+        - user_org_role: UserOrganizationRole instance (or None for superusers)
     """
-    
+
+    _cached_org = None
+    _cached_user_role = None
+
     def get_organization(self):
-        """Get organization by code from URL."""
+        """Get organization by code from URL, with access check."""
+        if self._cached_org:
+            return self._cached_org
         org_code = self.kwargs.get('org_code')
-        return get_object_or_404(
+        org = get_object_or_404(
             Organization.objects.filter(is_active=True),
             code=org_code
         )
-    
+        # Superusers bypass org access check
+        user = self.request.user
+        if not user.is_superuser:
+            role = UserOrganizationRole.objects.filter(
+                user=user, organization=org, is_active=True
+            ).first()
+            if not role:
+                raise PermissionDenied("You do not have access to this organization.")
+            self._cached_user_role = role
+        self._cached_org = org
+        return org
+
+    def get_user_org_role(self):
+        """Return the cached UserOrganizationRole for the current user/org."""
+        if not self._cached_org:
+            self.get_organization()
+        return self._cached_user_role
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['organization'] = self.get_organization()
         context['org'] = context['organization']
+        context['user_org_role'] = self.get_user_org_role()
         return context
 
 
@@ -105,18 +133,26 @@ class PricingManagementMixin:
     """Base mixin for pricing management views."""
     
     def get_hotel(self, request):
-        """Get current hotel from URL kwargs."""
+        """Get current hotel from URL kwargs, with org access check."""
         from pricing.models import Property
         org_code = self.kwargs.get('org_code')
         prop_code = self.kwargs.get('prop_code')
-        
+
         if org_code and prop_code:
-            return get_object_or_404(
+            prop = get_object_or_404(
                 Property.objects.select_related('organization'),
                 organization__code=org_code,
                 code=prop_code,
                 is_active=True
             )
+            user = request.user
+            if not user.is_superuser:
+                has_role = UserOrganizationRole.objects.filter(
+                    user=user, organization=prop.organization, is_active=True
+                ).exists()
+                if not has_role:
+                    raise PermissionDenied("You do not have access to this organization.")
+            return prop
         return None
     
     def json_response(self, data, status=200):
@@ -156,25 +192,97 @@ class PricingManagementMixin:
 
 
 # =============================================================================
+# CRUD MIXIN (DRYs up Create / Update / Delete API views)
+# =============================================================================
+
+class ModelCrudMixin(PricingManagementMixin, View):
+    """
+    Declarative CRUD mixin for JSON API views.
+
+    Subclasses set class attributes to configure behavior:
+
+        model_class = Season                  # Django model
+        model_label = 'Season'                # Human-readable name
+        hotel_field = 'hotel'                 # FK field name pointing to Property
+        lookup_field = 'pk'                   # URL kwarg used for update/delete
+
+    **Delete views** only need the above — inherit and you're done.
+
+    **Create/Update views** override ``get_create_kwargs(data, hotel)``
+    or ``apply_updates(instance, data)`` respectively.
+    """
+
+    model_class = None
+    model_label = ''
+    hotel_field = 'hotel'
+    lookup_field = 'pk'
+
+    # -- helpers --------------------------------------------------------
+
+    def _parse_body(self, request):
+        """Parse JSON body; returns (data_dict, error_response)."""
+        try:
+            return json.loads(request.body), None
+        except json.JSONDecodeError:
+            return None, self.error_response('Invalid JSON')
+
+    def _get_instance(self, hotel):
+        """Fetch a model instance by lookup_field, scoped to hotel."""
+        pk = self.kwargs.get(self.lookup_field)
+        return get_object_or_404(
+            self.model_class, pk=pk, **{self.hotel_field: hotel}
+        )
+
+    def _resolve_version(self, data, hotel):
+        """Resolve PricingMatrixVersion from data or fallback to published."""
+        vid = data.get('version_id')
+        if vid:
+            return get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
+        return PricingMatrixVersion.get_published(hotel)
+
+    # -- Delete (works out-of-the-box) ----------------------------------
+
+    def delete_instance(self, request, *args, **kwargs):
+        """Generic delete handler. Wire ``post = delete_instance`` in subclass."""
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+        instance = self._get_instance(hotel)
+        name = str(instance)
+        instance.delete()
+        return self.success_response(
+            message=f'{self.model_label} "{name}" deleted successfully'
+        )
+
+
+# =============================================================================
 # PRICING MANAGEMENT DASHBOARD
 # =============================================================================
 class SettingsMixin:
     """Base mixin for settings views."""
-    
+
     def get_organization(self):
-        """Get organization from URL kwargs."""
+        """Get organization from URL kwargs, with access check."""
         from pricing.models import Organization
         org_code = self.kwargs.get('org_code')
-        return get_object_or_404(Organization, code=org_code, is_active=True)
-    
+        org = get_object_or_404(Organization, code=org_code, is_active=True)
+        user = self.request.user
+        if not user.is_superuser:
+            has_role = UserOrganizationRole.objects.filter(
+                user=user, organization=org, is_active=True
+            ).exists()
+            if not has_role:
+                raise PermissionDenied("You do not have access to this organization.")
+        return org
+
     def get_property(self):
         """Get property from URL kwargs."""
         from pricing.models import Property
-        org_code = self.kwargs.get('org_code')
+        org = self.get_organization()  # includes access check
         prop_code = self.kwargs.get('prop_code')
         return get_object_or_404(
             Property.objects.select_related('organization'),
-            organization__code=org_code,
+            organization=org,
             code=prop_code,
             is_active=True
         )

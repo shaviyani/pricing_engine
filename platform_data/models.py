@@ -227,6 +227,45 @@ class MarketEvent(models.Model):
 
 
 # =============================================================================
+# FACILITY DISTRIBUTION
+# =============================================================================
+
+class FacilityDistribution(models.Model):
+    """
+    Arrival distribution by accommodation type from MoT daily reports.
+
+    Stores: Resorts, Hotels, Guesthouses, Safari Vessels
+    with their arrival counts and market share per period.
+    """
+    country_code = models.CharField(max_length=2, db_index=True)
+    report_period = models.DateField(
+        help_text="First day of reporting period"
+    )
+    facility_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('resorts', 'Resorts'),
+            ('hotels', 'Hotels'),
+            ('guesthouses', 'Guesthouses'),
+            ('safari', 'Safari Vessels'),
+        ]
+    )
+    arrivals = models.PositiveIntegerField(default=0)
+    share_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True
+    )
+    source_report = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('country_code', 'report_period', 'facility_type')
+        ordering = ['-report_period', '-arrivals']
+
+    def __str__(self):
+        return f"{self.get_facility_type_display()} {self.report_period}: {self.arrivals}"
+
+
+# =============================================================================
 # PLATFORM FILE IMPORT
 # =============================================================================
 

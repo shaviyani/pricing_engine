@@ -19,8 +19,7 @@ import calendar
 
 from pricing.models import (
     Organization, Property, Season, Channel,
-    Reservation, DailyPickupSnapshot, MonthlyPickupSnapshot,
-    OccupancyForecast,
+    Reservation,
 )
 from pricing.services import RevenueForecastService, PickupAnalysisService, PricingService
 from pricing.services.period_forecast_service import PeriodForecastService
@@ -47,6 +46,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['nav_active'] = 'forecasts'
+        context['nav_sub'] = 'pickup'
         prop = context['property']
 
         from pricing.services import PickupAnalysisService
@@ -55,7 +55,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
         service = PickupAnalysisService(property=prop)
         today = date.today()
         
-        # Check for RESERVATION data (not MonthlyPickupSnapshot)
+        # Check for reservation data
         has_data = Reservation.objects.filter(hotel=prop).exists()
         context['has_data'] = has_data
         
@@ -597,7 +597,7 @@ def revenue_forecast_ajax(request, org_code, prop_code):
         annual_adr = (annual_gross / annual_room_nights) if annual_room_nights > 0 else Decimal('0.00')
         
         # Channel breakdown
-        channels = Channel.objects.filter(hotel=hotel)
+        channels = Channel.objects.filter(hotel=prop)
         channel_data = []
         for channel in channels:
             channel_gross = sum(
@@ -681,7 +681,6 @@ def pickup_summary_ajax(request, org_code, prop_code):
     """
     AJAX endpoint for pickup summary card on dashboard.
     """
-    from pricing.models import MonthlyPickupSnapshot
     from pricing.services import PickupAnalysisService
     
     try:
@@ -690,8 +689,7 @@ def pickup_summary_ajax(request, org_code, prop_code):
         
         service = PickupAnalysisService(property=prop)
 
-        has_data = (MonthlyPickupSnapshot.objects.filter(hotel=prop).exists()
-                    or Reservation.objects.filter(hotel=prop).exists())
+        has_data = Reservation.objects.filter(hotel=prop).exists()
         
         if not has_data:
             html = render_to_string('pricing/partials/pickup_summary.html', {
@@ -816,6 +814,35 @@ def occupancy_calendar_ajax(request, org_code, prop_code):
             }
             current_date += timedelta(days=1)
 
+        # Group allotments overlapping this month
+        try:
+            from pricing.models import GroupAllotment
+            allotments = GroupAllotment.objects.filter(
+                hotel=prop,
+                arrival_date__lte=last_date,
+                departure_date__gt=first_date,
+                status__in=['confirmed', 'tentative'],
+            ).values('group_name', 'arrival_date', 'departure_date',
+                     'rooms_blocked', 'rooms_picked_up', 'status')
+
+            for allot in allotments:
+                cur = max(allot['arrival_date'], first_date)
+                end = min(allot['departure_date'], last_date + timedelta(days=1))
+                while cur < end:
+                    date_str = cur.strftime('%Y-%m-%d')
+                    if date_str in days_data:
+                        if 'allotments' not in days_data[date_str]:
+                            days_data[date_str]['allotments'] = []
+                        days_data[date_str]['allotments'].append({
+                            'name': allot['group_name'],
+                            'rooms': allot['rooms_blocked'],
+                            'picked_up': allot['rooms_picked_up'],
+                            'status': allot['status'],
+                        })
+                    cur += timedelta(days=1)
+        except Exception:
+            pass  # GroupAllotment may not exist yet
+
         # Monthly forecast (optional — shown in header)
         forecast_occupancy = None
         forecast_room_nights = None
@@ -866,6 +893,7 @@ class DemandForecastView(PropertyMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['nav_active'] = 'forecasts'
+        context['nav_sub'] = 'demand_forecast'
         prop = context['property']
 
         has_data = Reservation.objects.filter(hotel=prop).exists()
@@ -882,6 +910,17 @@ class DemandForecastView(PropertyMixin, TemplateView):
             context['bb_ceiling'] = int(mp.bb_ceiling)
         except Exception:
             pass
+
+        # Dynamic cancel rate from booking history
+        context['cancel_rate_pct'] = int(PeriodForecastService.DEFAULT_CANCEL_RATE * 100)
+        if has_data:
+            svc = PeriodForecastService(property=prop)
+            dynamic_rate = svc._calculate_cancel_rate()
+            if dynamic_rate is not None:
+                context['cancel_rate_pct'] = int(dynamic_rate * 100)
+                context['cancel_rate_source'] = 'dynamic'
+            else:
+                context['cancel_rate_source'] = 'default'
 
         return context
 

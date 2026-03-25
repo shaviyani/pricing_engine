@@ -10,7 +10,7 @@ continue to work unchanged:
 from .core import (
     Organization,
     Property,
-    ModifierTemplate,
+    UserOrganizationRole,
     PropertyModifier,
     ModifierRule,
 )
@@ -34,7 +34,6 @@ from .pricing import (
     DynamicPricingBand,
     DynamicPricingMultiplier,
     EventUplift,
-    DynamicPricingSuggestion,
 )
 
 # Analytics: Reservations, guests, imports
@@ -46,13 +45,6 @@ from .analytics import (
     Reservation,
 )
 
-# Forecasts: Pickup snapshots, curves, occupancy forecasts
-from .forecasts import (
-    DailyPickupSnapshot,
-    MonthlyPickupSnapshot,
-    PickupCurve,
-    OccupancyForecast,
-)
 
 # Competitive intelligence
 from .competitive import (
@@ -60,9 +52,17 @@ from .competitive import (
     MarketPosition,
 )
 
+# Revenue management
+from .revenue import (
+    MarketSegment,
+    GroupAllotment,
+    MonthlyBudget,
+    LengthOfStayTier,
+)
+
 __all__ = [
     # Core
-    'Organization', 'Property', 'ModifierTemplate', 'PropertyModifier', 'ModifierRule',
+    'Organization', 'Property', 'UserOrganizationRole', 'PropertyModifier', 'ModifierRule',
     # Pricing
     'PricingMatrixVersion',
     'Season', 'RoomType', 'RatePlan', 'Channel', 'TravelAgent', 'RateModifier',
@@ -70,11 +70,11 @@ __all__ = [
     'DateRateOverride', 'DateRateOverridePeriod',
     'BookingWindowConfig', 'BookingWindowBand',
     'DynamicPricingRule', 'DynamicPricingBand', 'DynamicPricingMultiplier',
-    'EventUplift', 'DynamicPricingSuggestion',
+    'EventUplift',
     # Analytics
     'BookingSource', 'Guest', 'ImportTemplate', 'FileImport', 'Reservation',
-    # Forecasts
-    'DailyPickupSnapshot', 'MonthlyPickupSnapshot', 'PickupCurve', 'OccupancyForecast',
     # Competitive
     'CompetitiveSet', 'MarketPosition',
+    # Revenue management
+    'MarketSegment', 'GroupAllotment', 'MonthlyBudget', 'LengthOfStayTier',
 ]

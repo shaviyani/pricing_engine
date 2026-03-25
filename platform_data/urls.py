@@ -12,7 +12,13 @@ urlpatterns = [
     # Organizations
     path('organizations/', views.PlatformOrganizationsView.as_view(), name='organizations'),
     path('organizations/<int:pk>/', views.PlatformOrgDetailView.as_view(), name='org_detail'),
-    
+
+    # User Management API
+    path('api/users/create/', views.PlatformUserCreateView.as_view(), name='user_create'),
+    path('api/organizations/<int:pk>/users/add/', views.PlatformOrgUserAddView.as_view(), name='org_user_add'),
+    path('api/organizations/<int:pk>/users/<int:role_id>/update/', views.PlatformOrgUserUpdateView.as_view(), name='org_user_update'),
+    path('api/organizations/<int:pk>/users/<int:role_id>/remove/', views.PlatformOrgUserRemoveView.as_view(), name='org_user_remove'),
+
     # Organization API (CRUD)
     path('api/organizations/create/', views.PlatformOrgCreateView.as_view(), name='org_create'),
     path('api/organizations/<int:pk>/update/', views.PlatformOrgUpdateView.as_view(), name='org_update'),
