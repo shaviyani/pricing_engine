@@ -1,0 +1,19 @@
+.chart-container { position: relative; }
+.kpi-card { transition: transform 0.2s; }
+.kpi-card:hover { transform: translateY(-2px); }
+
+/* Color variables for dynamic colors */
+:root {
+    --color-red: #ef4444;
+    --color-orange: #f97316;
+    --color-yellow: #eab308;
+    --color-green: #22c55e;
+    --color-blue: #3b82f6;
+    --color-purple: #a855f7;
+    --color-gray: #9ca3af;
+
+    /* Season type colors */
+    --season-peak: #ef4444;
+    --season-shoulder: #3b82f6;
+    --season-low: #9ca3af;
+}

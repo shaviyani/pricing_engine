@@ -359,9 +359,76 @@ class DynamicPricingService:
         'low': LOW_BANDS,
     }
     
+    @classmethod
+    def _small_property_bands(cls, total_rooms, season_type):
+        """
+        Generate occupancy bands based on room counts for properties ≤10 rooms.
+        Converts room-count thresholds to percentage bands so the DB model
+        stays uniform, but the boundaries align with actual occupancy steps.
+        """
+        # Multiplier curves per season type (same shape as standard bands)
+        # [90+ days, 60-89, 30-59, 7-29, 0-6]
+        curves = {
+            'peak': {
+                'full':     [1.15, 1.18, 1.20, 1.25, 1.30],
+                'near':     [1.05, 1.08, 1.10, 1.12, 1.15],
+                'mid':      [1.00, 1.02, 1.05, 1.05, 1.08],
+                'low':      [0.92, 0.92, 0.95, 0.95, 0.95],
+                'empty':    [0.85, 0.85, 0.88, 0.90, 0.90],
+            },
+            'shoulder': {
+                'full':     [1.10, 1.12, 1.15, 1.18, 1.22],
+                'near':     [1.03, 1.05, 1.08, 1.10, 1.12],
+                'mid':      [0.97, 0.97, 1.00, 1.00, 1.03],
+                'low':      [0.90, 0.90, 0.93, 0.95, 0.95],
+                'empty':    [0.85, 0.85, 0.85, 0.88, 0.88],
+            },
+            'low': {
+                'full':     [1.08, 1.10, 1.12, 1.15, 1.18],
+                'near':     [1.00, 1.02, 1.05, 1.05, 1.08],
+                'mid':      [0.95, 0.95, 0.97, 1.00, 1.00],
+                'low':      [0.88, 0.88, 0.90, 0.92, 0.92],
+                'empty':    [0.80, 0.80, 0.82, 0.85, 0.85],
+            },
+        }
+        c = curves.get(season_type, curves['shoulder'])
+
+        # Build room-count thresholds → percentage boundaries
+        # For 7 rooms: full=7(100%), near=5-6(71-86%), mid=3-4(43-57%), low=1-2(14-29%), empty=0
+        full_rooms = total_rooms
+        near_rooms = max(1, int(total_rooms * 0.70))
+        mid_rooms = max(1, int(total_rooms * 0.40))
+        low_rooms = max(1, int(total_rooms * 0.15))
+
+        def pct(rooms):
+            return round(rooms / total_rooms * 100)
+
+        bands = [
+            (pct(full_rooms), 999, f'{full_rooms}/{total_rooms} rooms — full',       c['full']),
+            (pct(near_rooms), pct(full_rooms), f'{near_rooms}-{full_rooms-1}/{total_rooms} rooms — near full', c['near']),
+            (pct(mid_rooms),  pct(near_rooms), f'{mid_rooms}-{near_rooms-1}/{total_rooms} rooms — mid',       c['mid']),
+            (pct(low_rooms),  pct(mid_rooms),  f'{low_rooms}-{mid_rooms-1}/{total_rooms} rooms — low',        c['low']),
+            (0,               pct(low_rooms),  f'0-{low_rooms-1}/{total_rooms} rooms — empty',                c['empty']),
+        ]
+        return bands
+
+    def _get_band_defs(self, season):
+        """
+        Get appropriate band definitions for a season, using room-count bands
+        for small properties (≤10 rooms) and standard percentage bands for larger ones.
+        """
+        from pricing.models import RoomType
+        total_rooms = RoomType.objects.filter(
+            hotel=self.hotel
+        ).aggregate(total=Sum('number_of_rooms'))['total'] or 0
+
+        if total_rooms <= 10 and total_rooms > 0:
+            return self._small_property_bands(total_rooms, season.season_type)
+        return self.SEASON_BAND_MAP.get(season.season_type, self.SHOULDER_BANDS)
+
     def __init__(self, hotel):
         self.hotel = hotel
-    
+
     def get_multiplier(self, target_date, version=None):
         """
         Get the dynamic pricing multiplier for a specific date.
@@ -534,8 +601,8 @@ class DynamicPricingService:
         
         wb_7, wb_30, wb_60, wb_90 = window_bands
         
-        band_defs = self.SEASON_BAND_MAP.get(season.season_type, self.SHOULDER_BANDS)
-        
+        band_defs = self._get_band_defs(season)
+
         # Check for existing rule
         existing = DynamicPricingRule.objects.filter(
             hotel=self.hotel, season=season
@@ -605,7 +672,7 @@ class DynamicPricingService:
         seasons = Season.objects.filter(hotel=self.hotel, version=version)
 
         for season in seasons:
-            band_defs = self.SEASON_BAND_MAP.get(season.season_type, self.SHOULDER_BANDS)
+            band_defs = self._get_band_defs(season)
 
             # Check if rule already exists
             existing = DynamicPricingRule.objects.filter(

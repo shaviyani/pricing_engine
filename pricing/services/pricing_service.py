@@ -406,7 +406,7 @@ class PricingService:
         }
 
 
-    def get_rate_card(self, target_date, pax=2):
+    def get_rate_card(self, target_date, pax=2, nights=None):
         """
         Get complete rate card for a specific date.
 
@@ -415,13 +415,15 @@ class PricingService:
         2. Room Base Rate × Season Index = Seasonal Rate
         3. Seasonal Rate × Dynamic Multiplier = Dynamic Rate
         4. Dynamic Rate + Date Override = Adjusted Rate
-        5. Adjusted Rate × PropertyModifier stack = Final Room Rate
-        6. Final Room Rate + Meal Supplement = Subtotal
-        7. Subtotal + Service Charge + Tax = Final Guest Rate
+        5. Adjusted Rate × LOS Multiplier = LOS-Adjusted Rate
+        6. LOS-Adjusted Rate × PropertyModifier stack = Final Room Rate
+        7. Final Room Rate + Meal Supplement = Subtotal
+        8. Subtotal + Service Charge + Tax = Final Guest Rate
 
         Args:
             target_date: date to calculate rates for
             pax: number of guests (default 2)
+            nights: int or None, length of stay for LOS tier lookup
 
         Returns:
             dict with:
@@ -494,6 +496,20 @@ class PricingService:
 
         dp_multiplier = Decimal(str(dp_info['combined_multiplier']))
 
+        # LOS pricing multiplier
+        los_info = {'multiplier': 1.0, 'tier_name': None}
+        if nights and nights >= 1:
+            try:
+                from pricing.services.revenue_service import LosService
+                los_svc = LosService(self.hotel, version)
+                los_mult, los_tier = los_svc.get_los_multiplier(
+                    nights, room_type=None, season=season if season else None)
+                los_info = {'multiplier': los_mult, 'tier_name': los_tier}
+            except Exception:
+                pass
+
+        los_multiplier = Decimal(str(los_info['multiplier']))
+
         # Build rate card
         rate_card = []
 
@@ -517,6 +533,13 @@ class PricingService:
             adjusted_dp_rate, override, has_override = apply_override_to_bar(
                 self.hotel, target_date, dp_rate)
 
+            # Apply LOS multiplier (per-room_type if tiers are room-specific)
+            if nights and nights >= 1 and los_multiplier != Decimal('1.00'):
+                los_adjusted_rate = (adjusted_dp_rate * los_multiplier).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP)
+            else:
+                los_adjusted_rate = adjusted_dp_rate
+
             room_channels = []
             for channel in channels:
                 channel_rate_plans = []
@@ -535,7 +558,7 @@ class PricingService:
                     modifiers = self.get_applicable_modifiers(context)
 
                     result = self.calculate_rate(
-                        bar_rate=adjusted_dp_rate,
+                        bar_rate=los_adjusted_rate,
                         modifiers=modifiers,
                         meal_plan_amount=rp.meal_supplement,
                         pax=pax,
@@ -569,6 +592,7 @@ class PricingService:
                 'dp_rate': float(dp_rate),
                 'override_rate': float(adjusted_dp_rate) if has_override else None,
                 'has_override': has_override,
+                'los_adjusted_rate': float(los_adjusted_rate),
                 'season_index': float(effective_season_index),
                 'channels': room_channels,
             })
@@ -582,6 +606,7 @@ class PricingService:
                 'pct': occ_pct,
             },
             'dynamic_pricing': dp_info,
+            'los_pricing': los_info,
             'room_types': rate_card,
             'channels': [{'id': c.id, 'name': c.name} for c in channels],
             'rate_plans': [{'id': rp.id, 'name': rp.name, 'meal_supplement': float(rp.meal_supplement)} for rp in rate_plans],

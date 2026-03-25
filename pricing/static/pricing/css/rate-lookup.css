@@ -1,0 +1,206 @@
+    .rate-header {
+        background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+        color: #fff;
+        padding: 24px 32px;
+        border-radius: 12px;
+        margin-bottom: 24px;
+    }
+    .rate-header h1 { font-size: 22px; font-weight: 700; margin: 0; }
+    .rate-header-meta { display: flex; gap: 24px; margin-top: 12px; flex-wrap: wrap; }
+    .rate-header-meta .meta-item {
+        display: flex; align-items: center; gap: 6px;
+        font-size: 13px; opacity: 0.9;
+    }
+    .rate-header-meta .meta-value { font-weight: 700; font-size: 14px; opacity: 1; }
+
+    /* Date picker bar */
+    .date-bar {
+        display: flex; align-items: center; gap: 16px;
+        padding: 12px 20px; background: #f8fafc;
+        border: 1px solid #e2e8f0; border-radius: 10px;
+        margin-bottom: 24px; flex-wrap: wrap;
+    }
+    .date-bar input[type="date"] {
+        padding: 8px 12px; border: 1px solid #cbd5e1;
+        border-radius: 6px; font-size: 15px; font-weight: 600;
+    }
+    .date-bar .date-nav {
+        background: #fff; border: 1px solid #cbd5e1;
+        border-radius: 6px; padding: 7px 12px; cursor: pointer;
+        font-size: 14px; color: #475569;
+    }
+    .date-bar .date-nav:hover { background: #f1f5f9; border-color: #94a3b8; }
+    .date-bar .today-btn {
+        background: #2563eb; color: #fff; border: none;
+        border-radius: 6px; padding: 8px 16px; cursor: pointer;
+        font-size: 13px; font-weight: 600;
+    }
+    .date-bar .today-btn:hover { background: #1d4ed8; }
+
+    /* Status badges */
+    .season-badge {
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 4px 12px; border-radius: 20px;
+        font-size: 12px; font-weight: 600;
+    }
+    .season-peak { background: #fef2f2; color: #dc2626; }
+    .season-high { background: #fff7ed; color: #ea580c; }
+    .season-shoulder { background: #fffbeb; color: #d97706; }
+    .season-low { background: #f0fdf4; color: #16a34a; }
+
+    .dp-badge {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 4px 10px; border-radius: 6px;
+        font-size: 12px; font-weight: 700;
+    }
+    .dp-up { background: #fef2f2; color: #dc2626; }
+    .dp-neutral { background: #f8fafc; color: #64748b; }
+    .dp-down { background: #f0fdf4; color: #16a34a; }
+
+    .occ-bar {
+        width: 120px; height: 8px; background: #e2e8f0;
+        border-radius: 4px; overflow: hidden; display: inline-block;
+        vertical-align: middle; margin-left: 6px;
+    }
+    .occ-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+
+    /* Rate card table */
+    .rate-card { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .rate-card th {
+        background: #f8fafc; padding: 10px 14px;
+        font-size: 11px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.5px; color: #64748b;
+        border-bottom: 2px solid #e2e8f0;
+        text-align: left; white-space: nowrap;
+        position: sticky; top: 0; z-index: 1;
+    }
+    .rate-card td {
+        padding: 8px 14px; font-size: 14px;
+        border-bottom: 1px solid #f1f5f9;
+        vertical-align: middle;
+    }
+    .rate-card .room-header td {
+        background: #f0f9ff; font-weight: 700; font-size: 14px;
+        color: #1e40af; padding: 12px 14px;
+        border-bottom: 1px solid #bfdbfe;
+    }
+    .rate-card .room-header .room-meta {
+        font-weight: 400; font-size: 12px; color: #64748b;
+        margin-left: 8px;
+    }
+    .rate-card .rate-cell {
+        font-weight: 700; font-size: 15px; color: #1e293b;
+        text-align: right; font-variant-numeric: tabular-nums;
+    }
+    .rate-card .plan-label {
+        padding-left: 28px; color: #475569; font-size: 13px;
+    }
+    .rate-card tr:hover td { background: #fafbfc; }
+    .rate-card .rate-cell.has-warning { color: #dc2626; }
+
+    /* Footer */
+    .rate-footer {
+        margin-top: 20px; padding: 14px 20px;
+        background: #f8fafc; border-radius: 8px;
+        font-size: 12px; color: #64748b;
+        display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    }
+
+    /* Loading overlay */
+    .rate-loading {
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(255,255,255,0.7); z-index: 100;
+        display: none; align-items: center; justify-content: center;
+        font-size: 16px; font-weight: 600; color: #475569;
+    }
+
+    /* Itinerary modal */
+    .itin-overlay {
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.5); z-index: 200;
+        display: none; align-items: center; justify-content: center;
+        padding: 20px;
+    }
+    .itin-overlay.open { display: flex; }
+    .itin-modal {
+        background: #fff; border-radius: 12px; width: 100%; max-width: 900px;
+        max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    }
+    .itin-modal-header {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 18px 24px; border-bottom: 1px solid #e2e8f0;
+    }
+    .itin-modal-header h2 { font-size: 18px; font-weight: 700; color: #1e293b; margin: 0; }
+    .itin-close {
+        background: none; border: none; font-size: 22px; color: #94a3b8;
+        cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 1;
+    }
+    .itin-close:hover { background: #f1f5f9; color: #475569; }
+    .itin-modal-body { padding: 24px; }
+    .itin-form {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 12px; align-items: end;
+    }
+    .itin-form label {
+        font-size: 11px; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.5px; color: #64748b; display: block; margin-bottom: 4px;
+    }
+    .itin-form select, .itin-form input {
+        width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1;
+        border-radius: 6px; font-size: 14px; background: #fff;
+    }
+    .itin-form .itin-btn {
+        background: #2563eb; color: #fff; border: none; border-radius: 6px;
+        padding: 9px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+        white-space: nowrap;
+    }
+    .itin-form .itin-btn:hover { background: #1d4ed8; }
+    .itin-result { margin-top: 20px; }
+    .itin-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .itin-table th {
+        background: #f8fafc; padding: 8px 12px; font-size: 11px;
+        font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+        color: #64748b; border-bottom: 2px solid #e2e8f0; text-align: right;
+    }
+    .itin-table th:first-child { text-align: left; }
+    .itin-table td {
+        padding: 7px 12px; font-size: 13px; border-bottom: 1px solid #f1f5f9;
+        text-align: right; font-variant-numeric: tabular-nums;
+    }
+    .itin-table td:first-child { text-align: left; color: #475569; }
+    .itin-table tr:hover td { background: #fafbfc; }
+    .itin-table .itin-total td {
+        font-weight: 700; font-size: 14px; background: #f0f9ff;
+        border-top: 2px solid #bfdbfe; color: #1e40af;
+    }
+    .itin-summary {
+        margin-top: 16px; padding: 16px 20px; background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+        border-radius: 10px; color: #fff; display: flex;
+        justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+    }
+    .itin-summary .itin-grand {
+        font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums;
+    }
+    .itin-summary .itin-details { font-size: 13px; opacity: 0.9; }
+    .itin-error {
+        padding: 12px 16px; background: #fef2f2; color: #dc2626;
+        border-radius: 8px; font-size: 13px; margin-top: 12px; display: none;
+    }
+    .itin-actions {
+        display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end;
+    }
+    .itin-actions .dl-btn {
+        background: #1e3a5f; color: #fff; border: none; border-radius: 6px;
+        padding: 9px 20px; font-size: 13px; font-weight: 600; cursor: pointer;
+        display: inline-flex; align-items: center; gap: 6px;
+    }
+    .itin-actions .dl-btn:hover { background: #162d4a; }
+
+    /* Print styles */
+    @media print {
+        .date-bar, .today-btn, .date-nav, .no-print { display: none !important; }
+        .rate-header { background: #1e3a5f !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .itin-overlay { display: none !important; }
+        body { font-size: 12px; }
+        .rate-card .rate-cell { font-size: 13px; }
+    }

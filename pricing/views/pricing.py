@@ -1998,7 +1998,7 @@ class RateLookupAPIView(PropertyMixin, View):
     """
     AJAX endpoint for rate card data.
 
-    GET /org/{org_code}/{prop_code}/api/rate-card/?date=2026-03-15
+    GET /org/{org_code}/{prop_code}/api/rate-card/?date=2026-03-15&nights=3
     """
 
     def get(self, request, *args, **kwargs):
@@ -2013,8 +2013,11 @@ class RateLookupAPIView(PropertyMixin, View):
         else:
             target_date = date.today()
 
+        nights = request.GET.get('nights')
+        nights = int(nights) if nights and nights.isdigit() and int(nights) >= 1 else None
+
         service = PricingService(prop)
-        rate_card = service.get_rate_card(target_date)
+        rate_card = service.get_rate_card(target_date, nights=nights)
 
         return JsonResponse({'success': True, 'data': rate_card})
 
@@ -2070,7 +2073,7 @@ class ItineraryQuoteAPIView(PropertyMixin, View):
 
         current = checkin
         while current < checkout:
-            card = service.get_rate_card(current, pax=pax)
+            card = service.get_rate_card(current, pax=pax, nights=num_nights)
 
             # Find matching room type
             room_data = None
