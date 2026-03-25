@@ -85,7 +85,6 @@
                             <div class="nav-dropdown-menu hidden absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
                                 <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'matrix' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Pricing Matrix</a>
                                 <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'override_calendar' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Override Calendar</a>
-                                <a href="{% url 'pricing:pricing_matrix_channel' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'channel_matrix' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Channel Matrix</a>
                             </div>
                         </div>
 
@@ -98,7 +97,6 @@
                             </button>
                             <div class="nav-dropdown-menu hidden absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
                                 <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'booking_analysis' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Booking Analysis</a>
-                                <a href="{% url 'pricing:booking_trends' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'booking_trends' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Booking Trends</a>
                                 <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'pickup' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Pickup & Forecast</a>
                                 <a href="{% url 'pricing:demand_forecast' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'demand_forecast' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Demand Forecast</a>
                                 <a href="{% url 'pricing:booking_origin_matrix' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'booking_origin' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Booking Origin</a>

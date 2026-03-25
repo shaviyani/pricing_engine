@@ -1,269 +1,12 @@
 {% extends "pricing/base.html" %}
 {% load humanize %}
 {% load pricing_filters %}
+{% load static %}
 
 {% block title %}Pricing Matrix - {{ hotel.name }}{% endblock %}
 
 {% block extra_css %}
-<style>
-    /* KPI Cards */
-    .kpi-card { transition: transform 0.2s, box-shadow 0.2s; }
-    .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
-    
-    /* Matrix Table */
-    .matrix-container {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
-    
-    .matrix-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-        min-width: 800px;
-    }
-    
-    .matrix-table thead th {
-        background: #f9fafb;
-        padding: 12px 8px;
-        text-align: center;
-        font-weight: 600;
-        color: #374151;
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        border-bottom: 2px solid #e5e7eb;
-    }
-    
-    .matrix-table thead th.corner {
-        position: sticky;
-        left: 0;
-        z-index: 20;
-        background: #f9fafb;
-        text-align: left;
-        min-width: 240px;
-        padding-left: 16px;
-    }
-    
-    .season-header { min-width: 110px; }
-    .season-name { font-weight: 700; color: #111827; font-size: 12px; }
-    .season-dates { font-size: 10px; color: #6b7280; font-weight: 400; margin-top: 2px; }
-    .season-index { 
-        font-size: 10px; 
-        color: #3b82f6; 
-        font-weight: 600; 
-        margin-top: 2px;
-        background: #eff6ff;
-        padding: 2px 6px;
-        border-radius: 4px;
-        display: inline-block;
-    }
-    
-    .matrix-table tbody td {
-        padding: 10px 8px;
-        vertical-align: middle;
-        text-align: center;
-        border-bottom: 1px solid #f3f4f6;
-    }
-    
-    /* Channel Header Row (expandable) */
-    .channel-header-row td {
-        background: #ffffff !important;
-        color: #111827;
-        font-weight: 600;
-        font-size: 13px;
-        cursor: pointer;
-        border-bottom: 2px solid #e5e7eb !important;
-        border-top: 1px solid #e5e7eb;
-    }
-    .channel-header-row td.channel-name-cell {
-        position: sticky;
-        left: 0;
-        z-index: 5;
-        background: #ffffff !important;
-        text-align: left;
-        padding-left: 16px;
-    }
-    .channel-header-row:hover td {
-        background: #f9fafb !important;
-    }
-    .channel-header-row:hover td.channel-name-cell {
-        background: #f9fafb !important;
-    }
-    
-    .channel-info {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .channel-badge {
-        font-size: 10px;
-        padding: 2px 8px;
-        border-radius: 9999px;
-        font-weight: 500;
-    }
-    .channel-badge.discount {
-        background: #dcfce7;
-        color: #166534;
-    }
-    .channel-badge.commission {
-        background: #fef3c7;
-        color: #92400e;
-    }
-    
-    /* BAR Reference Row */
-    .bar-row td {
-        background: #f0fdf4 !important;
-        border-bottom: 1px solid #bbf7d0;
-    }
-    .bar-row td.row-label {
-        position: sticky;
-        left: 0;
-        z-index: 5;
-        background: #dcfce7 !important;
-        text-align: left;
-        padding-left: 32px;
-        font-weight: 500;
-        color: #166534;
-        font-style: italic;
-    }
-    
-    /* Channel Base Rate Row */
-    .channel-base-row td {
-        background: #f8fafc;
-        font-weight: 600;
-        border-bottom: 1px solid #e2e8f0;
-    }
-    .channel-base-row td.row-label {
-        position: sticky;
-        left: 0;
-        z-index: 5;
-        background: #f1f5f9;
-        text-align: left;
-        padding-left: 32px;
-        font-weight: 600;
-        color: #1e293b;
-    }
-    
-    /* Modifier Rate Rows */
-    .modifier-row td {
-        background: #ffffff;
-    }
-    .modifier-row td.row-label {
-        position: sticky;
-        left: 0;
-        z-index: 5;
-        background: #fafafa;
-        text-align: left;
-        padding-left: 40px;
-        font-weight: 500;
-        color: #4b5563;
-    }
-    .modifier-row:hover td {
-        background: #eff6ff !important;
-    }
-    .modifier-row:hover td.row-label {
-        background: #dbeafe !important;
-    }
-    
-    /* Stacked modifier row */
-    .modifier-row.stacked td {
-        background: #fefce8;
-    }
-    .modifier-row.stacked td.row-label {
-        background: #fef9c3;
-    }
-    .modifier-row.stacked:hover td {
-        background: #fef08a !important;
-    }
-    .modifier-row.stacked:hover td.row-label {
-        background: #fde047 !important;
-    }
-    
-    /* Dual rate display */
-    .rate-dual {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 1px;
-    }
-    .rate-subtotal {
-        font-size: 14px;
-        font-weight: 700;
-        color: #111827;
-    }
-    .rate-final {
-        font-size: 10px;
-        color: #6b7280;
-        font-weight: 500;
-    }
-    
-    /* Discount badge in modifier row */
-    .discount-badge {
-        font-size: 10px;
-        color: #059669;
-        font-weight: 600;
-        margin-left: 4px;
-        background: #d1fae5;
-        padding: 1px 6px;
-        border-radius: 4px;
-    }
-    
-    /* Toggle icon */
-    .toggle-icon {
-        display: inline-block;
-        transition: transform 0.2s;
-        margin-right: 8px;
-        font-size: 10px;
-    }
-    .toggle-icon.collapsed {
-        transform: rotate(-90deg);
-    }
-    
-    /* Hidden rows */
-    .channel-details-hidden {
-        display: none;
-    }
-    
-    /* Filter select styling */
-    .filter-select {
-        padding: 10px 14px;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        font-size: 14px;
-        min-width: 180px;
-        background: white;
-        color: #374151;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    .filter-select:focus {
-        outline: none;
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    }
-    .filter-select:hover {
-        border-color: #9ca3af;
-    }
-    
-    /* Print styles */
-    @media print {
-        .no-print { display: none !important; }
-        body { background: white; }
-        .matrix-table thead th.corner,
-        .channel-header-row td.channel-name-cell,
-        .channel-base-row td.row-label,
-        .modifier-row td.row-label,
-        .bar-row td.row-label { position: static; }
-    }
-    
-    /* Responsive */
-    @media (max-width: 768px) {
-        .matrix-table { font-size: 11px; }
-        .rate-subtotal { font-size: 12px; }
-        .rate-final { font-size: 9px; }
-    }
-</style>
+<link rel="stylesheet" href="{% static 'pricing/css/matrix.css' %}">
 {% endblock %}
 
 {% block content %}
@@ -275,9 +18,20 @@
     <div class="flex items-center justify-between flex-wrap gap-4">
         <div>
             <h1 class="text-2xl font-bold text-gray-900">Pricing Matrix</h1>
-            <p class="text-gray-600 mt-1">{{ hotel.name }} • Rates by channel and modifier</p>
+            <p class="text-gray-600 mt-1">{{ hotel.name }} • {% if view_mode == 'channel' %}Channel-centric view{% else %}Rates by channel and modifier{% endif %}</p>
         </div>
         <div class="flex items-center gap-3 no-print">
+            <!-- View Toggle -->
+            <div class="inline-flex rounded-lg border border-gray-200 bg-white p-1">
+                <a href="?view=season{% if selected_room %}&room_type_id={{ selected_room.id }}{% endif %}{% if selected_rate_plan %}&rate_plan_id={{ selected_rate_plan.id }}{% endif %}&pax={{ pax }}{% if selected_channel %}&channel_id={{ selected_channel.id }}{% endif %}"
+                   class="px-3 py-1.5 text-sm font-medium rounded-md {% if view_mode == 'season' %}text-white bg-blue-600{% else %}text-gray-600 hover:text-gray-900{% endif %}">
+                    Season View
+                </a>
+                <a href="?view=channel{% if selected_rate_plan %}&rate_plan_id={{ selected_rate_plan.id }}{% endif %}&pax={{ pax }}"
+                   class="px-3 py-1.5 text-sm font-medium rounded-md {% if view_mode == 'channel' %}text-white bg-blue-600{% else %}text-gray-600 hover:text-gray-900{% endif %}">
+                    Channel View
+                </a>
+            </div>
             <a href="{% url 'pricing:pricing_matrix_pdf' org_code=org.code prop_code=prop.code %}" target="_blank"
                 class="px-4 py-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-sm font-medium text-blue-700 transition inline-flex items-center gap-1.5">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -285,12 +39,14 @@
                 </svg>
                 PDF
             </a>
+            {% if view_mode == 'season' %}
             <button onclick="expandAllChannels()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
                 Expand All
             </button>
             <button onclick="collapseAllChannels()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
                 Collapse All
             </button>
+            {% endif %}
             <button onclick="window.print()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition inline-flex items-center">
                 <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
                 Print
@@ -392,7 +148,155 @@
     </div>
     
     {% if has_data %}
-    
+
+    {% if view_mode == 'channel' %}
+    <!-- ============================================================ -->
+    <!-- CHANNEL VIEW -->
+    <!-- ============================================================ -->
+    <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full" style="font-size:13px;">
+                <thead>
+                    <tr class="bg-gradient-to-r from-slate-700 to-slate-800">
+                        <th class="px-4 py-3 text-left text-sm font-semibold text-white sticky left-0 bg-slate-700 z-10 min-w-[200px]">
+                            CHANNEL / ROOM
+                        </th>
+                        {% for season in seasons %}
+                        <th class="px-4 py-3 text-center min-w-[120px]">
+                            <div class="text-sm font-semibold text-white">{{ season.name }}</div>
+                            <div class="text-xs text-slate-300">{{ season.start_date|date:"M d" }} - {{ season.end_date|date:"M d" }}</div>
+                            <div class="text-xs text-blue-300">&times;{{ season.season_index }}</div>
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    {% for channel_id, channel_data in matrix.items %}
+                    <tr class="bg-gradient-to-r from-blue-100 to-blue-200 cursor-pointer hover:from-blue-200 hover:to-blue-300 transition"
+                        onclick="toggleSection('channel-{{ channel_id }}')">
+                        <td class="px-4 py-3 sticky left-0 bg-blue-100 z-10">
+                            <div class="flex items-center">
+                                <svg id="chevron-channel-{{ channel_id }}" class="w-5 h-5 text-blue-600 mr-2 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                </svg>
+                                <div>
+                                    <span class="font-bold text-blue-900">{{ channel_data.channel.name }}</span>
+                                    <div class="text-xs text-blue-700">
+                                        {% if channel_data.channel.base_discount_percent > 0 %}
+                                        <span class="text-green-600">-{{ channel_data.channel.base_discount_percent }}%</span>
+                                        {% endif %}
+                                        {% if channel_data.channel.commission_percent > 0 %}
+                                        <span class="text-orange-600 ml-1">{{ channel_data.channel.commission_percent }}% comm</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-4 py-3 text-center bg-blue-50"></td>
+                        {% endfor %}
+                    </tr>
+                    {% for room_id, room_data in channel_data.rooms.items %}
+                    <tr class="channel-{{ channel_id }}-content hidden bg-gray-50 hover:bg-gray-100 cursor-pointer transition"
+                        onclick="toggleSection('channel-{{ channel_id }}-room-{{ room_id }}')">
+                        <td class="px-4 py-2 sticky left-0 bg-gray-50 z-10">
+                            <div class="flex items-center pl-6">
+                                <svg id="chevron-channel-{{ channel_id }}-room-{{ room_id }}" class="w-4 h-4 text-gray-400 mr-2 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                </svg>
+                                <div>
+                                    <span class="font-medium text-gray-900">{{ room_data.room.name }}</span>
+                                    <div class="text-xs text-gray-500">{{ room_data.room.number_of_rooms }} rooms &bull; Base: ${{ room_data.room.base_rate }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-4 py-2 text-center">
+                            {% with rate=room_data.summary_rates|get_item:season.id %}
+                            {% if rate %}
+                            <div class="font-semibold text-gray-900">${{ rate|floatformat:0 }}</div>
+                            <div class="text-xs text-gray-500">B&B Std</div>
+                            {% else %}
+                            <span class="text-gray-400">&mdash;</span>
+                            {% endif %}
+                            {% endwith %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% for rate_plan_id, rp_data in room_data.rate_plans.items %}
+                    <tr class="channel-{{ channel_id }}-room-{{ room_id }}-content hidden bg-blue-50">
+                        <td class="px-4 py-2 sticky left-0 bg-blue-50 z-10">
+                            <div class="pl-12 font-medium text-blue-800">
+                                {{ rp_data.rate_plan.name }}
+                                {% if rp_data.rate_plan.meal_supplement > 0 %}
+                                <span class="text-xs text-blue-600">(+${{ rp_data.rate_plan.meal_supplement }}/person)</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-4 py-2 text-center bg-blue-50"></td>
+                        {% endfor %}
+                    </tr>
+                    <tr class="channel-{{ channel_id }}-room-{{ room_id }}-content hidden">
+                        <td class="px-4 py-1.5 sticky left-0 bg-white z-10">
+                            <div class="pl-16 text-sm text-gray-600">BAR</div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-4 py-1.5 text-center text-sm text-gray-600">
+                            {% with bar=rp_data.bar_rates|get_item:season.id %}
+                            {% if bar %}${{ bar|floatformat:0 }}{% else %}&mdash;{% endif %}
+                            {% endwith %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    <tr class="channel-{{ channel_id }}-room-{{ room_id }}-content hidden hover:bg-gray-50">
+                        <td class="px-4 py-1.5 sticky left-0 bg-white z-10">
+                            <div class="pl-16 text-sm flex items-center">
+                                <span class="inline-block w-2 h-2 rounded-full mr-1.5 bg-blue-500"></span>
+                                <span class="text-gray-700">Channel Rate</span>
+                            </div>
+                        </td>
+                        {% for season in seasons %}
+                        <td class="px-4 py-1.5 text-center">
+                            {% with cr=rp_data.channel_rate|get_item:season.id %}
+                            {% if cr %}
+                            <div class="text-sm font-medium text-gray-900">${{ cr|floatformat:0 }}</div>
+                            {% else %}
+                            <span class="text-gray-400">&mdash;</span>
+                            {% endif %}
+                            {% endwith %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                    {% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Channel View Legend -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+        <div class="flex flex-wrap gap-4 text-sm">
+            <div class="flex items-center">
+                <span class="w-4 h-4 bg-gradient-to-r from-blue-100 to-blue-200 rounded mr-2"></span>
+                <span class="text-gray-600">Channel Header (click to expand)</span>
+            </div>
+            <div class="flex items-center">
+                <span class="w-4 h-4 bg-gray-50 rounded mr-2"></span>
+                <span class="text-gray-600">Room Summary (B&B Standard)</span>
+            </div>
+            <div class="flex items-center">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500 mr-2"></span>
+                <span class="text-gray-600">Channel Rate (all modifiers applied)</span>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <!-- ============================================================ -->
+    <!-- SEASON VIEW (default) -->
+    <!-- ============================================================ -->
     {% if show_all_rooms and comparison_data %}
     <!-- All Rooms Comparison Table -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
@@ -624,6 +528,7 @@
             </table>
         </div>
     </div>
+    {% endif %}{# end view_mode #}
     {% else %}
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
         <div class="text-gray-300 mb-4"><svg class="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg></div>
@@ -653,6 +558,7 @@
 
 {% block extra_js %}
 <script>
+/* Season View: expand/collapse channel modifier details */
 function toggleChannel(channelKey) {
     var rows = document.querySelectorAll('.' + channelKey + '-details');
     var icon = document.getElementById('toggle-' + channelKey);
@@ -668,6 +574,31 @@ function expandAllChannels() {
 function collapseAllChannels() {
     document.querySelectorAll('[class*="-details"]').forEach(function(row) { row.classList.add('channel-details-hidden'); });
     document.querySelectorAll('.toggle-icon').forEach(function(icon) { icon.classList.add('collapsed'); });
+}
+
+/* Channel View: expand/collapse nested sections */
+function toggleSection(sectionId) {
+    var rows = document.querySelectorAll('.' + sectionId + '-content');
+    var chevron = document.getElementById('chevron-' + sectionId);
+    var isHidden = rows.length > 0 && rows[0].classList.contains('hidden');
+    rows.forEach(function(row) {
+        if (isHidden) {
+            row.classList.remove('hidden');
+        } else {
+            row.classList.add('hidden');
+            var nestedRows = row.querySelectorAll('[class*="-content"]');
+            nestedRows.forEach(function(nested) { nested.classList.add('hidden'); });
+        }
+    });
+    if (chevron) {
+        if (isHidden) {
+            chevron.classList.add('rotate-90');
+        } else {
+            chevron.classList.remove('rotate-90');
+            var nestedChevrons = document.querySelectorAll('[id^="chevron-' + sectionId + '-"]');
+            nestedChevrons.forEach(function(nc) { nc.classList.remove('rotate-90'); });
+        }
+    }
 }
 </script>
 {% endblock %}

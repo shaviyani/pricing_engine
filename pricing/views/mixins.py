@@ -206,16 +206,47 @@ class ModelCrudMixin(PricingManagementMixin, View):
         hotel_field = 'hotel'                 # FK field name pointing to Property
         lookup_field = 'pk'                   # URL kwarg used for update/delete
 
-    **Delete views** only need the above — inherit and you're done.
+    For full CRUD, also set:
 
-    **Create/Update views** override ``get_create_kwargs(data, hotel)``
-    or ``apply_updates(instance, data)`` respectively.
+        list_key = 'seasons'                  # Key in JSON list response
+        list_order = ['start_date']           # QuerySet ordering
+        version_scoped = True                 # Filter by published version
+        auto_sort_order = True                # Auto-increment sort_order on create
+
+        fields = {
+            'name':         {'type': 'str',     'required': True},
+            'start_date':   {'type': 'date',    'required': True},
+            'season_index': {'type': 'decimal', 'default': '1.00'},
+            'number':       {'type': 'int',     'default': 1},
+            'is_active':    {'type': 'bool',    'default': True},
+        }
+
+    Field types: str, decimal, date, int, bool.
+    Fields marked required=True are validated on create.
+    On update, only provided fields are applied (partial update).
+
+    Override hooks for custom logic:
+        serialize_item(obj)     — customize list serialization
+        post_create(instance)   — after create hook
+        validate_create(data, hotel) — extra validation, return error_response or None
+        validate_update(data, instance) — extra validation, return error_response or None
     """
 
     model_class = None
     model_label = ''
     hotel_field = 'hotel'
     lookup_field = 'pk'
+
+    # List configuration
+    list_key = ''
+    list_order = ['id']
+    list_select_related = []
+    list_prefetch_related = []
+    version_scoped = False
+    auto_sort_order = False
+
+    # Field definitions
+    fields = {}
 
     # -- helpers --------------------------------------------------------
 
@@ -239,6 +270,169 @@ class ModelCrudMixin(PricingManagementMixin, View):
         if vid:
             return get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
         return PricingMatrixVersion.get_published(hotel)
+
+    def _parse_field(self, field_name, value, field_config, current=None):
+        """Parse a field value based on its type config."""
+        ftype = field_config.get('type', 'str')
+        default = field_config.get('default')
+        if current is not None and default is None:
+            default = current
+
+        if ftype == 'str':
+            return (value or '').strip() if value is not None else (default or '')
+        elif ftype == 'decimal':
+            return self.parse_decimal(value, Decimal(str(default)) if default is not None else Decimal('0.00'))
+        elif ftype == 'date':
+            return self.parse_date(value)
+        elif ftype == 'int':
+            try:
+                return int(value) if value is not None else (default or 0)
+            except (ValueError, TypeError):
+                return default or 0
+        elif ftype == 'bool':
+            return bool(value) if value is not None else (default if default is not None else True)
+        return value
+
+    def _serialize_value(self, val):
+        """Serialize a single value for JSON output."""
+        if val is None:
+            return None
+        if hasattr(val, 'strftime'):
+            return val.strftime('%Y-%m-%d')
+        if isinstance(val, Decimal):
+            return str(val)
+        return val
+
+    # -- List -----------------------------------------------------------
+
+    def serialize_item(self, obj):
+        """Serialize a model instance for list response. Override for custom fields."""
+        result = {'id': obj.id}
+        for field_name in self.fields:
+            val = getattr(obj, field_name, None)
+            result[field_name] = self._serialize_value(val)
+        return result
+
+    def get_queryset(self, hotel):
+        """Get base queryset filtered by hotel."""
+        qs = self.model_class.objects.filter(**{self.hotel_field: hotel})
+        if self.version_scoped:
+            version = PricingMatrixVersion.get_published(hotel)
+            if version:
+                qs = qs.filter(version=version)
+        if self.list_select_related:
+            qs = qs.select_related(*self.list_select_related)
+        if self.list_prefetch_related:
+            qs = qs.prefetch_related(*self.list_prefetch_related)
+        return qs.order_by(*self.list_order)
+
+    def list_items(self, request, *args, **kwargs):
+        """Generic list handler. Wire ``get = list_items`` in subclass."""
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+        qs = self.get_queryset(hotel)
+        data = [self.serialize_item(obj) for obj in qs]
+        return self.json_response({self.list_key: data})
+
+    # -- Create ---------------------------------------------------------
+
+    def validate_create(self, data, hotel):
+        """Override to add custom create validation. Return error_response or None."""
+        return None
+
+    def post_create(self, instance):
+        """Override for post-create logic."""
+        pass
+
+    def create_instance(self, request, *args, **kwargs):
+        """Generic create handler. Wire ``post = create_instance`` in subclass."""
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        # Validate required fields
+        for field_name, config in self.fields.items():
+            if config.get('required') and not data.get(field_name, ''):
+                label = field_name.replace('_', ' ').title()
+                return self.error_response(f'{label} is required')
+
+        # Custom validation
+        err = self.validate_create(data, hotel)
+        if err:
+            return err
+
+        # Build create kwargs
+        create_kwargs = {self.hotel_field: hotel}
+
+        if self.version_scoped:
+            create_kwargs['version'] = self._resolve_version(data, hotel)
+
+        if self.auto_sort_order and 'sort_order' not in data:
+            from django.db import models as db_models
+            max_order = self.model_class.objects.filter(
+                **{self.hotel_field: hotel}
+            ).aggregate(m=db_models.Max('sort_order'))['m'] or 0
+            create_kwargs['sort_order'] = max_order + 1
+
+        for field_name, config in self.fields.items():
+            if field_name in data or config.get('default') is not None:
+                create_kwargs[field_name] = self._parse_field(
+                    field_name, data.get(field_name), config
+                )
+
+        instance = self.model_class.objects.create(**create_kwargs)
+        self.post_create(instance)
+
+        return self.success_response(
+            data={'id': instance.id, 'name': str(instance)},
+            message=f'{self.model_label} "{instance}" created successfully'
+        )
+
+    # -- Update ---------------------------------------------------------
+
+    def validate_update(self, data, instance):
+        """Override to add custom update validation. Return error_response or None."""
+        return None
+
+    def update_instance(self, request, *args, **kwargs):
+        """Generic update handler. Wire ``post = update_instance`` in subclass."""
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        instance = self._get_instance(hotel)
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        # Custom validation
+        err = self.validate_update(data, instance)
+        if err:
+            return err
+
+        for field_name, config in self.fields.items():
+            if field_name in data:
+                value = data[field_name]
+                # Required field cannot be empty
+                if config.get('required') and config.get('type') == 'str':
+                    parsed = (value or '').strip()
+                    if not parsed:
+                        label = field_name.replace('_', ' ').title()
+                        return self.error_response(f'{label} cannot be empty')
+                current = getattr(instance, field_name, None)
+                setattr(instance, field_name, self._parse_field(
+                    field_name, value, config, current=current
+                ))
+
+        instance.save()
+        return self.success_response(
+            message=f'{self.model_label} "{instance}" updated successfully'
+        )
 
     # -- Delete (works out-of-the-box) ----------------------------------
 

@@ -212,6 +212,51 @@ class GroupAllotmentDeleteView(ManageBaseMixin, View):
             return self.error_response("Allotment not found", status=404)
 
 
+class DisplacementAnalysisView(ManageBaseMixin, View):
+    """
+    AJAX endpoint for ad-hoc displacement analysis.
+
+    GET /org/<org>/<prop>/api/displacement-analysis/?rooms=3&arrival=2026-06-01&departure=2026-06-11&rate=55&commission=10&supplement=0&pax=2
+    """
+
+    def get(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response("Property not found")
+
+        try:
+            arrival = date.fromisoformat(request.GET.get('arrival', ''))
+            departure = date.fromisoformat(request.GET.get('departure', ''))
+        except (ValueError, TypeError):
+            return self.error_response("Invalid arrival/departure date format (use YYYY-MM-DD)")
+
+        rooms = int(request.GET.get('rooms', 1))
+        rate = float(request.GET.get('rate', 0))
+        commission = float(request.GET.get('commission', 10))
+        supplement = float(request.GET.get('supplement', 0))
+        pax = int(request.GET.get('pax', 2))
+        group_name = request.GET.get('group_name', 'Ad-hoc analysis')
+
+        from pricing.services import DisplacementService
+        svc = DisplacementService(hotel)
+
+        result = svc.analyze_displacement(
+            rooms=rooms,
+            arrival=arrival,
+            departure=departure,
+            rate=rate,
+            commission=commission,
+            supplement=supplement,
+            pax=pax,
+            group_name=group_name,
+        )
+
+        if 'error' in result:
+            return self.error_response(result['error'])
+
+        return self.success_response(data=result)
+
+
 # =============================================================================
 # HELPER
 # =============================================================================

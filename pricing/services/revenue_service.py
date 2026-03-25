@@ -227,62 +227,325 @@ class AllotmentService:
 
 class DisplacementService:
     """
-    Analyzes revenue displacement from group bookings vs individual rates.
+    Full counterfactual displacement analysis for group bookings.
+
+    Compares group net revenue against estimated individual revenue
+    those rooms would generate, considering:
+    - Actual individual fill probability (STLY occupancy, OTB pace)
+    - Channel-weighted net ADR (commission-adjusted)
+    - Seasonal demand patterns
+    - Opportunity cost (rooms that would sit empty without the group)
     """
 
     def __init__(self, hotel):
         self.hotel = hotel
 
-    def analyze_displacement(self, allotment):
+    def analyze_displacement(self, allotment=None, **kwargs):
         """
-        Calculate displacement cost for a group allotment.
+        Full counterfactual displacement analysis.
 
-        Compares group rate against what those rooms could earn
-        at prevailing individual rates.
+        Accepts either a GroupAllotment object OR ad-hoc keyword parameters:
+            rooms, arrival, departure, rate, commission, supplement, pax
+
+        Returns dict with recommendation, revenue comparison, break-even rate.
         """
-        from pricing.services.pricing_service import PricingService
+        if allotment:
+            rooms = allotment.rooms_blocked
+            arrival = allotment.arrival_date
+            departure = allotment.departure_date
+            group_rate = float(allotment.agreed_rate)
+            commission_pct = 10.0
+            meal_supplement = 0.0
+            pax = 2
+            group_name = allotment.group_name
+            if allotment.agent and hasattr(allotment.agent, 'channel'):
+                ch = allotment.agent.channel
+                if ch:
+                    commission_pct = float(ch.commission_percent)
+            if allotment.rate_plan:
+                meal_supplement = float(allotment.rate_plan.meal_supplement)
+        else:
+            rooms = int(kwargs.get('rooms', 1))
+            arrival = kwargs['arrival']
+            departure = kwargs['departure']
+            group_rate = float(kwargs.get('rate', 0))
+            commission_pct = float(kwargs.get('commission', 10))
+            meal_supplement = float(kwargs.get('supplement', 0))
+            pax = int(kwargs.get('pax', 2))
+            group_name = kwargs.get('group_name', 'Ad-hoc analysis')
 
-        pricing_svc = PricingService(self.hotel)
+        nights = (departure - arrival).days
+        if nights <= 0:
+            return {'error': 'Departure must be after arrival'}
 
-        # Get rate card for the allotment dates
-        rate_data = pricing_svc.get_rate_card(allotment.arrival_date)
+        total_rooms = self.hotel.get_total_rooms()
 
-        # Average individual rate across room types
-        avg_individual = Decimal('0')
-        count = 0
-        for rt in rate_data.get('room_types', []):
-            for ch in rt.get('channels', []):
-                for rp in ch.get('rate_plans', []):
-                    avg_individual += Decimal(str(rp.get('room_rate', 0)))
-                    count += 1
+        # === 1. GROUP NET REVENUE ===
+        group_meal_total = meal_supplement * pax * nights
+        group_gross = (group_rate * rooms * nights) + group_meal_total
+        group_commission = group_gross * (commission_pct / 100)
+        group_net = group_gross - group_commission
 
-        if count > 0:
-            avg_individual = (avg_individual / count).quantize(
-                Decimal('0.01'), rounding=ROUND_HALF_UP)
+        # === 2. ESTIMATE INDIVIDUAL FILL RATE ===
+        fill_rate, fill_components = self._estimate_fill_rate(
+            arrival, departure, rooms, total_rooms
+        )
 
-        group_rate = allotment.agreed_rate
-        nights = allotment.nights
-        rooms = allotment.rooms_blocked
+        # === 3. CHANNEL-WEIGHTED NET ADR ===
+        channel_adr, channel_mix = self._get_channel_weighted_adr(arrival)
 
-        group_revenue = float(group_rate * rooms * nights)
-        individual_revenue = float(avg_individual * rooms * nights)
-        displacement = round(individual_revenue - group_revenue, 2)
+        # === 4. INDIVIDUAL NET REVENUE (counterfactual) ===
+        rooms_that_would_sell = rooms * fill_rate
+        individual_net = channel_adr * rooms_that_would_sell * nights
+
+        # === 5. DISPLACEMENT ===
+        displacement = group_net - individual_net
+        displacement_per_rn = displacement / (rooms * nights) if rooms * nights > 0 else 0
+
+        # === 6. BREAK-EVEN RATE ===
+        if rooms * nights > 0 and (1 - commission_pct / 100) > 0:
+            breakeven_gross_per_rn = (individual_net / (rooms * nights))
+            breakeven_rate = breakeven_gross_per_rn / (1 - commission_pct / 100)
+            meal_per_rn = meal_supplement * pax
+            breakeven_rate = breakeven_rate - meal_per_rn
+        else:
+            breakeven_rate = 0
+
+        negotiation_gap = group_rate - breakeven_rate
+
+        # === 7. RECOMMENDATION ===
+        recommendation, confidence, reasoning = self._make_recommendation(
+            displacement, fill_rate, group_rate, breakeven_rate,
+            rooms, total_rooms, nights
+        )
 
         return {
-            'allotment': allotment,
-            'group_rate': float(group_rate),
-            'avg_individual_rate': float(avg_individual),
-            'rate_difference': float(avg_individual - group_rate),
-            'nights': nights,
+            'group_name': group_name,
             'rooms': rooms,
-            'group_revenue': group_revenue,
-            'individual_revenue': individual_revenue,
-            'displacement_cost': displacement,
-            'displacement_percent': round(
-                displacement / individual_revenue * 100, 1
-            ) if individual_revenue > 0 else 0,
-            'is_positive': displacement <= 0,  # Group rate >= individual = no displacement
+            'nights': nights,
+            'total_room_nights': rooms * nights,
+
+            # Group side
+            'group_rate': round(group_rate, 2),
+            'group_gross': round(group_gross, 2),
+            'group_commission': round(group_commission, 2),
+            'group_commission_pct': commission_pct,
+            'group_net': round(group_net, 2),
+            'group_net_per_rn': round(group_net / (rooms * nights), 2) if rooms * nights > 0 else 0,
+            'meal_supplement': meal_supplement,
+
+            # Individual side (counterfactual)
+            'fill_rate': round(fill_rate, 3),
+            'fill_rate_pct': round(fill_rate * 100, 1),
+            'fill_components': fill_components,
+            'rooms_that_would_sell': round(rooms_that_would_sell, 1),
+            'channel_weighted_adr': round(channel_adr, 2),
+            'channel_mix': channel_mix,
+            'individual_net': round(individual_net, 2),
+            'individual_net_per_rn': round(individual_net / (rooms * nights), 2) if rooms * nights > 0 else 0,
+
+            # Displacement
+            'displacement': round(displacement, 2),
+            'displacement_per_rn': round(displacement_per_rn, 2),
+            'displacement_pct': round(
+                displacement / individual_net * 100, 1
+            ) if individual_net > 0 else 0,
+
+            # Break-even
+            'breakeven_rate': round(breakeven_rate, 2),
+            'negotiation_gap': round(negotiation_gap, 2),
+
+            # Recommendation
+            'recommendation': recommendation,
+            'confidence': confidence,
+            'reasoning': reasoning,
         }
+
+    def _estimate_fill_rate(self, arrival, departure, block_rooms, total_rooms):
+        """
+        Estimate what fraction of blocked rooms would sell individually.
+
+        Combines STLY occupancy (40%), current OTB pace (30%),
+        block-size ratio (20%), days-out uncertainty (10%).
+        """
+        from pricing.utils import build_daily_occupancy_map
+
+        today = date.today()
+        days_out = (arrival - today).days
+
+        # --- STLY occupancy ---
+        try:
+            stly_arrival = arrival.replace(year=arrival.year - 1)
+            stly_departure = departure.replace(year=departure.year - 1)
+            stly_map = build_daily_occupancy_map(
+                self.hotel, stly_arrival, stly_departure - timedelta(days=1)
+            )
+            stly_nights = sum(stly_map.values())
+            stly_available = total_rooms * (stly_departure - stly_arrival).days
+            stly_occ = stly_nights / stly_available if stly_available > 0 else 0.5
+        except Exception:
+            stly_occ = 0.5
+
+        # --- Current OTB pace ---
+        try:
+            otb_map = build_daily_occupancy_map(
+                self.hotel, arrival, departure - timedelta(days=1)
+            )
+            otb_nights = sum(otb_map.values())
+            otb_available = total_rooms * (departure - arrival).days
+            otb_occ = otb_nights / otb_available if otb_available > 0 else 0
+        except Exception:
+            otb_occ = 0
+
+        # --- Block-size ratio (larger block = harder to fill individually) ---
+        block_ratio = block_rooms / total_rooms if total_rooms > 0 else 0.5
+        block_factor = max(0.2, 1.0 - block_ratio)
+
+        # --- Days-out factor ---
+        if days_out <= 14:
+            days_factor = 0.95
+        elif days_out <= 30:
+            days_factor = 0.85
+        elif days_out <= 60:
+            days_factor = 0.70
+        elif days_out <= 90:
+            days_factor = 0.55
+        else:
+            days_factor = 0.40
+
+        fill_rate = (
+            stly_occ * 0.40 +
+            otb_occ * 0.30 +
+            block_factor * 0.20 +
+            days_factor * 0.10
+        )
+        fill_rate = max(0.05, min(0.98, fill_rate))
+
+        components = {
+            'stly_occupancy': round(stly_occ * 100, 1),
+            'otb_occupancy': round(otb_occ * 100, 1),
+            'block_ratio': round(block_ratio * 100, 1),
+            'block_factor': round(block_factor, 2),
+            'days_out': days_out,
+            'days_factor': round(days_factor, 2),
+        }
+        return fill_rate, components
+
+    def _get_channel_weighted_adr(self, target_date):
+        """
+        Calculate channel-weighted net ADR from actual booking data
+        for the same calendar month.
+        """
+        from pricing.models import Reservation
+
+        month = target_date.month
+        reservations = Reservation.objects.filter(
+            hotel=self.hotel,
+            arrival_date__month=month,
+            status__in=Reservation.ACTIVE_STATUSES,
+        ).select_related('channel')
+
+        channel_data = defaultdict(lambda: {
+            'revenue': Decimal('0'), 'nights': 0, 'commission_pct': Decimal('0'),
+        })
+
+        for res in reservations:
+            ch_name = res.channel.name if res.channel else 'Direct'
+            ch_commission = res.channel.commission_percent if res.channel else Decimal('0')
+            channel_data[ch_name]['revenue'] += res.total_amount or Decimal('0')
+            channel_data[ch_name]['nights'] += res.nights or 0
+            channel_data[ch_name]['commission_pct'] = ch_commission
+
+        total_nights = sum(d['nights'] for d in channel_data.values())
+        channel_mix = []
+        weighted_net_adr = Decimal('0')
+
+        if total_nights > 0:
+            for ch_name, data in channel_data.items():
+                if data['nights'] > 0:
+                    gross_adr = data['revenue'] / data['nights']
+                    net_adr = gross_adr * (1 - data['commission_pct'] / 100)
+                    share = Decimal(str(data['nights'])) / Decimal(str(total_nights))
+                    weighted_net_adr += net_adr * share
+                    channel_mix.append({
+                        'channel': ch_name,
+                        'share_pct': round(float(share * 100), 1),
+                        'gross_adr': round(float(gross_adr), 2),
+                        'commission_pct': float(data['commission_pct']),
+                        'net_adr': round(float(net_adr), 2),
+                        'room_nights': data['nights'],
+                    })
+
+        if weighted_net_adr == 0:
+            try:
+                from pricing.services.pricing_service import PricingService
+                svc = PricingService(self.hotel)
+                card = svc.get_rate_card(target_date)
+                rates = []
+                for rt in card.get('room_types', []):
+                    for ch in rt.get('channels', []):
+                        for rp in ch.get('rate_plans', []):
+                            rates.append(Decimal(str(rp.get('room_rate', 0))))
+                if rates:
+                    weighted_net_adr = sum(rates) / len(rates)
+            except Exception:
+                pass
+
+        channel_mix.sort(key=lambda x: x.get('share_pct', 0), reverse=True)
+        return float(weighted_net_adr), channel_mix
+
+    def _make_recommendation(self, displacement, fill_rate, group_rate,
+                              breakeven_rate, rooms, total_rooms, nights):
+        """Generate accept/negotiate/reject recommendation with reasoning."""
+        reasons = []
+        rn = rooms * nights
+
+        if displacement > 0:
+            recommendation = 'accept'
+            confidence = 'high'
+            reasons.append(f'Group generates ${displacement:,.0f} more than estimated individual revenue')
+            if fill_rate < 0.50:
+                reasons.append(f'Low individual fill probability ({fill_rate*100:.0f}%) — rooms likely to sit empty')
+            elif fill_rate < 0.70:
+                reasons.append(f'Moderate individual demand ({fill_rate*100:.0f}%) supports accepting group')
+
+        elif rn > 0 and displacement > -(rn * 5):
+            recommendation = 'accept'
+            confidence = 'medium'
+            reasons.append(f'Minor displacement of ${abs(displacement):,.0f} (${abs(displacement/rn):,.0f}/room-night)')
+            if fill_rate < 0.60:
+                reasons.append(f'Low fill rate ({fill_rate*100:.0f}%) makes individual revenue uncertain')
+                confidence = 'high'
+            else:
+                reasons.append('Guaranteed group revenue offsets small gap')
+
+        elif breakeven_rate > 0 and group_rate < breakeven_rate * 0.85:
+            recommendation = 'reject'
+            confidence = 'high' if fill_rate > 0.70 else 'medium'
+            gap_pct = (breakeven_rate - group_rate) / breakeven_rate * 100 if breakeven_rate > 0 else 0
+            reasons.append(f'Group rate ${group_rate:,.0f} is {gap_pct:.0f}% below break-even ${breakeven_rate:,.0f}')
+            if fill_rate > 0.70:
+                reasons.append(f'Strong individual demand ({fill_rate*100:.0f}%) — rooms will likely sell at higher rates')
+            else:
+                reasons.append(f'Negotiate closer to break-even rate of ${breakeven_rate:,.0f}')
+
+        else:
+            recommendation = 'negotiate'
+            confidence = 'medium'
+            reasons.append(f'Displacement of ${abs(displacement):,.0f} — negotiate rate from ${group_rate:,.0f} toward ${breakeven_rate:,.0f}')
+            if fill_rate > 0.75:
+                reasons.append(f'High fill rate ({fill_rate*100:.0f}%) gives leverage to negotiate')
+                confidence = 'high'
+            elif fill_rate < 0.40:
+                reasons.append(f'Low fill rate ({fill_rate*100:.0f}%) — consider accepting to secure guaranteed revenue')
+                recommendation = 'accept'
+                confidence = 'medium'
+
+        block_ratio = rooms / total_rooms if total_rooms > 0 else 0
+        if block_ratio > 0.30:
+            reasons.append(f'Large block ({rooms}/{total_rooms} rooms = {block_ratio*100:.0f}%) — significant inventory impact')
+
+        return recommendation, confidence, reasons
 
     def analyze_all_active(self):
         """Displacement analysis for all active group allotments."""
@@ -299,7 +562,7 @@ class DisplacementService:
         for allotment in allotments:
             analysis = self.analyze_displacement(allotment)
             results.append(analysis)
-            total_displacement += analysis['displacement_cost']
+            total_displacement += analysis.get('displacement', 0)
 
         return {
             'analyses': results,

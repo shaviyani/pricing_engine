@@ -1,0 +1,262 @@
+/* Pricing Matrix page styles */
+
+/* KPI Cards */
+.kpi-card { transition: transform 0.2s, box-shadow 0.2s; }
+.kpi-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+
+/* Matrix Table */
+.matrix-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.matrix-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 800px;
+}
+
+.matrix-table thead th {
+    background: #f9fafb;
+    padding: 12px 8px;
+    text-align: center;
+    font-weight: 600;
+    color: #374151;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+.matrix-table thead th.corner {
+    position: sticky;
+    left: 0;
+    z-index: 20;
+    background: #f9fafb;
+    text-align: left;
+    min-width: 240px;
+    padding-left: 16px;
+}
+
+.season-header { min-width: 110px; }
+.season-name { font-weight: 700; color: #111827; font-size: 12px; }
+.season-dates { font-size: 10px; color: #6b7280; font-weight: 400; margin-top: 2px; }
+.season-index {
+    font-size: 10px;
+    color: #3b82f6;
+    font-weight: 600;
+    margin-top: 2px;
+    background: #eff6ff;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+.matrix-table tbody td {
+    padding: 10px 8px;
+    vertical-align: middle;
+    text-align: center;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+/* Channel Header Row (expandable) */
+.channel-header-row td {
+    background: #ffffff !important;
+    color: #111827;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 2px solid #e5e7eb !important;
+    border-top: 1px solid #e5e7eb;
+}
+.channel-header-row td.channel-name-cell {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background: #ffffff !important;
+    text-align: left;
+    padding-left: 16px;
+}
+.channel-header-row:hover td {
+    background: #f9fafb !important;
+}
+.channel-header-row:hover td.channel-name-cell {
+    background: #f9fafb !important;
+}
+
+.channel-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.channel-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-weight: 500;
+}
+.channel-badge.discount {
+    background: #dcfce7;
+    color: #166534;
+}
+.channel-badge.commission {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+/* BAR Reference Row */
+.bar-row td {
+    background: #f0fdf4 !important;
+    border-bottom: 1px solid #bbf7d0;
+}
+.bar-row td.row-label {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background: #dcfce7 !important;
+    text-align: left;
+    padding-left: 32px;
+    font-weight: 500;
+    color: #166534;
+    font-style: italic;
+}
+
+/* Channel Base Rate Row */
+.channel-base-row td {
+    background: #f8fafc;
+    font-weight: 600;
+    border-bottom: 1px solid #e2e8f0;
+}
+.channel-base-row td.row-label {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background: #f1f5f9;
+    text-align: left;
+    padding-left: 32px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+/* Modifier Rate Rows */
+.modifier-row td {
+    background: #ffffff;
+}
+.modifier-row td.row-label {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background: #fafafa;
+    text-align: left;
+    padding-left: 40px;
+    font-weight: 500;
+    color: #4b5563;
+}
+.modifier-row:hover td {
+    background: #eff6ff !important;
+}
+.modifier-row:hover td.row-label {
+    background: #dbeafe !important;
+}
+
+/* Stacked modifier row */
+.modifier-row.stacked td {
+    background: #fefce8;
+}
+.modifier-row.stacked td.row-label {
+    background: #fef9c3;
+}
+.modifier-row.stacked:hover td {
+    background: #fef08a !important;
+}
+.modifier-row.stacked:hover td.row-label {
+    background: #fde047 !important;
+}
+
+/* Dual rate display */
+.rate-dual {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+}
+.rate-subtotal {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+}
+.rate-final {
+    font-size: 10px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+/* Discount badge in modifier row */
+.discount-badge {
+    font-size: 10px;
+    color: #059669;
+    font-weight: 600;
+    margin-left: 4px;
+    background: #d1fae5;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+/* Toggle icon */
+.toggle-icon {
+    display: inline-block;
+    transition: transform 0.2s;
+    margin-right: 8px;
+    font-size: 10px;
+}
+.toggle-icon.collapsed {
+    transform: rotate(-90deg);
+}
+
+/* Hidden rows */
+.channel-details-hidden {
+    display: none;
+}
+
+/* Filter select styling */
+.filter-select {
+    padding: 10px 14px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    min-width: 180px;
+    background: white;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.filter-select:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+.filter-select:hover {
+    border-color: #9ca3af;
+}
+
+/* Print styles */
+@media print {
+    .no-print { display: none !important; }
+    body { background: white; }
+    .matrix-table thead th.corner,
+    .channel-header-row td.channel-name-cell,
+    .channel-base-row td.row-label,
+    .modifier-row td.row-label,
+    .bar-row td.row-label { position: static; }
+}
+
+/* Chevron rotation for channel view */
+.rotate-90 { transform: rotate(90deg); }
+
+/* Responsive */
+@media (max-width: 768px) {
+    .matrix-table { font-size: 11px; }
+    .rate-subtotal { font-size: 12px; }
+    .rate-final { font-size: 9px; }
+}

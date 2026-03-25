@@ -160,4 +160,5 @@ from .revenue_views import (
     GroupAllotmentCreateView,
     GroupAllotmentUpdateView,
     GroupAllotmentDeleteView,
+    DisplacementAnalysisView,
 )

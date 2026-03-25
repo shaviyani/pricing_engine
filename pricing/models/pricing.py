@@ -357,7 +357,13 @@ class TravelAgent(models.Model):
 
 
 class RateModifier(models.Model):
-    """Additional discount modifiers for channels. VERSIONED."""
+    """
+    DEPRECATED: Legacy discount modifier system.
+
+    Replaced by PropertyModifier (in pricing/models/core.py).
+    Data migrated via `python manage.py migrate_rate_modifiers`.
+    Kept for reference — do not create new records.
+    """
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='rate_modifiers')
     version = models.ForeignKey(PricingMatrixVersion, on_delete=models.CASCADE, related_name='rate_modifiers', null=True, blank=True)
     name = models.CharField(max_length=100)
@@ -398,7 +404,13 @@ class RateModifier(models.Model):
 
 
 class SeasonModifierOverride(models.Model):
-    """Season-specific discount for rate modifiers. Versioned through modifier chain."""
+    """
+    DEPRECATED: Legacy season-specific discount overrides.
+
+    Replaced by ModifierRule with rule_type='season_only'.
+    Data migrated via `python manage.py migrate_rate_modifiers`.
+    Kept for reference — do not create new records.
+    """
     modifier = models.ForeignKey(RateModifier, on_delete=models.CASCADE, related_name='season_discounts')
     season = models.ForeignKey(Season, on_delete=models.CASCADE, related_name='modifier_discounts')
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))

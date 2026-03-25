@@ -40,7 +40,7 @@ from pricing.models import (
     PropertyModifier, ModifierRule,
     PricingMatrixVersion,
 )
-from pricing.services import PricingService, calculate_final_rate
+from pricing.services import PricingService
 
 from .mixins import OrganizationMixin, PropertyMixin
 
@@ -66,6 +66,12 @@ class PricingMatrixView(PropertyMixin, TemplateView):
             PricingMatrixVersion
         )
         from decimal import ROUND_HALF_UP
+
+        # View mode: 'season' (default) or 'channel'
+        view_mode = self.request.GET.get('view', 'season')
+        if view_mode not in ('season', 'channel'):
+            view_mode = 'season'
+        context['view_mode'] = view_mode
 
         # Get property from URL
         org_code = self.kwargs.get('org_code')
@@ -244,6 +250,79 @@ class PricingMatrixView(PropertyMixin, TemplateView):
                 'modifier_rates': modifier_rates,
             }
 
+        if view_mode == 'channel':
+            # =================================================================
+            # Channel View: channel-centric matrix
+            # =================================================================
+            bb_rate_plan = rate_plans.filter(name__icontains='bed & breakfast').first()
+            if not bb_rate_plan:
+                bb_rate_plan = rate_plans.filter(name__icontains='b&b').first()
+            if not bb_rate_plan:
+                bb_rate_plan = rate_plans.filter(name__icontains='breakfast').first()
+            if not bb_rate_plan:
+                bb_rate_plan = rate_plans.first()
+            context['bb_rate_plan'] = bb_rate_plan
+
+            channel_matrix = {}
+            for channel in channels:
+                channel_matrix[channel.id] = {
+                    'channel': channel,
+                    'rooms': {},
+                }
+                for room in room_types:
+                    room_data = {
+                        'room': room,
+                        'summary_rates': {},
+                        'rate_plans': {},
+                    }
+                    for rate_plan in rate_plans:
+                        rp_data = {
+                            'rate_plan': rate_plan,
+                            'bar_rates': {},
+                            'channel_rate': {},
+                        }
+                        for season in seasons:
+                            base_rate = room.get_effective_base_rate()
+                            effective_index = float(season.season_index)
+                            bar_subtotal = float(base_rate) * effective_index
+                            rp_meal = float(rate_plan.meal_supplement) * pax
+
+                            modifier_context = {
+                                'season': season, 'season_id': season.id,
+                                'room_type': room, 'room_type_id': room.id,
+                                'channel': channel, 'channel_id': channel.id,
+                            }
+                            all_modifiers = pricing_svc.get_applicable_modifiers(modifier_context)
+                            result = pricing_svc.calculate_rate(
+                                bar_rate=bar_subtotal,
+                                modifiers=all_modifiers,
+                                meal_plan_amount=rp_meal,
+                                pax=pax,
+                            )
+                            rp_data['channel_rate'][season.id] = float(result['final_rate'])
+
+                            if season.id not in rp_data['bar_rates']:
+                                base_mods = [m for m in all_modifiers if m.applies_to in ('season', 'room_type')]
+                                bar_result = pricing_svc.calculate_rate(
+                                    bar_rate=bar_subtotal,
+                                    modifiers=base_mods,
+                                    meal_plan_amount=rp_meal,
+                                    pax=pax,
+                                )
+                                rp_data['bar_rates'][season.id] = float(bar_result['final_rate'])
+
+                            if rate_plan == bb_rate_plan:
+                                room_data['summary_rates'][season.id] = float(result['final_rate'])
+
+                        room_data['rate_plans'][rate_plan.id] = rp_data
+                    channel_matrix[channel.id]['rooms'][room.id] = room_data
+
+            context['matrix'] = channel_matrix
+            return context
+
+        # =====================================================================
+        # Season View (default): room/channel matrix with modifier breakdowns
+        # =====================================================================
         if show_all_rooms:
             # Build matrix for ALL rooms: matrix[room_id][channel_id][season_id] = rate_data
             matrix = {}
@@ -437,77 +516,115 @@ class PricingMatrixPDFView(PropertyMixin, View):
     
     def _build_matrix_data(self, seasons, rooms, rate_plans, channels, bb_rate_plan):
         """Build matrix data structure for PDF."""
-        from pricing.models import RateModifier
-        from pricing.services import calculate_final_rate
-        
+        from pricing.models.core import PropertyModifier
+        from decimal import ROUND_HALF_UP
+
+        prop = self.get_property()
+        version = PricingMatrixVersion.get_published(prop)
+        service = PricingService(prop, version)
+
         matrix = {}
-        
+
         for room in rooms:
             matrix[room.id] = {
                 'room': room,
                 'channels': {}
             }
-            
+
             for channel in channels:
-                modifiers = list(RateModifier.objects.filter(
-                    channel=channel,
-                    active=True
-                ).order_by('sort_order'))
-                
-                standard_modifier = self._find_standard_modifier(modifiers)
-                
+                # Get PropertyModifiers for this channel
+                pm_qs = PropertyModifier.objects.filter(
+                    hotel=prop, channel=channel, is_active=True,
+                )
+                if version:
+                    pm_qs = pm_qs.filter(Q(version=version) | Q(version__isnull=True))
+                pm_list = list(pm_qs.order_by('stack_order'))
+
+                # Separate base modifiers from additional ones
+                base_mods = [m for m in pm_list if m.stack_order < 200]
+                extra_mods = [m for m in pm_list if m.stack_order >= 200]
+
+                # If no extra modifiers, use base as the only "modifier column"
+                if not extra_mods:
+                    modifier_sets = [('base', base_mods)]
+                else:
+                    modifier_sets = []
+                    for em in extra_mods:
+                        modifier_sets.append((em.name, base_mods + [em]))
+                    # Also add a "base only" set if there are base modifiers
+                    if base_mods:
+                        modifier_sets.insert(0, ('Standard', base_mods))
+
+                standard_set_name = modifier_sets[0][0] if modifier_sets else 'base'
+
                 channel_data = {
                     'channel': channel,
                     'summary_rates': {},
                     'rate_plans': {}
                 }
-                
+
                 for rate_plan in rate_plans:
                     rate_plan_data = {
                         'rate_plan': rate_plan,
                         'bar_rates': {},
                         'modifiers': []
                     }
-                    
-                    for modifier in modifiers:
+
+                    for set_name, mod_set in modifier_sets:
+                        # Create a pseudo-modifier object for template compatibility
+                        class _ModProxy:
+                            def __init__(self, name, mods):
+                                self.name = name
+                                self.id = mods[-1].id if mods else 0
+                                self._mods = mods
+
+                        proxy = _ModProxy(set_name, mod_set)
                         modifier_data = {
-                            'modifier': modifier,
+                            'modifier': proxy,
                             'seasons': {}
                         }
-                        
+
                         for season in seasons:
-                            season_discount = modifier.get_discount_for_season(season)
-                            
-                            # CHANGED: Use calculate_final_rate with ceiling
-                            final_rate, breakdown = calculate_final_rate(
-                                room_base_rate=room.get_effective_base_rate(),
-                                season_index=season.season_index,
-                                meal_supplement=rate_plan.meal_supplement,
-                                channel_base_discount=channel.base_discount_percent,
-                                modifier_discount=season_discount,
-                                commission_percent=channel.commission_percent,
-                                occupancy=2,
-                                apply_ceiling=True,
-                                ceiling_increment=5
+                            rt_mod = room.get_season_modifier(season)
+                            effective_index = season.season_index * rt_mod
+                            seasonal_rate = (room.get_effective_base_rate() * effective_index).quantize(
+                                Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+                            result = service.calculate_rate(
+                                bar_rate=seasonal_rate,
+                                modifiers=mod_set,
+                                meal_plan_amount=rate_plan.meal_supplement,
+                                pax=2,
                             )
-                            
+
+                            subtotal = result['subtotal']
+                            # Apply $5 ceiling
+                            final_rate = Decimal(str(math.ceil(float(subtotal) / 5) * 5))
+
+                            bar_rate_val = float(seasonal_rate + rate_plan.meal_supplement * 2)
+
                             modifier_data['seasons'][season.id] = {
                                 'rate': final_rate,
-                                'breakdown': breakdown
+                                'breakdown': {
+                                    'bar_rate': bar_rate_val,
+                                    'final_rate': float(final_rate),
+                                    'channel_base_rate': float(result['adjusted_room_rate']),
+                                    'seasonal_rate': float(seasonal_rate),
+                                }
                             }
-                            
+
                             if season.id not in rate_plan_data['bar_rates']:
-                                rate_plan_data['bar_rates'][season.id] = breakdown['bar_rate']
-                            
-                            if rate_plan == bb_rate_plan and modifier == standard_modifier:
+                                rate_plan_data['bar_rates'][season.id] = bar_rate_val
+
+                            if rate_plan == bb_rate_plan and set_name == standard_set_name:
                                 channel_data['summary_rates'][season.id] = final_rate
-                        
+
                         rate_plan_data['modifiers'].append(modifier_data)
-                    
+
                     channel_data['rate_plans'][rate_plan.id] = rate_plan_data
-                
+
                 matrix[room.id]['channels'][channel.id] = channel_data
-        
+
         return matrix
     
     def _generate_pdf(self, prop, org, seasons, rooms, channels, rate_plans, matrix, bb_rate_plan):
@@ -1113,38 +1230,36 @@ def parity_data_ajax(request, org_code, prop_code):
         parity_room = rooms.first()
         parity_rate_plan = rate_plans.first()
 
-        # Calculate BAR
-        bar_rate, _ = calculate_final_rate(
-            room_base_rate=parity_room.get_effective_base_rate(),
-            season_index=parity_season.season_index,
-            meal_supplement=parity_rate_plan.meal_supplement,
-            channel_base_discount=Decimal('0.00'),
-            modifier_discount=Decimal('0.00'),
-            commission_percent=Decimal('0.00'),
-            occupancy=2
-        )
+        # Calculate BAR (no discounts)
+        from decimal import ROUND_HALF_UP
+        rt_mod = parity_room.get_season_modifier(parity_season)
+        effective_index = parity_season.season_index * rt_mod
+        seasonal_rate = (parity_room.get_effective_base_rate() * effective_index).quantize(
+            Decimal('0.01'), rounding=ROUND_HALF_UP)
+        bar_rate = seasonal_rate + parity_rate_plan.meal_supplement * 2
 
         # Calculate parity for each channel
+        version = PricingMatrixVersion.get_published(prop)
+        service = PricingService(prop, version)
         parity_data = []
         for channel in channels:
-            season_discount = Decimal('0.00')
-            modifiers = RateModifier.objects.filter(
-                channel=channel,
-                active=True
+            context = {
+                'season': parity_season, 'season_id': parity_season.id,
+                'room_type': parity_room, 'room_type_id': parity_room.id,
+                'channel': channel, 'channel_id': channel.id,
+            }
+            modifiers = service.get_applicable_modifiers(context)
+            result = service.calculate_rate(
+                bar_rate=seasonal_rate,
+                modifiers=modifiers,
+                meal_plan_amount=parity_rate_plan.meal_supplement,
+                pax=2,
             )
-            if modifiers.exists():
-                modifier = modifiers.filter(discount_percent=0).first() or modifiers.first()
-                season_discount = modifier.get_discount_for_season(parity_season)
+            channel_rate = result['subtotal']
 
-            channel_rate, breakdown = calculate_final_rate(
-                room_base_rate=parity_room.get_effective_base_rate(),
-                season_index=parity_season.season_index,
-                meal_supplement=parity_rate_plan.meal_supplement,
-                channel_base_discount=channel.base_discount_percent,
-                modifier_discount=season_discount,
-                commission_percent=channel.commission_percent,
-                occupancy=2
-            )
+            # Commission (not part of guest rate, but needed for net revenue)
+            commission_amount = channel_rate * (channel.commission_percent / Decimal('100'))
+            net_revenue = channel_rate - commission_amount
 
             difference = channel_rate - bar_rate
             difference_percent = (difference / bar_rate * 100) if bar_rate > 0 else Decimal('0.00')
@@ -1164,7 +1279,7 @@ def parity_data_ajax(request, org_code, prop_code):
                 'difference_percent': difference_percent,
                 'status': status,
                 'status_text': status_text,
-                'net_revenue': breakdown['net_revenue'],
+                'net_revenue': float(net_revenue.quantize(Decimal('0.01'))),
             })
 
         html = render_to_string('pricing/partials/parity_table.html', {
@@ -1461,7 +1576,7 @@ def date_rate_detail_ajax(request, org_code, prop_code):
     from pricing.models import (
         Property, Season, RoomType, RatePlan, Channel, DateRateOverride
     )
-    from pricing.services import calculate_final_rate, get_override_for_date, apply_override_to_bar
+    from pricing.services import get_override_for_date, apply_override_to_bar
     from datetime import date
     
     # Get property
@@ -2053,7 +2168,7 @@ class AgentRatesView(PropertyMixin, TemplateView):
     template_name = 'pricing/rates/agent_rates.html'
 
     def get_context_data(self, **kwargs):
-        from pricing.services import calculate_final_rate
+        from decimal import ROUND_HALF_UP
 
         context = super().get_context_data(**kwargs)
         context['nav_active'] = 'rates'
@@ -2111,15 +2226,8 @@ class AgentRatesView(PropertyMixin, TemplateView):
 
         context['has_data'] = True
 
-        # Get active modifiers for agent channel
-        modifiers = RateModifier.objects.filter(
-            channel=agent_channel, active=True
-        ).order_by('sort_order')
-        standard_modifier = modifiers.filter(discount_percent=0).first()
-        if not standard_modifier:
-            standard_modifier = modifiers.filter(name__icontains='standard').first()
-        if not standard_modifier:
-            standard_modifier = modifiers.first()
+        # Use unified pricing service
+        service = PricingService(prop, version)
 
         # Build rate matrix: room → rate_plan → season → rate
         matrix = []
@@ -2128,24 +2236,28 @@ class AgentRatesView(PropertyMixin, TemplateView):
             for rp in rate_plans:
                 season_rates = []
                 for season in seasons:
-                    modifier_discount = Decimal('0')
-                    if standard_modifier:
-                        modifier_discount = standard_modifier.get_discount_for_season(season)
+                    rt_mod = room.get_season_modifier(season)
+                    effective_index = season.season_index * rt_mod
+                    seasonal_rate = (room.get_effective_base_rate() * effective_index).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-                    rt_season_mod = room.get_season_modifier(season)
-
-                    final_rate, breakdown = calculate_final_rate(
-                        room_base_rate=room.get_effective_base_rate(),
-                        season_index=season.season_index,
-                        meal_supplement=rp.meal_supplement,
-                        channel_base_discount=agent_channel.base_discount_percent,
-                        modifier_discount=modifier_discount,
-                        commission_percent=Decimal('0'),  # Show net rate before commission
-                        occupancy=2,
-                        apply_ceiling=True,
-                        ceiling_increment=5,
-                        room_type_season_modifier=rt_season_mod,
+                    context_dict = {
+                        'season': season, 'season_id': season.id,
+                        'room_type': room, 'room_type_id': room.id,
+                        'channel': agent_channel, 'channel_id': agent_channel.id,
+                    }
+                    mods = service.get_applicable_modifiers(context_dict)
+                    result = service.calculate_rate(
+                        bar_rate=seasonal_rate,
+                        modifiers=mods,
+                        meal_plan_amount=rp.meal_supplement,
+                        pax=2,
                     )
+
+                    # Apply $5 ceiling
+                    subtotal = result['subtotal']
+                    final_rate = Decimal(str(math.ceil(float(subtotal) / 5) * 5))
+
                     season_rates.append({
                         'season_id': season.id,
                         'final_rate': float(final_rate),
@@ -2203,7 +2315,7 @@ class AgentRateCardView(TemplateView):
     template_name = 'pricing/rates/agent_rate_card.html'
 
     def get_context_data(self, **kwargs):
-        from pricing.services import calculate_final_rate
+        from decimal import ROUND_HALF_UP
 
         context = super().get_context_data(**kwargs)
         token = self.kwargs.get('token')
@@ -2267,15 +2379,8 @@ class AgentRateCardView(TemplateView):
 
         context['has_data'] = True
 
-        # Get active modifiers for agent channel
-        modifiers = RateModifier.objects.filter(
-            channel=agent_channel, active=True
-        ).order_by('sort_order')
-        standard_modifier = modifiers.filter(discount_percent=0).first()
-        if not standard_modifier:
-            standard_modifier = modifiers.filter(name__icontains='standard').first()
-        if not standard_modifier:
-            standard_modifier = modifiers.first()
+        # Use unified pricing service
+        service = PricingService(prop, version)
 
         # Build rate matrix
         matrix = []
@@ -2284,24 +2389,28 @@ class AgentRateCardView(TemplateView):
             for rp in rate_plans:
                 season_rates = []
                 for season in seasons:
-                    modifier_discount = Decimal('0')
-                    if standard_modifier:
-                        modifier_discount = standard_modifier.get_discount_for_season(season)
+                    rt_mod = room.get_season_modifier(season)
+                    effective_index = season.season_index * rt_mod
+                    seasonal_rate = (room.get_effective_base_rate() * effective_index).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-                    rt_season_mod = room.get_season_modifier(season)
-
-                    final_rate, breakdown = calculate_final_rate(
-                        room_base_rate=room.get_effective_base_rate(),
-                        season_index=season.season_index,
-                        meal_supplement=rp.meal_supplement,
-                        channel_base_discount=agent_channel.base_discount_percent,
-                        modifier_discount=modifier_discount,
-                        commission_percent=Decimal('0'),
-                        occupancy=2,
-                        apply_ceiling=True,
-                        ceiling_increment=5,
-                        room_type_season_modifier=rt_season_mod,
+                    context_dict = {
+                        'season': season, 'season_id': season.id,
+                        'room_type': room, 'room_type_id': room.id,
+                        'channel': agent_channel, 'channel_id': agent_channel.id,
+                    }
+                    mods = service.get_applicable_modifiers(context_dict)
+                    result = service.calculate_rate(
+                        bar_rate=seasonal_rate,
+                        modifiers=mods,
+                        meal_plan_amount=rp.meal_supplement,
+                        pax=2,
                     )
+
+                    # Apply $5 ceiling
+                    subtotal = result['subtotal']
+                    final_rate = Decimal(str(math.ceil(float(subtotal) / 5) * 5))
+
                     season_rates.append({
                         'season_id': season.id,
                         'final_rate': float(final_rate),
@@ -2357,7 +2466,7 @@ class AgentRateCardPDFView(View):
     """
 
     def get(self, request, *args, **kwargs):
-        from pricing.services import calculate_final_rate
+        from decimal import ROUND_HALF_UP
 
         token = kwargs.get('token')
         if token:
@@ -2417,15 +2526,8 @@ class AgentRateCardPDFView(View):
         if not seasons or not rooms:
             return HttpResponse("No pricing data available.", status=400)
 
-        # Modifiers
-        modifiers = RateModifier.objects.filter(
-            channel=agent_channel, active=True
-        ).order_by('sort_order')
-        standard_modifier = modifiers.filter(discount_percent=0).first()
-        if not standard_modifier:
-            standard_modifier = modifiers.filter(name__icontains='standard').first()
-        if not standard_modifier:
-            standard_modifier = modifiers.first()
+        # Use unified pricing service
+        service = PricingService(prop, version)
 
         # Build matrix
         matrix = []
@@ -2434,22 +2536,28 @@ class AgentRateCardPDFView(View):
             for rp in rate_plans:
                 season_rates = []
                 for season in seasons:
-                    modifier_discount = Decimal('0')
-                    if standard_modifier:
-                        modifier_discount = standard_modifier.get_discount_for_season(season)
-                    rt_season_mod = room.get_season_modifier(season)
-                    final_rate, _ = calculate_final_rate(
-                        room_base_rate=room.get_effective_base_rate(),
-                        season_index=season.season_index,
-                        meal_supplement=rp.meal_supplement,
-                        channel_base_discount=agent_channel.base_discount_percent,
-                        modifier_discount=modifier_discount,
-                        commission_percent=Decimal('0'),
-                        occupancy=2,
-                        apply_ceiling=True,
-                        ceiling_increment=5,
-                        room_type_season_modifier=rt_season_mod,
+                    rt_mod = room.get_season_modifier(season)
+                    effective_index = season.season_index * rt_mod
+                    seasonal_rate = (room.get_effective_base_rate() * effective_index).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+                    context_dict = {
+                        'season': season, 'season_id': season.id,
+                        'room_type': room, 'room_type_id': room.id,
+                        'channel': agent_channel, 'channel_id': agent_channel.id,
+                    }
+                    mods = service.get_applicable_modifiers(context_dict)
+                    result = service.calculate_rate(
+                        bar_rate=seasonal_rate,
+                        modifiers=mods,
+                        meal_plan_amount=rp.meal_supplement,
+                        pax=2,
                     )
+
+                    # Apply $5 ceiling
+                    subtotal = result['subtotal']
+                    final_rate = Decimal(str(math.ceil(float(subtotal) / 5) * 5))
+
                     season_rates.append(float(final_rate))
                 room_plans.append({
                     'name': rp.name,

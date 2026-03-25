@@ -469,139 +469,49 @@ class PropertyUpdateView(PricingManagementMixin, View):
 # SEASON MANAGEMENT
 # =============================================================================
 
-class SeasonListView(PricingManagementMixin, View):
-    """API: List seasons for a property."""
-    
-    def get(self, request, *args, **kwargs):
-        from pricing.models import Season
-        
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-        
-        seasons = Season.objects.filter(hotel=hotel).order_by('start_date')
-        
-        data = [{
-            'id': s.id,
-            'name': s.name,
-            'start_date': s.start_date.strftime('%Y-%m-%d'),
-            'end_date': s.end_date.strftime('%Y-%m-%d'),
-            'season_index': str(s.season_index),
-            'expected_occupancy': str(s.expected_occupancy),
-            'date_range_display': s.date_range_display(),
-        } for s in seasons]
-        
-        return self.json_response({'seasons': data})
-
-
-class SeasonCreateView(PricingManagementMixin, View):
-    """API: Create a new season."""
-
-    def post(self, request, *args, **kwargs):
-        from pricing.models import Season, PricingMatrixVersion
-
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-
-        # Version support: use provided version_id or fall back to published
-        vid = data.get('version_id')
-        if vid:
-            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
-        else:
-            version = PricingMatrixVersion.get_published(hotel)
-
-        # Validate required fields
-        name = data.get('name', '').strip()
-        start_date = self.parse_date(data.get('start_date'))
-        end_date = self.parse_date(data.get('end_date'))
-
-        if not name:
-            return self.error_response('Name is required')
-        if not start_date or not end_date:
-            return self.error_response('Valid start and end dates are required')
-        if start_date > end_date:
-            return self.error_response('Start date must be before end date')
-
-        season_index = self.parse_decimal(data.get('season_index'), Decimal('1.00'))
-        expected_occupancy = self.parse_decimal(data.get('expected_occupancy'), Decimal('70.00'))
-
-        season = Season.objects.create(
-            hotel=hotel,
-            version=version,
-            name=name,
-            start_date=start_date,
-            end_date=end_date,
-            season_index=season_index,
-            expected_occupancy=expected_occupancy,
-        )
-        
-        return self.success_response(
-            data={'id': season.id, 'name': season.name},
-            message=f'Season "{season.name}" created successfully'
-        )
-
-
-class SeasonUpdateView(PricingManagementMixin, View):
-    """API: Update an existing season."""
-    
-    def post(self, request, *args, **kwargs):
-        from pricing.models import Season
-        
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-        
-        season_id = kwargs.get('pk')
-        season = get_object_or_404(Season, pk=season_id, hotel=hotel)
-        
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-        
-        # Update fields if provided
-        if 'name' in data:
-            name = data['name'].strip()
-            if not name:
-                return self.error_response('Name cannot be empty')
-            season.name = name
-        
-        if 'start_date' in data:
-            start_date = self.parse_date(data['start_date'])
-            if not start_date:
-                return self.error_response('Invalid start date')
-            season.start_date = start_date
-        
-        if 'end_date' in data:
-            end_date = self.parse_date(data['end_date'])
-            if not end_date:
-                return self.error_response('Invalid end date')
-            season.end_date = end_date
-        
-        if season.start_date > season.end_date:
-            return self.error_response('Start date must be before end date')
-        
-        if 'season_index' in data:
-            season.season_index = self.parse_decimal(data['season_index'], season.season_index)
-        
-        if 'expected_occupancy' in data:
-            season.expected_occupancy = self.parse_decimal(data['expected_occupancy'], season.expected_occupancy)
-        
-        season.save()
-        
-        return self.success_response(message=f'Season "{season.name}" updated successfully')
-
-
-class SeasonDeleteView(ModelCrudMixin):
-    """API: Delete a season."""
+class _SeasonCrud(ModelCrudMixin):
     model_class = Season
     model_label = 'Season'
+    list_key = 'seasons'
+    list_order = ['start_date']
+    version_scoped = True
+    fields = {
+        'name': {'type': 'str', 'required': True},
+        'start_date': {'type': 'date', 'required': True},
+        'end_date': {'type': 'date', 'required': True},
+        'season_index': {'type': 'decimal', 'default': '1.00'},
+        'expected_occupancy': {'type': 'decimal', 'default': '70.00'},
+    }
+
+    def serialize_item(self, obj):
+        result = super().serialize_item(obj)
+        result['date_range_display'] = obj.date_range_display()
+        return result
+
+    def validate_create(self, data, hotel):
+        start = self.parse_date(data.get('start_date'))
+        end = self.parse_date(data.get('end_date'))
+        if not start or not end:
+            return self.error_response('Valid start and end dates are required')
+        if start > end:
+            return self.error_response('Start date must be before end date')
+
+    def validate_update(self, data, instance):
+        start = self.parse_date(data.get('start_date')) if 'start_date' in data else instance.start_date
+        end = self.parse_date(data.get('end_date')) if 'end_date' in data else instance.end_date
+        if start and end and start > end:
+            return self.error_response('Start date must be before end date')
+
+class SeasonListView(_SeasonCrud):
+    get = ModelCrudMixin.list_items
+
+class SeasonCreateView(_SeasonCrud):
+    post = ModelCrudMixin.create_instance
+
+class SeasonUpdateView(_SeasonCrud):
+    post = ModelCrudMixin.update_instance
+
+class SeasonDeleteView(_SeasonCrud):
     post = ModelCrudMixin.delete_instance
 
 
@@ -665,8 +575,9 @@ class RoomTypeCreateView(PricingManagementMixin, View):
             return self.error_response('Name is required')
 
         # Get max sort order
+        from django.db.models import Max
         max_order = RoomType.objects.filter(hotel=hotel).aggregate(
-            max_order=models.Max('sort_order')
+            max_order=Max('sort_order')
         )['max_order'] or 0
 
         room_type = RoomType.objects.create(
@@ -778,106 +689,29 @@ class RoomTypeReorderView(PricingManagementMixin, View):
 # RATE PLAN MANAGEMENT (SHARED)
 # =============================================================================
 
-class RatePlanListView(PricingManagementMixin, View):
-    """API: List all rate plans."""
-    
-    def get(self, request, *args, **kwargs):
-        from pricing.models import RatePlan, PricingMatrixVersion
-        
-        hotel = self.get_hotel(request)
-        version = PricingMatrixVersion.get_published(hotel) if hotel else None
-        
-        qs = RatePlan.objects.filter(hotel=hotel).order_by('sort_order') if hotel else RatePlan.objects.none()
-        if version: qs = qs.filter(version=version)
-        
-        data = [{
-            'id': r.id,
-            'name': r.name,
-            'meal_supplement': str(r.meal_supplement),
-            'sort_order': r.sort_order,
-        } for r in qs]
-        
-        return self.json_response({'rate_plans': data})
-
-
-class RatePlanCreateView(PricingManagementMixin, View):
-    """API: Create a new rate plan."""
-
-    def post(self, request, *args, **kwargs):
-        from pricing.models import RatePlan, PricingMatrixVersion
-
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found')
-
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-
-        vid = data.get('version_id')
-        if vid:
-            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
-        else:
-            version = PricingMatrixVersion.get_published(hotel)
-
-        name = data.get('name', '').strip()
-        if not name:
-            return self.error_response('Name is required')
-
-        max_order = RatePlan.objects.filter(hotel=hotel).aggregate(
-            max_order=models.Max('sort_order')
-        )['max_order'] or 0
-        
-        rate_plan = RatePlan.objects.create(
-            hotel=hotel,
-            version=version,
-            name=name,
-            meal_supplement=self.parse_decimal(data.get('meal_supplement'), Decimal('0.00')),
-            sort_order=int(data.get('sort_order', max_order + 1)),
-        )
-        
-        return self.success_response(
-            data={'id': rate_plan.id, 'name': rate_plan.name},
-            message=f'Rate plan "{rate_plan.name}" created successfully'
-        )
-
-
-class RatePlanUpdateView(PricingManagementMixin, View):
-    """API: Update a rate plan."""
-    
-    def post(self, request, *args, **kwargs):
-        from pricing.models import RatePlan
-        
-        plan_id = kwargs.get('pk')
-        rate_plan = get_object_or_404(RatePlan, pk=plan_id)
-        
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-        
-        if 'name' in data:
-            name = data['name'].strip()
-            if not name:
-                return self.error_response('Name cannot be empty')
-            rate_plan.name = name
-        
-        if 'meal_supplement' in data:
-            rate_plan.meal_supplement = self.parse_decimal(data['meal_supplement'], rate_plan.meal_supplement)
-        
-        if 'sort_order' in data:
-            rate_plan.sort_order = int(data.get('sort_order', rate_plan.sort_order))
-        
-        rate_plan.save()
-        
-        return self.success_response(message=f'Rate plan "{rate_plan.name}" updated successfully')
-
-
-class RatePlanDeleteView(ModelCrudMixin):
-    """API: Delete a rate plan."""
+class _RatePlanCrud(ModelCrudMixin):
     model_class = RatePlan
     model_label = 'Rate plan'
+    list_key = 'rate_plans'
+    list_order = ['sort_order']
+    version_scoped = True
+    auto_sort_order = True
+    fields = {
+        'name': {'type': 'str', 'required': True},
+        'meal_supplement': {'type': 'decimal', 'default': '0.00'},
+        'sort_order': {'type': 'int', 'default': 0},
+    }
+
+class RatePlanListView(_RatePlanCrud):
+    get = ModelCrudMixin.list_items
+
+class RatePlanCreateView(_RatePlanCrud):
+    post = ModelCrudMixin.create_instance
+
+class RatePlanUpdateView(_RatePlanCrud):
+    post = ModelCrudMixin.update_instance
+
+class RatePlanDeleteView(_RatePlanCrud):
     post = ModelCrudMixin.delete_instance
 
 
@@ -918,98 +752,28 @@ class ChannelListView(PricingManagementMixin, View):
         })
 
 
-class ChannelCreateView(PricingManagementMixin, View):
-    """API: Create a new channel."""
-
-    def post(self, request, *args, **kwargs):
-        from pricing.models import Channel, PricingMatrixVersion
-
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found')
-
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-
-        vid = data.get('version_id')
-        if vid:
-            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
-        else:
-            version = PricingMatrixVersion.get_published(hotel)
-        
-        name = data.get('name', '').strip()
-        if not name:
-            return self.error_response('Name is required')
-        
-        max_order = Channel.objects.filter(hotel=hotel).aggregate(
-            max_order=models.Max('sort_order')
-        )['max_order'] or 0
-        
-        channel = Channel.objects.create(
-            hotel=hotel,
-            version=version,
-            name=name,
-            base_discount_percent=self.parse_decimal(data.get('base_discount_percent'), Decimal('0.00')),
-            commission_percent=self.parse_decimal(data.get('commission_percent'), Decimal('0.00')),
-            distribution_share_percent=self.parse_decimal(data.get('distribution_share_percent'), Decimal('0.00')),
-            sort_order=int(data.get('sort_order', max_order + 1)),
-        )
-        
-        return self.success_response(
-            data={'id': channel.id, 'name': channel.name},
-            message=f'Channel "{channel.name}" created successfully'
-        )
-
-
-class ChannelUpdateView(PricingManagementMixin, View):
-    """API: Update a channel."""
-    
-    def post(self, request, *args, **kwargs):
-        from pricing.models import Channel
-        
-        channel_id = kwargs.get('pk')
-        channel = get_object_or_404(Channel, pk=channel_id)
-        
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-        
-        if 'name' in data:
-            name = data['name'].strip()
-            if not name:
-                return self.error_response('Name cannot be empty')
-            channel.name = name
-        
-        if 'base_discount_percent' in data:
-            channel.base_discount_percent = self.parse_decimal(
-                data['base_discount_percent'], channel.base_discount_percent
-            )
-        
-        if 'commission_percent' in data:
-            channel.commission_percent = self.parse_decimal(
-                data['commission_percent'], channel.commission_percent
-            )
-        
-        if 'distribution_share_percent' in data:
-            channel.distribution_share_percent = self.parse_decimal(
-                data['distribution_share_percent'], channel.distribution_share_percent
-            )
-        
-        if 'sort_order' in data:
-            channel.sort_order = int(data.get('sort_order', channel.sort_order))
-        
-        channel.save()
-        
-        return self.success_response(message=f'Channel "{channel.name}" updated successfully')
-
-
-class ChannelDeleteView(ModelCrudMixin):
-    """API: Delete a channel."""
+class _ChannelCrud(ModelCrudMixin):
     model_class = Channel
     model_label = 'Channel'
+    list_key = 'channels'
+    list_order = ['sort_order']
+    version_scoped = True
+    auto_sort_order = True
+    fields = {
+        'name': {'type': 'str', 'required': True},
+        'base_discount_percent': {'type': 'decimal', 'default': '0.00'},
+        'commission_percent': {'type': 'decimal', 'default': '0.00'},
+        'distribution_share_percent': {'type': 'decimal', 'default': '0.00'},
+        'sort_order': {'type': 'int', 'default': 0},
+    }
+
+class ChannelCreateView(_ChannelCrud):
+    post = ModelCrudMixin.create_instance
+
+class ChannelUpdateView(_ChannelCrud):
+    post = ModelCrudMixin.update_instance
+
+class ChannelDeleteView(_ChannelCrud):
     post = ModelCrudMixin.delete_instance
 
 
@@ -1104,8 +868,9 @@ class RateModifierCreateView(PricingManagementMixin, View):
         if RateModifier.objects.filter(channel=channel, name=name, version=version).exists():
             return self.error_response(f'Modifier "{name}" already exists for {channel.name}')
 
+        from django.db.models import Max
         max_order = RateModifier.objects.filter(channel=channel, version=version).aggregate(
-            max_order=models.Max('sort_order')
+            max_order=Max('sort_order')
         )['max_order'] or 0
 
         modifier = RateModifier.objects.create(

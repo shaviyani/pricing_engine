@@ -4,7 +4,7 @@ from django.urls import path
 from pricing.views import (
     PricingManagementView, PropertyUpdateView,
     ManageLandingView, ManageOrganizationView, ManagePropertyView,
-    ManagePricingView, ManageDynamicView, ManageOffersView, ManageImportView,
+    ManagePricingView, ManageDynamicView, ManageImportView,
     ManageVersionDetailView,
     SeasonListView, SeasonCreateView, SeasonUpdateView, SeasonDeleteView,
     RoomTypeListView, RoomTypeCreateView, RoomTypeUpdateView, RoomTypeDeleteView, RoomTypeReorderView,
@@ -40,6 +40,7 @@ from pricing.views import (
     GroupAllotmentCreateView,
     GroupAllotmentUpdateView,
     GroupAllotmentDeleteView,
+    DisplacementAnalysisView,
 )
 
 # Property-scoped management URLs
@@ -57,8 +58,6 @@ urlpatterns = [
          ManagePricingView.as_view(), name='manage_pricing'),
     path('org/<slug:org_code>/<slug:prop_code>/manage/dynamic/',
          ManageDynamicView.as_view(), name='manage_dynamic'),
-    path('org/<slug:org_code>/<slug:prop_code>/manage/offers/',
-         ManageOffersView.as_view(), name='manage_offers'),
     path('org/<slug:org_code>/<slug:prop_code>/manage/import/',
          ManageImportView.as_view(), name='manage_import'),
     path('org/<slug:org_code>/<slug:prop_code>/manage/versions/<int:version_id>/',
@@ -167,6 +166,8 @@ urlpatterns = [
          GroupAllotmentUpdateView.as_view(), name='api_group_update'),
     path('org/<slug:org_code>/<slug:prop_code>/api/groups/<int:pk>/delete/',
          GroupAllotmentDeleteView.as_view(), name='api_group_delete'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/displacement-analysis/',
+         DisplacementAnalysisView.as_view(), name='api_displacement_analysis'),
 
     # Travel Agents
     path('org/<slug:org_code>/<slug:prop_code>/manage/agents/',

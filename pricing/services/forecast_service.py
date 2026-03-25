@@ -108,35 +108,67 @@ class RevenueForecastService:
         
         return monthly_data
     
+    def _get_blended_occupancy(self, season, target_month=None):
+        """
+        Get occupancy rate blended between season target and actual OTB.
+
+        Weight shifts based on days-out:
+          0-30 days:  80% OTB, 20% target
+          31-60 days: 60% OTB, 40% target
+          61-90 days: 40% OTB, 60% target
+          90+ days:   20% OTB, 80% target
+
+        Args:
+            season: Season object
+            target_month: date (first of month). If None, uses season.start_date.
+
+        Returns:
+            Decimal: occupancy rate as fraction (e.g., 0.85 for 85%)
+        """
+        target_occupancy = season.expected_occupancy / Decimal('100.00')
+
+        if not self.hotel:
+            return target_occupancy
+
+        check_date = target_month or season.start_date
+
+        try:
+            pickup_svc = PickupAnalysisService(property=self.hotel)
+            otb = pickup_svc.get_otb_for_month(check_date)
+
+            if not otb or otb['total_available'] <= 0:
+                return target_occupancy
+
+            otb_occ = Decimal(str(otb['otb_occupancy'])) / Decimal('100.00')
+
+            days_out = otb['days_out']
+            if days_out <= 30:
+                otb_weight = Decimal('0.80')
+            elif days_out <= 60:
+                otb_weight = Decimal('0.60')
+            elif days_out <= 90:
+                otb_weight = Decimal('0.40')
+            else:
+                otb_weight = Decimal('0.20')
+
+            target_weight = Decimal('1.00') - otb_weight
+            return otb_occ * otb_weight + target_occupancy * target_weight
+
+        except Exception:
+            return target_occupancy
+
     def _calculate_season_revenue(self, season, total_rooms):
         """Calculate revenue for a specific season.
 
-        When reservation data exists for the hotel, blends the static
-        ``season.expected_occupancy`` with actual OTB (On The Books)
-        occupancy from ``PickupAnalysisService``.  The blend gives 60 %
-        weight to OTB data and 40 % to the season default so that near-term
-        months (where OTB is meaningful) are grounded in reality while
-        far-out months still lean on the seasonal assumption.
+        Uses ``_get_blended_occupancy`` to merge the static target with
+        actual OTB data, weighting OTB more heavily for near-term months.
         """
         from pricing.models import Channel
 
         days = (season.end_date - season.start_date).days + 1
         available_room_nights = total_rooms * days
 
-        # Start with the season's static expected occupancy
-        occupancy_rate = season.expected_occupancy / Decimal('100.00')
-
-        # Blend in pickup OTB when we have reservation data
-        if self.hotel:
-            try:
-                pickup_svc = PickupAnalysisService(property=self.hotel)
-                otb = pickup_svc.get_otb_for_month(season.start_date)
-                if otb and otb['total_available'] > 0:
-                    otb_occ = Decimal(str(otb['otb_occupancy'])) / Decimal('100.00')
-                    # Blend: 60% OTB, 40% season default
-                    occupancy_rate = otb_occ * Decimal('0.6') + occupancy_rate * Decimal('0.4')
-            except Exception:
-                pass  # Fall back to season.expected_occupancy
+        occupancy_rate = self._get_blended_occupancy(season)
 
         occupied_room_nights = int(available_room_nights * occupancy_rate)
         
@@ -188,7 +220,7 @@ class RevenueForecastService:
             'days': days,
             'available_room_nights': available_room_nights,
             'occupied_room_nights': total_weighted_room_nights,
-            'occupancy_percent': season.expected_occupancy,
+            'occupancy_percent': (occupancy_rate * Decimal('100.00')).quantize(Decimal('0.1')),
             'weighted_adr': weighted_adr,
             'gross_revenue': total_gross_revenue,
             'commission_amount': total_commission,
@@ -198,51 +230,43 @@ class RevenueForecastService:
     
     def _calculate_channel_adr(self, channel, season):
         """Calculate weighted average ADR for a channel in a season."""
-        from pricing.models import RatePlan, RateModifier
-        from pricing.services import calculate_final_rate
-        
+        from pricing.models import RatePlan, PricingMatrixVersion
+        from pricing.services import PricingService
+
         room_types = self._get_room_types()
         rate_plans = RatePlan.objects.filter(hotel=self.hotel)
-        
+
         if not room_types.exists() or not rate_plans.exists():
             return Decimal('0.00')
-        
+
+        version = PricingMatrixVersion.get_published(self.hotel)
+        service = PricingService(self.hotel, version)
+
         total_rate = Decimal('0.00')
         count = 0
-        
-        # Get modifiers for this channel (shared)
-        modifiers = RateModifier.objects.filter(channel=channel, active=True)
-        
+
         for room in room_types:
             for rate_plan in rate_plans:
-                if modifiers.exists():
-                    for modifier in modifiers:
-                        season_discount = modifier.get_discount_for_season(season)
-                        
-                        final_rate, _ = calculate_final_rate(
-                            room_base_rate=room.get_effective_base_rate(),
-                            season_index=season.season_index,
-                            meal_supplement=rate_plan.meal_supplement,
-                            channel_base_discount=channel.base_discount_percent,
-                            modifier_discount=season_discount,
-                            commission_percent=Decimal('0.00'),
-                            occupancy=2
-                        )
-                        total_rate += final_rate
-                        count += 1
-                else:
-                    final_rate, _ = calculate_final_rate(
-                        room_base_rate=room.get_effective_base_rate(),
-                        season_index=season.season_index,
-                        meal_supplement=rate_plan.meal_supplement,
-                        channel_base_discount=channel.base_discount_percent,
-                        modifier_discount=Decimal('0.00'),
-                        commission_percent=Decimal('0.00'),
-                        occupancy=2
-                    )
-                    total_rate += final_rate
-                    count += 1
-        
+                rt_mod = room.get_season_modifier(season)
+                effective_index = season.season_index * rt_mod
+                seasonal_rate = (room.get_effective_base_rate() * effective_index).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+                context = {
+                    'season': season, 'season_id': season.id,
+                    'room_type': room, 'room_type_id': room.id,
+                    'channel': channel, 'channel_id': channel.id,
+                }
+                modifiers = service.get_applicable_modifiers(context)
+                result = service.calculate_rate(
+                    bar_rate=seasonal_rate,
+                    modifiers=modifiers,
+                    meal_plan_amount=rate_plan.meal_supplement,
+                    pax=2,
+                )
+                total_rate += result['subtotal']
+                count += 1
+
         if count > 0:
             return (total_rate / count).quantize(Decimal('0.01'))
         return Decimal('0.00')
@@ -371,12 +395,12 @@ class RevenueForecastService:
         for season in seasons:
             days = (season.end_date - season.start_date).days + 1
             available_nights = total_rooms * days
-            occupancy_rate = season.expected_occupancy / Decimal('100.00')
+            occupancy_rate = self._get_blended_occupancy(season)
             occupied_nights = int(available_nights * occupancy_rate)
-            
+
             seasonal_data.append({
                 'season_name': season.name,
-                'occupancy_percent': float(season.expected_occupancy),
+                'occupancy_percent': float((occupancy_rate * Decimal('100.00')).quantize(Decimal('0.1'))),
                 'days': days,
                 'available_room_nights': available_nights,
                 'occupied_room_nights': occupied_nights,

@@ -144,11 +144,17 @@ class RatePlanAdmin(admin.ModelAdmin):
 
 
 class RateModifierInline(admin.TabularInline):
-    """Inline for rate modifiers within a channel."""
+    """Inline for rate modifiers within a channel (read-only, legacy)."""
     model = RateModifier
     extra = 0
     fields = ['name', 'modifier_type', 'discount_percent', 'active', 'sort_order']
     ordering = ['sort_order', 'name']
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Channel)
@@ -190,10 +196,15 @@ class RateModifierAdmin(admin.ModelAdmin):
         'name', 'channel', 'modifier_type', 'discount_percent',
         'total_discount_display', 'active', 'sort_order'
     ]
-    list_editable = ['discount_percent', 'active', 'sort_order']
     list_filter = ['channel', 'modifier_type', 'active']
     search_fields = ['name', 'channel__name']
     ordering = ['channel', 'sort_order', 'name']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
     def total_discount_display(self, obj):
         """Show total discount from BAR including channel base."""
@@ -208,12 +219,15 @@ class SeasonModifierOverrideAdmin(admin.ModelAdmin):
         'modifier', 'season', 'season_hotel', 'discount_percent',
         'is_customized', 'difference_display'
     ]
-    list_editable = ['discount_percent']
     list_filter = ['is_customized', 'modifier__channel', 'season__hotel']
     search_fields = ['modifier__name', 'season__name']
     ordering = ['season__hotel', 'season', 'modifier__channel', 'modifier__sort_order']
 
-    actions = ['reset_to_base', 'mark_as_customized']
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
     def season_hotel(self, obj):
         """Show the property for this season."""

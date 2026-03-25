@@ -9,9 +9,9 @@
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
         <div>
-            <h1 class="text-2xl font-bold text-gray-900">Booking Trends</h1>
+            <h1 class="text-2xl font-bold text-gray-900">Booking Analysis</h1>
             {% if has_data and trends %}
-            <p class="text-sm text-gray-500">Bookings received in the last {{ days }} days · {{ trends.period_start }} to {{ trends.period_end }}</p>
+            <p class="text-sm text-gray-500">Bookings received in the last {{ days }} days &middot; {{ trends.period_start }} to {{ trends.period_end }}</p>
             {% endif %}
         </div>
         <div class="flex items-center gap-2">
@@ -23,6 +23,20 @@
                 <option value="90" {% if days == 90 %}selected{% endif %}>Last 90 days</option>
             </select>
         </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="border-b border-gray-200 mb-6 no-print">
+        <nav class="flex gap-4" aria-label="Tabs">
+            <a href="?tab=overview"
+               class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                Overview
+            </a>
+            <a href="?tab=trends&days={{ days }}"
+               class="px-4 py-2 text-sm font-medium border-b-2 border-blue-600 text-blue-600">
+                Trends
+            </a>
+        </nav>
     </div>
 
     {% if not has_data %}
@@ -430,7 +444,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // ── Period switcher ──
     document.getElementById('periodSelect').addEventListener('change', function() {
         var days = this.value;
-        window.location.href = window.location.pathname + '?days=' + days;
+        window.location.href = window.location.pathname + '?tab=trends&days=' + days;
     });
 });
 </script>

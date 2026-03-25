@@ -2,10 +2,7 @@
 Services package.
 """
 
-from .pricing_service import (
-    PricingService,
-    calculate_final_rate,
-)
+from .pricing_service import PricingService
 from .forecast_service import RevenueForecastService, PickupAnalysisService
 from .analytics_service import ReservationImportService, BookingAnalysisService
 from .version_service import PricingVersionService, DynamicPricingService, DynamicPricingOptimizer
@@ -32,7 +29,6 @@ __all__ = [
     'PricingVersionService', 'DynamicPricingService', 'DynamicPricingOptimizer',
     'PeriodForecastService',
     'CompetitiveImportService',
-    'calculate_final_rate',
     'BudgetService', 'SegmentAnalysisService', 'AllotmentService',
     'DisplacementService', 'LosService',
     'get_override_for_date', 'get_all_overrides_for_date',

@@ -69,15 +69,18 @@ class BookingAnalysisDashboardView(AnalyticsBaseView):
     """
     Booking Analysis Dashboard.
 
-    Shows:
-    - KPI cards (Revenue, Room Nights, ADR, Occupancy, Reservations)
-    - Monthly revenue/occupancy charts
-    - Channel mix
-    - Meal plan mix
-    - Room type performance
+    Tabs: Overview (default) | Trends
+    - Overview: KPI cards, monthly revenue/occupancy charts, channel mix,
+      meal plan mix, room type performance
+    - Trends: recent booking pace, arrival mix, source markets, channels
     """
-    template_name = 'pricing/analytics/booking_analysis_dashboard.html'
     nav_sub = 'booking_analysis'
+
+    def get_template_names(self):
+        tab = self.request.GET.get('tab', 'overview')
+        if tab == 'trends':
+            return ['pricing/analytics/booking_trends.html']
+        return ['pricing/analytics/booking_analysis_dashboard.html']
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -85,6 +88,30 @@ class BookingAnalysisDashboardView(AnalyticsBaseView):
 
         from pricing.services import BookingAnalysisService
 
+        tab = self.request.GET.get('tab', 'overview')
+        context['active_tab'] = tab
+
+        if tab == 'trends':
+            # ---- Trends tab ----
+            if not context['has_data']:
+                return context
+
+            days = int(self.request.GET.get('days', 30))
+            days = max(7, min(90, days))
+
+            service = BookingAnalysisService(property=prop)
+            trends = service.get_booking_trends(days=days)
+
+            context['trends'] = trends
+            context['days'] = days
+            context['daily_pace_json'] = json.dumps(trends['daily_pace'])
+            context['arrival_mix_json'] = json.dumps(trends['arrival_mix'])
+            context['country_mix_json'] = json.dumps(trends['country_mix'])
+            context['room_mix_json'] = json.dumps(trends['room_mix'])
+            context['channel_mix_json'] = json.dumps(trends['channel_mix'])
+            return context
+
+        # ---- Overview tab (default) ----
         # Get year from query param
         year = self.request.GET.get('year')
         try:
@@ -93,17 +120,14 @@ class BookingAnalysisDashboardView(AnalyticsBaseView):
             year = date.today().year
 
         context['year'] = year
-        
+
         if not context['has_data']:
             return context
 
-        # Get dashboard data filtered by hotel
-        # FIX: Use single = (keyword argument), not == (comparison)
         service = BookingAnalysisService(property=prop)
         dashboard_data = service.get_dashboard_data(year=year)
         chart_data = service.get_chart_data(year=year)
-        
-        # Pass data to template
+
         context['total_rooms'] = dashboard_data['total_rooms']
         context['kpis'] = dashboard_data['kpis']
         context['monthly_data'] = dashboard_data['monthly_data']
@@ -112,23 +136,19 @@ class BookingAnalysisDashboardView(AnalyticsBaseView):
         context['room_type_performance'] = dashboard_data['room_type_performance']
         context['chart_data_json'] = json.dumps(chart_data)
 
-        # Attach demand indices to monthly data
         _attach_demand_indices(prop, dashboard_data['monthly_data'], year)
 
-        # Available years for selector
         years_with_data = Reservation.objects.filter(
             hotel=prop
         ).dates('arrival_date', 'year')
         context['available_years'] = [d.year for d in years_with_data]
-        
-        # Reservation count
+
         context['reservation_count'] = Reservation.objects.filter(
             hotel=prop,
             arrival_date__year=year,
             status__in=Reservation.ACTIVE_STATUSES
         ).count()
 
-        # Source market trends
         source_market = service.get_source_market_trends(year=year)
         context['source_market_summary'] = source_market['summary']
         context['source_market_monthly_json'] = json.dumps(source_market['monthly'])
