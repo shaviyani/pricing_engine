@@ -12,6 +12,7 @@ from .revenue_service import (
     BudgetService, SegmentAnalysisService, AllotmentService,
     DisplacementService, LosService,
 )
+from .cancellation_service import CancellationAnalysisService
 
 # Re-export helper functions from models
 from pricing.models.pricing import (
@@ -31,6 +32,7 @@ __all__ = [
     'CompetitiveImportService',
     'BudgetService', 'SegmentAnalysisService', 'AllotmentService',
     'DisplacementService', 'LosService',
+    'CancellationAnalysisService',
     'get_override_for_date', 'get_all_overrides_for_date',
     'get_overrides_for_date_range', 'apply_override_to_bar',
 ]

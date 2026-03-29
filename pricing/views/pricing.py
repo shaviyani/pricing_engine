@@ -42,11 +42,11 @@ from pricing.models import (
 )
 from pricing.services import PricingService
 
-from .mixins import OrganizationMixin, PropertyMixin
+from .mixins import OrganizationMixin, PropertyMixin, PricingAccessMixin, DistributionAccessMixin
 
 logger = logging.getLogger(__name__)
 
-class PricingMatrixView(PropertyMixin, TemplateView):
+class PricingMatrixView(PricingAccessMixin, PropertyMixin, TemplateView):
     """
     Pricing Matrix with expandable channel sections showing PropertyModifier breakdowns.
 
@@ -1036,7 +1036,7 @@ class PricingMatrixPDFView(PropertyMixin, View):
         return table
     
     
-class PricingMatrixChannelView(PropertyMixin, TemplateView):
+class PricingMatrixChannelView(PricingAccessMixin, PropertyMixin, TemplateView):
     """
     Channel-centric pricing matrix.
     
@@ -1396,7 +1396,7 @@ Date Rate Override Calendar View
 Add this view to your pricing/views.py
 """
 
-class DateRateOverrideCalendarView(PropertyMixin, TemplateView):
+class DateRateOverrideCalendarView(PricingAccessMixin, PropertyMixin, TemplateView):
     """
     Calendar view showing date rate overrides across months.
     
@@ -1956,7 +1956,7 @@ import json
 # RATE LOOKUP (Operational - Front Desk / Sales)
 # =============================================================================
 
-class RateLookupView(PropertyMixin, TemplateView):
+class RateLookupView(PricingAccessMixin, PropertyMixin, TemplateView):
     """
     Read-only rate card for a specific date.
 
@@ -1969,7 +1969,7 @@ class RateLookupView(PropertyMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['nav_active'] = 'rates'
+        context['nav_active'] = 'pricing'
         context['nav_sub'] = 'rate_lookup'
         prop = context['property']
 
@@ -2159,7 +2159,7 @@ class ItineraryQuoteAPIView(PropertyMixin, View):
         })
 
 
-class AgentRatesView(PropertyMixin, TemplateView):
+class AgentRatesView(DistributionAccessMixin, PropertyMixin, TemplateView):
     """
     Agent rate card for the full year, organized by season.
 
@@ -2174,8 +2174,8 @@ class AgentRatesView(PropertyMixin, TemplateView):
         from decimal import ROUND_HALF_UP
 
         context = super().get_context_data(**kwargs)
-        context['nav_active'] = 'rates'
-        context['nav_sub'] = 'agent_rates'
+        context['nav_active'] = 'distribution'
+        context['nav_sub'] = 'agents'
         prop = context['property']
 
         qs = self.get_property_querysets(prop)

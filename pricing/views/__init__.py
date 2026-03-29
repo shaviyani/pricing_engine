@@ -5,13 +5,25 @@ Re-exports all views so existing URL imports work unchanged:
     from pricing.views import PricingMatrixView, etc.
 """
 
-# Mixins
+# Mixins and CRUD configs
 from .mixins import (
     OrganizationMixin,
     PropertyMixin,
     PricingManagementMixin,
     SettingsMixin,
     ModelCrudMixin,
+    RoleRequiredMixin,
+    AnalyticsAccessMixin,
+    PricingAccessMixin,
+    DistributionAccessMixin,
+    SetupAccessMixin,
+    _SeasonCrud,
+    _RatePlanCrud,
+    _ChannelCrud,
+    _RoomTypeCrud,
+    _TravelAgentCrud,
+    _CompetitorCrud,
+    _ImportTemplateCrud,
 )
 
 # Core views
@@ -52,6 +64,9 @@ from .analytics import (
     BookingTrendsView,
     booking_trends_data_ajax,
     BookingOriginMatrixView,
+    CancellationDashboardView,
+    booking_heatmap_ajax,
+    arrival_forecast_ajax,
 )
 
 # Forecast views
@@ -77,23 +92,31 @@ from .admin_views import (
     ManageOffersView,
     ManageImportView,
     PropertyUpdateView,
-    # Seasons
+    # Consolidated CRUD views
+    SeasonCrudView,
+    RoomTypeCrudView,
+    RatePlanCrudView,
+    ChannelCrudView,
+    TravelAgentCrudView,
+    CompetitorCrudView,
+    ImportTemplateCrudView,
+    # Seasons (backward-compat aliases)
     SeasonListView,
     SeasonCreateView,
     SeasonUpdateView,
     SeasonDeleteView,
-    # Room Types
+    # Room Types (backward-compat aliases)
     RoomTypeListView,
     RoomTypeCreateView,
     RoomTypeUpdateView,
     RoomTypeDeleteView,
     RoomTypeReorderView,
-    # Rate Plans
+    # Rate Plans (backward-compat aliases)
     RatePlanListView,
     RatePlanCreateView,
     RatePlanUpdateView,
     RatePlanDeleteView,
-    # Channels
+    # Channels (backward-compat aliases)
     ChannelListView,
     ChannelCreateView,
     ChannelUpdateView,
@@ -136,13 +159,13 @@ from .admin_views import (
     # Room Type Mapping
     RoomTypeMappingListView,
     RoomTypeMappingUpdateView,
-    # Travel Agents
+    # Travel Agents (backward-compat aliases)
     ManageAgentsView,
     TravelAgentListView,
     TravelAgentCreateView,
     TravelAgentUpdateView,
     TravelAgentDeleteView,
-    # Competitive Set
+    # Competitive Set (backward-compat aliases)
     ManageCompetitiveView,
     CompetitiveSetUploadView,
     CompetitorCreateView,
@@ -161,4 +184,5 @@ from .revenue_views import (
     GroupAllotmentUpdateView,
     GroupAllotmentDeleteView,
     DisplacementAnalysisView,
+    RoomAvailabilityView,
 )

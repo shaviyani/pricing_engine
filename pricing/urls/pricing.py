@@ -4,7 +4,6 @@ from django.urls import path
 from pricing.views import (
     PricingMatrixView,
     PricingMatrixPDFView,
-    PricingMatrixChannelView,
     RateLookupView,
     RateLookupAPIView,
     ItineraryQuoteAPIView,
@@ -43,9 +42,6 @@ urlpatterns = [
          PricingMatrixView.as_view(), name='matrix'),
     path('org/<slug:org_code>/<slug:prop_code>/pricing/matrix/pdf/',
          PricingMatrixPDFView.as_view(), name='pricing_matrix_pdf'),
-    path('org/<slug:org_code>/<slug:prop_code>/pricing/matrix/channel/',
-         PricingMatrixChannelView.as_view(), name='pricing_matrix_channel'),
-
     # Override calendar
     path('org/<slug:org_code>/<slug:prop_code>/override-calendar/',
          DateRateOverrideCalendarView.as_view(), name='override_calendar'),

@@ -112,6 +112,11 @@ class ReservationImportService:
         'cancellation_date': [
             'Cancellation Date', 'Cancelled Date', 'Cancel Date',
         ],
+
+        'cancellation_reason': [
+            'CancelReason', 'Cancel Reason', 'Cancellation Reason',
+            'CxlReason', 'Reason', 'CancelNote', 'Cancel Note',
+        ],
         
         # =========================================================================
         # NIGHTS / PAX
@@ -721,7 +726,43 @@ class ReservationImportService:
         # Cancellation date also indicates cancelled
         if cancellation_date and status == 'confirmed':
             status = 'cancelled'
-        
+
+        # =====================================================================
+        # CANCELLATION ENHANCEMENTS
+        # =====================================================================
+        is_revenue_estimated = False
+        cancellation_reason = str(row.get('cancellation_reason', '')).strip()
+        if cancellation_reason in ('nan', '-', ''):
+            cancellation_reason = ''
+        notes = ''
+
+        if status == 'cancelled':
+            # Fallback cancellation date: use import date if missing
+            if not cancellation_date:
+                cancellation_date = date.today()
+                notes += ' [Cancel date estimated from import date]'
+
+            # Estimate revenue for cancelled bookings with $0 amount
+            if (total_amount is None or total_amount == Decimal('0.00')) and nights > 0:
+                comparable_qs = Reservation.objects.filter(
+                    hotel=self.hotel,
+                    arrival_date__month=arrival_date.month,
+                    status__in=Reservation.ACTIVE_STATUSES,
+                    adr__gt=0,
+                )
+                if room_type:
+                    comparable_qs = comparable_qs.filter(room_type=room_type)
+
+                avg_adr = comparable_qs.aggregate(
+                    avg=Avg('adr')
+                )['avg']
+
+                if avg_adr:
+                    total_amount = (avg_adr * Decimal(str(nights))).quantize(Decimal('0.01'))
+                    adr = avg_adr.quantize(Decimal('0.01'))
+                    is_revenue_estimated = True
+                    notes += ' [Revenue estimated from comparable ADR]'
+
         # =====================================================================
         # CREATE OR UPDATE RESERVATION
         # =====================================================================
@@ -758,10 +799,15 @@ class ReservationImportService:
                 'adr': adr,
                 'status': status,
                 'cancellation_date': cancellation_date,
+                'cancellation_reason': cancellation_reason,
+                'is_revenue_estimated': is_revenue_estimated,
                 'is_multi_room': is_multi_room,
                 'file_import': file_import,
                 'raw_data': raw_data,
             }
+
+            if notes.strip():
+                defaults['notes'] = notes.strip()
             
             if self.hotel:
                 defaults['hotel'] = self.hotel

@@ -24,11 +24,11 @@ from pricing.models import (
 from pricing.services import RevenueForecastService, PickupAnalysisService, PricingService
 from pricing.services.period_forecast_service import PeriodForecastService
 
-from .mixins import PropertyMixin
+from .mixins import PropertyMixin, AnalyticsAccessMixin
 
 logger = logging.getLogger(__name__)
 
-class PickupDashboardView(PropertyMixin, TemplateView):
+class PickupDashboardView(AnalyticsAccessMixin, PropertyMixin, TemplateView):
     """
     Main pickup analysis dashboard.
     
@@ -45,7 +45,7 @@ class PickupDashboardView(PropertyMixin, TemplateView):
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['nav_active'] = 'forecasts'
+        context['nav_active'] = 'analytics'
         context['nav_sub'] = 'pickup'
         prop = context['property']
 
@@ -679,61 +679,72 @@ def revenue_forecast_ajax(request, org_code, prop_code):
 
 def pickup_summary_ajax(request, org_code, prop_code):
     """
-    AJAX endpoint for pickup summary card on dashboard.
+    AJAX endpoint for pickup summary + arrival data for dashboard intelligence card.
+    Returns JSON data (not HTML partial).
     """
     from pricing.services import PickupAnalysisService
-    
+
     try:
         org = get_object_or_404(Organization, code=org_code, is_active=True)
         prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
-        
+
         service = PickupAnalysisService(property=prop)
 
         has_data = Reservation.objects.filter(hotel=prop).exists()
-        
+
         if not has_data:
-            html = render_to_string('pricing/partials/pickup_summary.html', {
-                'has_data': False,
-            })
-            return JsonResponse({'success': True, 'html': html, 'has_data': False})
-        
+            return JsonResponse({'success': True, 'has_data': False, 'forecasts': []})
+
         # Forecast summary (next 3 months)
         forecast_summary = service.get_forecast_summary(months_ahead=3)
-        
+
         # Velocity
         today = date.today()
         next_month = (today + relativedelta(months=1)).replace(day=1)
         velocity = service.calculate_booking_velocity(next_month)
-        
-        # Alerts
-        alerts = []
-        for forecast in forecast_summary:
-            if forecast.get('vs_stly_pace') and forecast['vs_stly_pace'] < -5:
-                alerts.append({
-                    'month': forecast['month_name'],
-                    'message': f"{forecast['month_name']} is {abs(forecast['vs_stly_pace']):.1f}% behind STLY pace",
-                    'type': 'warning'
-                })
-            elif forecast.get('variance_percent') and forecast['variance_percent'] < -10:
-                alerts.append({
-                    'month': forecast['month_name'],
-                    'message': f"{forecast['month_name']} pickup forecast below scenario target",
-                    'type': 'info'
-                })
-        
-        html = render_to_string('pricing/partials/pickup_summary.html', {
-            'has_data': True,
-            'forecast_summary': forecast_summary,
-            'velocity': velocity,
-            'alerts': alerts[:2],
-        })
-        
+
+        # Add arrival forecast per month (future months use trend-based forecast)
+        try:
+            from platform_data.services import MarketSignalService
+            for forecast in forecast_summary:
+                month_date = forecast['month']
+                mi = MarketSignalService.forecast_arrivals_for_month(prop, month_date)
+                forecast['arrival_pct'] = mi.get('pct', None)
+                forecast['arrival_has_data'] = mi.get('has_data', False)
+                forecast['top_movers'] = mi.get('components', [])[:3]
+                forecast['arrival_is_forecast'] = mi.get('is_forecast', False)
+        except Exception:
+            for forecast in forecast_summary:
+                forecast['arrival_pct'] = None
+                forecast['arrival_has_data'] = False
+                forecast['top_movers'] = []
+                forecast['arrival_is_forecast'] = False
+
+        # Serialize forecasts for JSON
+        serialized_forecasts = []
+        for f in forecast_summary:
+            serialized_forecasts.append({
+                'month_name': f.get('month_name', ''),
+                'month_num': f['month'].month if f.get('month') else 0,
+                'year': f['month'].year if f.get('month') else 0,
+                'forecast_occupancy': float(f.get('forecast_occupancy', 0) or 0),
+                'vs_stly': float(f.get('vs_stly_pace', 0) or 0) if f.get('vs_stly_pace') is not None else None,
+                'arrival_pct': float(f['arrival_pct']) if f.get('arrival_pct') is not None else None,
+                'arrival_has_data': f.get('arrival_has_data', False),
+                'arrival_is_forecast': f.get('arrival_is_forecast', False),
+                'top_movers': f.get('top_movers', []),
+            })
+
         return JsonResponse({
             'success': True,
-            'html': html,
             'has_data': True,
+            'forecasts': serialized_forecasts,
+            'velocity': {
+                'per_day': velocity.get('room_nights_per_day', 0),
+                'delta': velocity.get('delta_vs_prior', 0),
+            } if velocity else None,
         })
-    
+
     except Exception as e:
         logger.exception("Pickup summary AJAX error")
         return JsonResponse({'success': False, 'message': str(e)}, status=500)
@@ -884,7 +895,7 @@ def occupancy_calendar_ajax(request, org_code, prop_code):
         return JsonResponse({'success': False, 'message': str(e)}, status=500)
 
 
-class DemandForecastView(PropertyMixin, TemplateView):
+class DemandForecastView(AnalyticsAccessMixin, PropertyMixin, TemplateView):
     """
     Demand Forecast dashboard: bi-weekly occupancy forecast with rate suggestions.
     """
@@ -892,7 +903,7 @@ class DemandForecastView(PropertyMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['nav_active'] = 'forecasts'
+        context['nav_active'] = 'analytics'
         context['nav_sub'] = 'demand_forecast'
         prop = context['property']
 

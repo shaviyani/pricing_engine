@@ -88,6 +88,7 @@ class PeriodForecastService:
         bb_ceiling = bb_ceiling if bb_ceiling is not None else self.DEFAULT_BB_CEILING
 
         # Calculate actual cancel rate if not overridden
+        use_monthly_cancel = cancel_rate is None
         if cancel_rate is None:
             cancel_rate = self._calculate_cancel_rate()
             if cancel_rate is None:
@@ -112,8 +113,16 @@ class PeriodForecastService:
 
         results = []
         for period in periods:
+            # Use month-specific cancel rate when not overridden
+            period_cancel_rate = cancel_rate
+            if use_monthly_cancel:
+                monthly_rate = self._calculate_cancel_rate(
+                    target_month=period['start'].month
+                )
+                if monthly_rate is not None:
+                    period_cancel_rate = monthly_rate
             result = self._forecast_period(
-                period, total_rooms, bb_floor, bb_ceiling, cancel_rate
+                period, total_rooms, bb_floor, bb_ceiling, period_cancel_rate
             )
             results.append(result)
 
@@ -123,6 +132,7 @@ class PeriodForecastService:
                 'bb_floor': bb_floor,
                 'bb_ceiling': bb_ceiling,
                 'cancel_rate': cancel_rate,
+                'cancel_rate_type': 'monthly' if use_monthly_cancel else 'fixed',
                 'months_ahead': months_ahead,
             },
             'market_context': self._get_market_context(),
@@ -347,6 +357,7 @@ class PeriodForecastService:
             'demand_signal': round(demand_signal, 3),
             'demand_source': demand_source,
             'demand_national_pct': demand_national_pct,
+            'cancel_rate_pct': round(cancel_rate * 100, 1),
             'offers_recommended': occupancy < 0.30,
             # Velocity
             'velocity_per_day': round(vel_per_day, 1),
@@ -422,12 +433,30 @@ class PeriodForecastService:
     # Dynamic cancel rate
     # -----------------------------------------------------------------
 
-    def _calculate_cancel_rate(self):
-        """Calculate cancel rate from property's own booking history."""
+    def _calculate_cancel_rate(self, target_month=None):
+        """
+        Calculate cancel rate from property's own booking history.
+
+        If target_month is provided, returns the month-specific cancel rate
+        (e.g., Dec has 65% vs Jul 27%). Otherwise returns the overall rate
+        from the last 180 days.
+        """
         from pricing.models import Reservation
 
+        if target_month:
+            # Month-specific rate across all years of data
+            qs = Reservation.objects.filter(
+                hotel=self.property,
+                arrival_date__month=target_month,
+            )
+            total = qs.count()
+            if total < 10:
+                return None
+            cancelled = qs.filter(status='cancelled').count()
+            return round(cancelled / total, 2)
+
+        # Overall rate from last 6 months
         today = date.today()
-        # Look at bookings from last 6 months
         window_start = today - timedelta(days=180)
 
         confirmed = Reservation.objects.filter(
@@ -444,7 +473,7 @@ class PeriodForecastService:
 
         total = confirmed + cancelled
         if total < 10:
-            return None  # Not enough data
+            return None
 
         return round(cancelled / total, 2)
 

@@ -11,38 +11,85 @@
         <h2 class="mgmt-card-title">Displacement Evaluator</h2>
         <span class="text-xs text-gray-400">Analyze group vs individual revenue</span>
     </div>
-    <div class="mgmt-card-body">
-        <form id="displacementForm" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Rooms</label>
-                <input type="number" name="rooms" value="3" min="1" max="50" class="mgmt-input w-full">
+    <div class="mgmt-card-body" style="padding: 20px 24px;">
+        <form id="displacementForm" class="space-y-4 mb-4">
+            <!-- 1. Date Range (must be set first) -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Arrival</label>
+                    <input type="date" name="arrival"
+                           class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Departure</label>
+                    <input type="date" name="departure"
+                           class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Nights</label>
+                    <input type="text" id="stayNights" value="-" readonly
+                           class="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm text-gray-700 font-medium cursor-default">
+                </div>
             </div>
+
+            <!-- 2. Room Allocations (each row: type, rooms, rate, auto room-nights) -->
             <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Arrival</label>
-                <input type="date" name="arrival" class="mgmt-input w-full">
+                <label class="block text-xs font-medium text-gray-600 mb-2">Room Allocation</label>
+                <div class="grid grid-cols-12 gap-2 mb-1 text-xs text-gray-400 px-1">
+                    <div class="col-span-4">Room Type</div>
+                    <div class="col-span-2">Rooms</div>
+                    <div class="col-span-2">Rate/night</div>
+                    <div class="col-span-2">Room Nights</div>
+                    <div class="col-span-2">Inventory</div>
+                </div>
+                <div id="roomAllocations" class="space-y-2">
+                    <div class="room-alloc-row grid grid-cols-12 gap-2 items-center">
+                        <select name="rt_id" class="col-span-4 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                            {% for rt in room_types %}
+                            <option value="{{ rt.id }}" data-rooms="{{ rt.number_of_rooms }}">{{ rt.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="number" name="rt_rooms" value="3" min="1" max="50"
+                               class="col-span-2 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                        <input type="number" name="rt_rate" value="55" min="0" step="1"
+                               class="col-span-2 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                        <span class="col-span-2 rt-room-nights text-sm font-medium text-gray-600 text-center">-</span>
+                        <span class="col-span-2 inventory-hint text-xs text-gray-400"></span>
+                    </div>
+                </div>
+                <button type="button" id="addRoomTypeBtn"
+                        class="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium">+ Add another room type</button>
             </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Departure</label>
-                <input type="date" name="departure" class="mgmt-input w-full">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Rate / room / night</label>
-                <input type="number" name="rate" value="55" min="0" step="1" class="mgmt-input w-full">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Commission %</label>
-                <input type="number" name="commission" value="10" min="0" max="100" step="0.5" class="mgmt-input w-full">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Meal supplement</label>
-                <input type="number" name="supplement" value="0" min="0" step="1" class="mgmt-input w-full">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Pax</label>
-                <input type="number" name="pax" value="2" min="1" max="6" class="mgmt-input w-full">
-            </div>
-            <div class="flex items-end">
-                <button type="submit" class="btn btn-primary w-full">Analyze Displacement</button>
+
+            <!-- 3. Group terms -->
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Commission %</label>
+                    <input type="number" name="commission" value="10" min="0" max="100" step="0.5"
+                           class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Meal Plan</label>
+                    <select name="rate_plan_id"
+                            class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                        {% for rp in rate_plans %}
+                        <option value="{{ rp.id }}" data-supplement="{{ rp.meal_supplement }}">{{ rp }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Pax</label>
+                    <input type="number" name="pax" value="2" min="1" max="6"
+                           class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Group Name</label>
+                    <input type="text" name="group_name" placeholder="e.g. ACME Corp"
+                           class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors">
+                </div>
+                <div class="flex items-end">
+                    <button type="submit" class="btn btn-primary w-full">Analyze Displacement</button>
+                </div>
             </div>
         </form>
 
@@ -64,9 +111,11 @@
             <div class="grid grid-cols-2 gap-4 mb-4">
                 <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <h4 class="text-xs font-semibold text-blue-800 uppercase mb-2">Group Revenue</h4>
+                    <div class="text-[10px] text-blue-400 mb-1">Guaranteed net income from the group booking after commission</div>
                     <div class="text-2xl font-bold text-blue-900" id="groupNet">-</div>
+                    <div id="groupRoomBreakdown" class="mt-1 space-y-0.5"></div>
                     <div class="text-xs text-blue-600 mt-1">
-                        <span id="groupRate">-</span>/night &times; <span id="groupRooms">-</span> rooms &times; <span id="groupNights">-</span> nights
+                        <span id="groupRooms">-</span> total rooms &times; <span id="groupNights">-</span> nights
                     </div>
                     <div class="text-xs text-blue-500 mt-0.5">
                         Commission: <span id="groupCommission">-</span> (<span id="groupCommPct">-</span>%)
@@ -74,33 +123,52 @@
                 </div>
                 <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
                     <h4 class="text-xs font-semibold text-gray-600 uppercase mb-2">Individual Estimate</h4>
+                    <div class="text-[10px] text-gray-400 mb-1">What the hotel would likely earn selling these rooms individually, based on historical demand and channel mix</div>
                     <div class="text-2xl font-bold text-gray-900" id="indivNet">-</div>
-                    <div class="text-xs text-gray-500 mt-1">
+                    <div class="text-xs text-gray-500 mt-1" title="Probability that these rooms would sell individually, based on same-time-last-year occupancy (40%), current on-the-books pace (30%), block size impact (20%), and booking window (10%)">
                         Fill rate: <span id="fillRate">-</span>% &rarr; <span id="roomsSell">-</span> rooms would sell
                     </div>
-                    <div class="text-xs text-gray-500 mt-0.5">
-                        Channel-weighted net ADR: $<span id="channelAdr">-</span>
+                    <div id="indivRoomTypeBreakdown" class="mt-2 space-y-1"></div>
+                </div>
+            </div>
+
+            <!-- OTB Revenue Displacement -->
+            <div id="otbDisplacementPanel" class="hidden bg-orange-50 border border-orange-200 rounded-lg p-4 mb-4">
+                <h4 class="text-xs font-semibold text-orange-800 uppercase mb-2">On-The-Books Revenue at Risk</h4>
+                <div class="text-[10px] text-orange-400 mb-2">Actual confirmed bookings for these room types during the stay period that would need to be displaced</div>
+                <div class="flex items-center gap-6">
+                    <div>
+                        <div class="text-2xl font-bold text-orange-900" id="otbRevenue">-</div>
+                        <div class="text-xs text-orange-600">revenue from <span id="otbBookings">-</span> bookings</div>
+                    </div>
+                    <div class="text-sm text-orange-700">
+                        <span id="otbRoomNights">-</span> room-nights already booked
                     </div>
                 </div>
+                <div id="otbByRoomType" class="mt-2 space-y-0.5"></div>
             </div>
 
             <!-- Displacement Numbers -->
             <div class="grid grid-cols-4 gap-3 mb-4">
-                <div class="text-center p-3 bg-white border rounded-lg">
-                    <div class="text-xs text-gray-500">Total</div>
+                <div class="text-center p-3 bg-white border rounded-lg" title="Group net revenue minus estimated individual net revenue. Positive = group earns more.">
+                    <div class="text-xs text-gray-500">Displacement</div>
                     <div class="text-lg font-bold" id="dispTotal">-</div>
+                    <div class="text-[10px] text-gray-400 mt-1">Group minus individual revenue</div>
                 </div>
-                <div class="text-center p-3 bg-white border rounded-lg">
+                <div class="text-center p-3 bg-white border rounded-lg" title="Displacement divided by total room-nights in the block.">
                     <div class="text-xs text-gray-500">Per Room-Night</div>
                     <div class="text-lg font-bold" id="dispPerRN">-</div>
+                    <div class="text-[10px] text-gray-400 mt-1">Displacement / total RN</div>
                 </div>
-                <div class="text-center p-3 bg-white border rounded-lg">
+                <div class="text-center p-3 bg-white border rounded-lg" title="The minimum group rate per room per night needed to match what the hotel would earn selling those rooms individually.">
                     <div class="text-xs text-gray-500">Break-Even Rate</div>
                     <div class="text-lg font-bold" id="breakeven">-</div>
+                    <div class="text-[10px] text-gray-400 mt-1">Min rate to match individual revenue</div>
                 </div>
-                <div class="text-center p-3 bg-white border rounded-lg">
+                <div class="text-center p-3 bg-white border rounded-lg" title="Group rate minus break-even rate. Positive = you're already above break-even. Negative = how much you'd need to negotiate up.">
                     <div class="text-xs text-gray-500">Negotiation Gap</div>
                     <div class="text-lg font-bold" id="negGap">-</div>
+                    <div class="text-[10px] text-gray-400 mt-1">Group rate vs break-even</div>
                 </div>
             </div>
 
@@ -126,6 +194,13 @@
                 <summary class="text-sm font-medium text-gray-600 cursor-pointer">Fill rate estimation detail</summary>
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2 text-sm" id="fillComponents"></div>
             </details>
+
+            <!-- Save as Allotment -->
+            <button type="button" id="saveAllotmentBtn"
+                    class="w-full mt-4 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors">
+                Save as Allotment
+            </button>
+            <div id="saveAllotmentFeedback" class="hidden mt-2 text-sm text-center rounded-lg p-2"></div>
         </div>
     </div>
 </div>
@@ -300,26 +375,241 @@
 (function() {
     var form = document.getElementById('displacementForm');
     var resultDiv = document.getElementById('displacementResult');
+    var allocContainer = document.getElementById('roomAllocations');
+    var inputCls = 'px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-colors';
+
+    // Room type options template (for adding rows)
+    var rtOptionsHTML = allocContainer.querySelector('select[name="rt_id"]').innerHTML;
 
     // Set default dates (arrival = 2 weeks out, departure = arrival + 10)
     var today = new Date();
-    var arrival = new Date(today);
-    arrival.setDate(arrival.getDate() + 14);
-    var departure = new Date(arrival);
-    departure.setDate(departure.getDate() + 10);
-    form.arrival.value = arrival.toISOString().split('T')[0];
-    form.departure.value = departure.toISOString().split('T')[0];
+    var defArrival = new Date(today);
+    defArrival.setDate(defArrival.getDate() + 14);
+    var defDeparture = new Date(defArrival);
+    defDeparture.setDate(defDeparture.getDate() + 10);
+    form.arrival.value = defArrival.toISOString().split('T')[0];
+    form.departure.value = defDeparture.toISOString().split('T')[0];
+
+    // ── Nights calculation ──
+    function getNights() {
+        if (!form.arrival.value || !form.departure.value) return 0;
+        var n = Math.round((new Date(form.departure.value) - new Date(form.arrival.value)) / 86400000);
+        return n > 0 ? n : 0;
+    }
+
+    function updateNightsDisplay() {
+        var n = getNights();
+        document.getElementById('stayNights').value = n > 0 ? n + ' nights' : '-';
+        updateRoomNights();
+    }
+
+    function updateRoomNights() {
+        var n = getNights();
+        allocContainer.querySelectorAll('.room-alloc-row').forEach(function(row) {
+            var rooms = parseInt(row.querySelector('input[name="rt_rooms"]').value) || 0;
+            var rnSpan = row.querySelector('.rt-room-nights');
+            if (n > 0 && rooms > 0) {
+                rnSpan.textContent = (rooms * n) + ' RN';
+            } else {
+                rnSpan.textContent = '-';
+            }
+        });
+    }
+
+    form.arrival.addEventListener('change', function() { updateNightsDisplay(); fetchRateCard(); fetchAvailability(); });
+    form.departure.addEventListener('change', function() { updateNightsDisplay(); fetchRateCard(); fetchAvailability(); });
+    updateNightsDisplay();
+
+    // ── Inventory & pricing cache (fetched when dates change) ──
+    var rateCardCache = null;
+    var availabilityCache = null;
+
+    function fetchRateCard() {
+        var arrVal = form.arrival.value;
+        var n = getNights();
+        if (!arrVal || n <= 0) return;
+
+        fetch(API_BASE + '/api/rate-card/?date=' + arrVal + '&nights=' + n)
+            .then(function(r) { return r.json(); })
+            .then(function(resp) {
+                if (resp.room_types) {
+                    rateCardCache = resp;
+                    updateInventoryHints();
+                }
+            })
+            .catch(function() {});
+    }
+
+    function fetchAvailability() {
+        var arrVal = form.arrival.value;
+        var depVal = form.departure.value;
+        if (!arrVal || !depVal || getNights() <= 0) return;
+
+        fetch(API_BASE + '/api/room-availability/?arrival=' + arrVal + '&departure=' + depVal)
+            .then(function(r) { return r.json(); })
+            .then(function(resp) {
+                if (resp.success && resp.data && resp.data.room_types) {
+                    availabilityCache = resp.data.room_types;
+                    updateInventoryHints();
+                }
+            })
+            .catch(function() {});
+    }
+
+    fetchRateCard();
+    fetchAvailability();
+
+    function getAvailInfo(rtId) {
+        if (!availabilityCache) return null;
+        for (var i = 0; i < availabilityCache.length; i++) {
+            if (String(availabilityCache[i].room_type_id) === String(rtId)) {
+                return availabilityCache[i];
+            }
+        }
+        return null;
+    }
+
+    function getRoomTypeInfo(rtId) {
+        if (!rateCardCache) return null;
+        for (var i = 0; i < rateCardCache.room_types.length; i++) {
+            if (String(rateCardCache.room_types[i].room_type_id) === String(rtId)) {
+                return rateCardCache.room_types[i];
+            }
+        }
+        return null;
+    }
+
+    function getAvgIndivRate(rtInfo) {
+        if (!rtInfo || !rtInfo.channels) return null;
+        var rates = [];
+        rtInfo.channels.forEach(function(ch) {
+            (ch.rate_plans || []).forEach(function(rp) {
+                if (rp.room_rate) rates.push(rp.room_rate);
+            });
+        });
+        return rates.length > 0 ? Math.round(rates.reduce(function(a,b){return a+b;},0) / rates.length) : null;
+    }
+
+    function updateInventoryHints() {
+        allocContainer.querySelectorAll('.room-alloc-row').forEach(function(row) {
+            var select = row.querySelector('select[name="rt_id"]');
+            var roomsInput = row.querySelector('input[name="rt_rooms"]');
+            var hint = row.querySelector('.inventory-hint');
+            var rtId = select.value;
+
+            // Use availability API (accounts for existing bookings) if available
+            var availInfo = getAvailInfo(rtId);
+            var rtInfo = getRoomTypeInfo(rtId);
+
+            if (availInfo) {
+                var minAvail = availInfo.min_available;
+                var total = availInfo.total_rooms;
+                var maxOcc = availInfo.max_occupied;
+                var requested = parseInt(roomsInput.value) || 0;
+                var indivRate = rtInfo ? getAvgIndivRate(rtInfo) : null;
+
+                if (requested > minAvail) {
+                    hint.className = 'col-span-2 inventory-hint text-xs text-amber-600 font-medium';
+                    hint.textContent = minAvail + '/' + total + ' avail (peak ' + maxOcc + ' booked)';
+                } else {
+                    hint.className = 'col-span-2 inventory-hint text-xs text-gray-400';
+                    hint.textContent = minAvail + '/' + total + ' avail'
+                        + (indivRate ? ' | ~$' + indivRate : '');
+                }
+            } else if (rtInfo) {
+                var avail = rtInfo.number_of_rooms;
+                var indivRate = getAvgIndivRate(rtInfo);
+                hint.className = 'col-span-2 inventory-hint text-xs text-gray-400';
+                hint.textContent = avail + ' total' + (indivRate ? ' | ~$' + indivRate : '');
+            } else {
+                hint.className = 'col-span-2 inventory-hint text-xs text-gray-400';
+                hint.textContent = '';
+            }
+        });
+    }
+
+    allocContainer.addEventListener('change', function() { updateInventoryHints(); updateRoomNights(); });
+    allocContainer.addEventListener('input', function() { updateInventoryHints(); updateRoomNights(); });
+
+    // Add room type row
+    document.getElementById('addRoomTypeBtn').addEventListener('click', function() {
+        var row = document.createElement('div');
+        row.className = 'room-alloc-row grid grid-cols-12 gap-2 items-center';
+        row.innerHTML = '<select name="rt_id" class="col-span-4 ' + inputCls + '">' + rtOptionsHTML + '</select>'
+            + '<input type="number" name="rt_rooms" value="1" min="1" max="50" class="col-span-2 ' + inputCls + '">'
+            + '<input type="number" name="rt_rate" value="55" min="0" step="1" class="col-span-2 ' + inputCls + '">'
+            + '<span class="col-span-2 rt-room-nights text-sm font-medium text-gray-600 text-center">-</span>'
+            + '<span class="col-span-1 inventory-hint text-xs text-gray-400"></span>'
+            + '<button type="button" class="col-span-1 remove-rt-row text-red-400 hover:text-red-600 text-lg leading-none text-center" title="Remove">&times;</button>';
+        allocContainer.appendChild(row);
+        updateInventoryHints();
+        updateRoomNights();
+    });
+
+    // Remove room type row (delegated)
+    allocContainer.addEventListener('click', function(e) {
+        if (e.target.classList.contains('remove-rt-row')) {
+            e.target.closest('.room-alloc-row').remove();
+            updateRoomNights();
+        }
+    });
+
+    // Collect room allocations from form
+    function getRoomAllocations() {
+        var rows = allocContainer.querySelectorAll('.room-alloc-row');
+        var allocs = [];
+        rows.forEach(function(row) {
+            var rtId = row.querySelector('select[name="rt_id"]').value;
+            var rooms = parseInt(row.querySelector('input[name="rt_rooms"]').value) || 1;
+            var rate = parseFloat(row.querySelector('input[name="rt_rate"]').value) || 0;
+            var rtName = row.querySelector('select[name="rt_id"]').selectedOptions[0].text;
+            allocs.push({room_type_id: rtId, rooms: rooms, rate: rate, name: rtName});
+        });
+        return allocs;
+    }
+
+    function getTotalRooms() {
+        return getRoomAllocations().reduce(function(sum, a) { return sum + a.rooms; }, 0);
+    }
+
+    function validateAllocations() {
+        if (!form.arrival.value || !form.departure.value) {
+            showToast('Set arrival and departure dates first', 'error');
+            return false;
+        }
+        if (getNights() <= 0) {
+            showToast('Departure must be after arrival', 'error');
+            return false;
+        }
+        var allocs = getRoomAllocations();
+        if (allocs.length === 0) {
+            showToast('Add at least one room type', 'error');
+            return false;
+        }
+        return true;
+    }
 
     form.addEventListener('submit', function(e) {
         e.preventDefault();
+        if (!validateAllocations()) return;
+
+        var allocs = getRoomAllocations();
+
+        // Get meal supplement from selected rate plan
+        var rpSelect = form.rate_plan_id;
+        var supplement = rpSelect.options[rpSelect.selectedIndex]
+            ? rpSelect.options[rpSelect.selectedIndex].getAttribute('data-supplement') || '0'
+            : '0';
+
         var params = new URLSearchParams({
-            rooms: form.rooms.value,
             arrival: form.arrival.value,
             departure: form.departure.value,
-            rate: form.rate.value,
             commission: form.commission.value,
-            supplement: form.supplement.value,
+            supplement: supplement,
             pax: form.pax.value,
+            room_allocations: JSON.stringify(allocs.map(function(a) {
+                return {room_type_id: parseInt(a.room_type_id), rooms: a.rooms, rate: a.rate};
+            })),
         });
 
         var btn = form.querySelector('button[type="submit"]');
@@ -337,7 +627,7 @@
                     return;
                 }
                 var d = resp.data;
-                renderResult(d);
+                renderResult(d, allocs);
                 resultDiv.classList.remove('hidden');
             })
             .catch(function(err) {
@@ -347,7 +637,7 @@
             });
     });
 
-    function renderResult(d) {
+    function renderResult(d, allocs) {
         // Recommendation banner
         var banner = document.getElementById('recBanner');
         var colors = {
@@ -370,17 +660,56 @@
 
         // Group side
         document.getElementById('groupNet').textContent = '$' + fmt(d.group_net);
-        document.getElementById('groupRate').textContent = '$' + fmt(d.group_rate);
         document.getElementById('groupRooms').textContent = d.rooms;
         document.getElementById('groupNights').textContent = d.nights;
         document.getElementById('groupCommission').textContent = '$' + fmt(d.group_commission);
         document.getElementById('groupCommPct').textContent = d.group_commission_pct;
+        // Per-room-type group breakdown
+        var groupBk = document.getElementById('groupRoomBreakdown');
+        groupBk.innerHTML = '';
+        (d.group_alloc_breakdown || []).forEach(function(ga) {
+            groupBk.innerHTML += '<div class="text-xs text-blue-600">'
+                + ga.room_type_name + ': ' + ga.rooms + ' rooms &times; $' + fmt(ga.rate) + '/night'
+                + '</div>';
+        });
 
         // Individual side
         document.getElementById('indivNet').textContent = '$' + fmt(d.individual_net);
         document.getElementById('fillRate').textContent = d.fill_rate_pct;
         document.getElementById('roomsSell').textContent = d.rooms_that_would_sell;
-        document.getElementById('channelAdr').textContent = fmt(d.channel_weighted_adr);
+
+        // Per-room-type breakdown
+        var rtBreakdown = document.getElementById('indivRoomTypeBreakdown');
+        rtBreakdown.innerHTML = '';
+        (d.room_type_breakdown || []).forEach(function(rt) {
+            rtBreakdown.innerHTML += '<div class="text-xs text-gray-500">'
+                + rt.room_type_name + ': ' + rt.rooms + ' rooms &times; $' + fmt(rt.net_adr) + ' net ADR'
+                + '</div>';
+        });
+
+        // OTB displacement
+        var otbPanel = document.getElementById('otbDisplacementPanel');
+        if (d.otb_revenue > 0) {
+            otbPanel.classList.remove('hidden');
+            document.getElementById('otbRevenue').textContent = '$' + fmt(d.otb_revenue);
+            document.getElementById('otbBookings').textContent = d.otb_bookings;
+            document.getElementById('otbRoomNights').textContent = d.otb_room_nights;
+            var otbRT = document.getElementById('otbByRoomType');
+            otbRT.innerHTML = '';
+            (d.otb_by_room_type || []).forEach(function(rt) {
+                otbRT.innerHTML += '<div class="text-xs text-orange-600">'
+                    + rt.room_type_name + ': ' + rt.bookings + ' bookings, '
+                    + rt.room_nights + ' RN, $' + fmt(rt.revenue)
+                    + '</div>';
+            });
+        } else {
+            otbPanel.classList.remove('hidden');
+            document.getElementById('otbRevenue').textContent = '$0';
+            document.getElementById('otbBookings').textContent = '0';
+            document.getElementById('otbRoomNights').textContent = '0';
+            document.getElementById('otbByRoomType').innerHTML =
+                '<div class="text-xs text-green-600">No existing bookings to displace for these room types</div>';
+        }
 
         // Displacement numbers
         document.getElementById('dispTotal').textContent = '$' + fmt(d.displacement);
@@ -426,5 +755,94 @@
         if (n === undefined || n === null) return '-';
         return Number(n).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0});
     }
+
+    // Save as Allotment
+    document.getElementById('saveAllotmentBtn').addEventListener('click', function() {
+        var btn = this;
+        var feedback = document.getElementById('saveAllotmentFeedback');
+        var groupName = (form.group_name.value || '').trim();
+
+        if (!groupName) {
+            feedback.className = 'mt-2 text-sm text-center rounded-lg p-2 bg-red-100 text-red-700';
+            feedback.textContent = 'Please enter a Group Name before saving.';
+            feedback.classList.remove('hidden');
+            return;
+        }
+        if (!form.arrival.value || !form.departure.value) {
+            feedback.className = 'mt-2 text-sm text-center rounded-lg p-2 bg-red-100 text-red-700';
+            feedback.textContent = 'Arrival and departure dates are required.';
+            feedback.classList.remove('hidden');
+            return;
+        }
+
+        var rpSelect = form.rate_plan_id;
+        var supplement = rpSelect.options[rpSelect.selectedIndex]
+            ? rpSelect.options[rpSelect.selectedIndex].getAttribute('data-supplement') || '0'
+            : '0';
+
+        // Release date defaults to 14 days before arrival
+        var arrDate = new Date(form.arrival.value);
+        var releaseDate = new Date(arrDate);
+        releaseDate.setDate(releaseDate.getDate() - 14);
+        var releaseDateStr = releaseDate.toISOString().split('T')[0];
+
+        var allocs = getRoomAllocations();
+        var totalRooms = getTotalRooms();
+        // Weighted average rate across room types
+        var weightedRate = totalRooms > 0
+            ? allocs.reduce(function(sum, a) { return sum + (a.rate * a.rooms); }, 0) / totalRooms
+            : 0;
+
+        var payload = {
+            group_name: groupName,
+            arrival_date: form.arrival.value,
+            departure_date: form.departure.value,
+            rooms_blocked: totalRooms,
+            agreed_rate: Math.round(weightedRate * 100) / 100,
+            release_date: releaseDateStr,
+            status: 'tentative',
+            notes: 'Created from displacement analysis. Commission: ' + form.commission.value
+                 + '%, Meal supplement: $' + supplement + '/pax, Pax: ' + form.pax.value
+                 + '. Room mix: ' + allocs.map(function(a) {
+                     return a.name + ' x' + a.rooms + ' @$' + a.rate;
+                 }).join(', '),
+        };
+
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        feedback.classList.add('hidden');
+
+        fetch(API_BASE + '/api/groups/create/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify(payload),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+            btn.disabled = false;
+            btn.textContent = 'Save as Allotment';
+            if (resp.success) {
+                feedback.className = 'mt-2 text-sm text-center rounded-lg p-2 bg-green-100 text-green-700';
+                feedback.textContent = resp.message || 'Allotment saved successfully.';
+                feedback.classList.remove('hidden');
+                if (typeof showToast === 'function') showToast(resp.message || 'Allotment saved', 'success');
+            } else {
+                feedback.className = 'mt-2 text-sm text-center rounded-lg p-2 bg-red-100 text-red-700';
+                feedback.textContent = resp.message || 'Failed to save allotment.';
+                feedback.classList.remove('hidden');
+                if (typeof showToast === 'function') showToast(resp.message || 'Save failed', 'error');
+            }
+        })
+        .catch(function(err) {
+            btn.disabled = false;
+            btn.textContent = 'Save as Allotment';
+            feedback.className = 'mt-2 text-sm text-center rounded-lg p-2 bg-red-100 text-red-700';
+            feedback.textContent = 'Error: ' + err.message;
+            feedback.classList.remove('hidden');
+        });
+    });
 })();
 {% endblock %}

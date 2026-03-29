@@ -250,14 +250,13 @@ class DisplacementService:
         Returns dict with recommendation, revenue comparison, break-even rate.
         """
         if allotment:
-            rooms = allotment.rooms_blocked
             arrival = allotment.arrival_date
             departure = allotment.departure_date
-            group_rate = float(allotment.agreed_rate)
             commission_pct = 10.0
             meal_supplement = 0.0
             pax = 2
             group_name = allotment.group_name
+            room_allocations = [{'rooms': allotment.rooms_blocked, 'rate': float(allotment.agreed_rate)}]
             if allotment.agent and hasattr(allotment.agent, 'channel'):
                 ch = allotment.agent.channel
                 if ch:
@@ -265,14 +264,41 @@ class DisplacementService:
             if allotment.rate_plan:
                 meal_supplement = float(allotment.rate_plan.meal_supplement)
         else:
-            rooms = int(kwargs.get('rooms', 1))
             arrival = kwargs['arrival']
             departure = kwargs['departure']
-            group_rate = float(kwargs.get('rate', 0))
             commission_pct = float(kwargs.get('commission', 10))
             meal_supplement = float(kwargs.get('supplement', 0))
             pax = int(kwargs.get('pax', 2))
             group_name = kwargs.get('group_name', 'Ad-hoc analysis')
+
+        # Parse room allocations: [{room_type_id, rooms, rate}, ...]
+        if not allotment:
+            room_allocations = kwargs.get('room_allocations', [])
+            if not room_allocations:
+                rooms_fallback = int(kwargs.get('rooms', 1))
+                rate_fallback = float(kwargs.get('rate', 0))
+                room_allocations = [{'rooms': rooms_fallback, 'rate': rate_fallback}]
+
+        # Resolve room type objects for each allocation
+        from pricing.models import RoomType
+        resolved_allocs = []
+        total_group_rooms = 0
+        for alloc in room_allocations:
+            rt_id = alloc.get('room_type_id')
+            rt_rooms = int(alloc.get('rooms', 1))
+            rt_rate = float(alloc.get('rate', 0))
+            rt_obj = None
+            if rt_id:
+                try:
+                    rt_obj = RoomType.objects.get(id=int(rt_id), hotel=self.hotel)
+                except RoomType.DoesNotExist:
+                    pass
+            resolved_allocs.append({
+                'room_type': rt_obj, 'rooms': rt_rooms, 'rate': rt_rate,
+            })
+            total_group_rooms += rt_rooms
+
+        rooms = total_group_rooms
 
         nights = (departure - arrival).days
         if nights <= 0:
@@ -280,29 +306,62 @@ class DisplacementService:
 
         total_rooms = self.hotel.get_total_rooms()
 
-        # === 1. GROUP NET REVENUE ===
+        # === 1. GROUP NET REVENUE (per room-type allocation) ===
+        group_room_revenue = sum(a['rate'] * a['rooms'] * nights for a in resolved_allocs)
         group_meal_total = meal_supplement * pax * nights
-        group_gross = (group_rate * rooms * nights) + group_meal_total
+        group_gross = group_room_revenue + group_meal_total
         group_commission = group_gross * (commission_pct / 100)
         group_net = group_gross - group_commission
+        # Weighted average rate for display
+        group_rate = group_room_revenue / (rooms * nights) if rooms * nights > 0 else 0
 
         # === 2. ESTIMATE INDIVIDUAL FILL RATE ===
         fill_rate, fill_components = self._estimate_fill_rate(
             arrival, departure, rooms, total_rooms
         )
 
-        # === 3. CHANNEL-WEIGHTED NET ADR ===
-        channel_adr, channel_mix = self._get_channel_weighted_adr(arrival)
+        # === 3. PER-ROOM-TYPE CHANNEL-WEIGHTED NET ADR ===
+        individual_net = 0.0
+        room_type_breakdown = []
+        combined_channel_mix = []
+
+        for alloc in resolved_allocs:
+            rt_obj = alloc['room_type']
+            rt_rooms = alloc['rooms']
+            channel_adr, channel_mix = self._get_channel_weighted_adr(
+                arrival, room_type=rt_obj)
+            rt_would_sell = rt_rooms * fill_rate
+            rt_individual = channel_adr * rt_would_sell * nights
+            individual_net += rt_individual
+            room_type_breakdown.append({
+                'room_type_name': rt_obj.name if rt_obj else 'All Types',
+                'rooms': rt_rooms,
+                'net_adr': round(channel_adr, 2),
+                'would_sell': round(rt_would_sell, 1),
+                'individual_net': round(rt_individual, 2),
+            })
+            if not combined_channel_mix:
+                combined_channel_mix = channel_mix
+
+        # Weighted average ADR across all room types for display
+        if rooms > 0:
+            channel_adr_avg = sum(
+                rt['net_adr'] * rt['rooms'] for rt in room_type_breakdown
+            ) / rooms
+        else:
+            channel_adr_avg = 0.0
 
         # === 4. INDIVIDUAL NET REVENUE (counterfactual) ===
         rooms_that_would_sell = rooms * fill_rate
-        individual_net = channel_adr * rooms_that_would_sell * nights
 
-        # === 5. DISPLACEMENT ===
+        # === 5. OTB REVENUE THAT WOULD BE DISPLACED ===
+        otb_displacement = self._get_otb_revenue(arrival, departure, resolved_allocs)
+
+        # === 6. DISPLACEMENT ===
         displacement = group_net - individual_net
         displacement_per_rn = displacement / (rooms * nights) if rooms * nights > 0 else 0
 
-        # === 6. BREAK-EVEN RATE ===
+        # === 7. BREAK-EVEN RATE ===
         if rooms * nights > 0 and (1 - commission_pct / 100) > 0:
             breakeven_gross_per_rn = (individual_net / (rooms * nights))
             breakeven_rate = breakeven_gross_per_rn / (1 - commission_pct / 100)
@@ -313,7 +372,7 @@ class DisplacementService:
 
         negotiation_gap = group_rate - breakeven_rate
 
-        # === 7. RECOMMENDATION ===
+        # === 8. RECOMMENDATION ===
         recommendation, confidence, reasoning = self._make_recommendation(
             displacement, fill_rate, group_rate, breakeven_rate,
             rooms, total_rooms, nights
@@ -333,14 +392,25 @@ class DisplacementService:
             'group_net': round(group_net, 2),
             'group_net_per_rn': round(group_net / (rooms * nights), 2) if rooms * nights > 0 else 0,
             'meal_supplement': meal_supplement,
+            'group_alloc_breakdown': [
+                {
+                    'room_type_name': a['room_type'].name if a['room_type'] else 'Unspecified',
+                    'rooms': a['rooms'],
+                    'rate': round(a['rate'], 2),
+                    'room_nights': a['rooms'] * nights,
+                    'revenue': round(a['rate'] * a['rooms'] * nights, 2),
+                }
+                for a in resolved_allocs
+            ],
 
             # Individual side (counterfactual)
             'fill_rate': round(fill_rate, 3),
             'fill_rate_pct': round(fill_rate * 100, 1),
             'fill_components': fill_components,
             'rooms_that_would_sell': round(rooms_that_would_sell, 1),
-            'channel_weighted_adr': round(channel_adr, 2),
-            'channel_mix': channel_mix,
+            'channel_weighted_adr': round(channel_adr_avg, 2),
+            'channel_mix': combined_channel_mix,
+            'room_type_breakdown': room_type_breakdown,
             'individual_net': round(individual_net, 2),
             'individual_net_per_rn': round(individual_net / (rooms * nights), 2) if rooms * nights > 0 else 0,
 
@@ -350,6 +420,12 @@ class DisplacementService:
             'displacement_pct': round(
                 displacement / individual_net * 100, 1
             ) if individual_net > 0 else 0,
+
+            # OTB displacement
+            'otb_revenue': round(otb_displacement['total_revenue'], 2),
+            'otb_room_nights': otb_displacement['total_room_nights'],
+            'otb_bookings': otb_displacement['total_bookings'],
+            'otb_by_room_type': otb_displacement['by_room_type'],
 
             # Break-even
             'breakeven_rate': round(breakeven_rate, 2),
@@ -431,19 +507,22 @@ class DisplacementService:
         }
         return fill_rate, components
 
-    def _get_channel_weighted_adr(self, target_date):
+    def _get_channel_weighted_adr(self, target_date, room_type=None):
         """
         Calculate channel-weighted net ADR from actual booking data
-        for the same calendar month.
+        for the same calendar month, optionally filtered by room type.
         """
         from pricing.models import Reservation
 
         month = target_date.month
-        reservations = Reservation.objects.filter(
+        qs = Reservation.objects.filter(
             hotel=self.hotel,
             arrival_date__month=month,
             status__in=Reservation.ACTIVE_STATUSES,
-        ).select_related('channel')
+        )
+        if room_type:
+            qs = qs.filter(room_type=room_type)
+        reservations = qs.select_related('channel')
 
         channel_data = defaultdict(lambda: {
             'revenue': Decimal('0'), 'nights': 0, 'commission_pct': Decimal('0'),
@@ -483,6 +562,9 @@ class DisplacementService:
                 card = svc.get_rate_card(target_date)
                 rates = []
                 for rt in card.get('room_types', []):
+                    # If room_type specified, only use that room type's rates
+                    if room_type and rt.get('room_type_id') != room_type.id:
+                        continue
                     for ch in rt.get('channels', []):
                         for rp in ch.get('rate_plans', []):
                             rates.append(Decimal(str(rp.get('room_rate', 0))))
@@ -493,6 +575,129 @@ class DisplacementService:
 
         channel_mix.sort(key=lambda x: x.get('share_pct', 0), reverse=True)
         return float(weighted_net_adr), channel_mix
+
+    def _get_otb_revenue(self, arrival, departure, resolved_allocs):
+        """
+        Calculate actual on-the-books revenue that would be displaced
+        by the group block for the specific room types and date range.
+
+        Returns revenue from confirmed/future reservations that overlap
+        the group stay period, filtered by the room types in the block.
+        """
+        from pricing.models import Reservation
+
+        result = {
+            'total_revenue': 0.0,
+            'total_room_nights': 0,
+            'total_bookings': 0,
+            'by_room_type': [],
+        }
+
+        # Get room type IDs from allocations
+        rt_ids = [a['room_type'].id for a in resolved_allocs if a['room_type']]
+
+        if not rt_ids:
+            return result
+
+        # Find reservations overlapping the group stay for these room types
+        otb_qs = Reservation.objects.filter(
+            hotel=self.hotel,
+            room_type_id__in=rt_ids,
+            arrival_date__lt=departure,
+            departure_date__gt=arrival,
+            status__in=Reservation.FUTURE_STATUSES,
+        ).select_related('room_type')
+
+        # Calculate per-room-type OTB
+        rt_otb = defaultdict(lambda: {'revenue': 0.0, 'room_nights': 0, 'bookings': 0})
+
+        for res in otb_qs:
+            # Only count nights that overlap with the group stay
+            overlap_start = max(res.arrival_date, arrival)
+            overlap_end = min(res.departure_date, departure)
+            overlap_nights = (overlap_end - overlap_start).days
+            if overlap_nights <= 0:
+                continue
+
+            # Pro-rate revenue for the overlapping nights
+            if res.nights and res.nights > 0:
+                daily_rate = float(res.total_amount or 0) / res.nights
+            else:
+                daily_rate = float(res.total_amount or 0)
+            overlap_revenue = daily_rate * overlap_nights
+
+            rt_name = res.room_type.name if res.room_type else 'Unknown'
+            rt_otb[rt_name]['revenue'] += overlap_revenue
+            rt_otb[rt_name]['room_nights'] += overlap_nights
+            rt_otb[rt_name]['bookings'] += 1
+
+        for rt_name, data in rt_otb.items():
+            result['by_room_type'].append({
+                'room_type_name': rt_name,
+                'revenue': round(data['revenue'], 2),
+                'room_nights': data['room_nights'],
+                'bookings': data['bookings'],
+            })
+            result['total_revenue'] += data['revenue']
+            result['total_room_nights'] += data['room_nights']
+            result['total_bookings'] += data['bookings']
+
+        return result
+
+    def get_room_availability(self, arrival, departure):
+        """
+        Per-room-type availability for the full stay duration.
+
+        Returns for each room type: total rooms, max occupied on any night,
+        and minimum available rooms across the stay.
+        """
+        from pricing.models import Reservation, RoomType, PricingMatrixVersion
+
+        nights = (departure - arrival).days
+        if nights <= 0:
+            return []
+
+        # Get room types for this hotel
+        active_version = PricingMatrixVersion.get_published(self.hotel)
+        version_filter = {'hotel': self.hotel}
+        if active_version:
+            version_filter['version'] = active_version
+        room_types = RoomType.objects.filter(**version_filter).order_by('sort_order')
+
+        # Get all reservations overlapping the stay
+        reservations = Reservation.objects.filter(
+            hotel=self.hotel,
+            arrival_date__lt=departure,
+            departure_date__gt=arrival,
+            status__in=Reservation.FUTURE_STATUSES,
+            room_type__isnull=False,
+        ).values('room_type_id', 'arrival_date', 'departure_date')
+
+        # Build per-room-type daily occupancy
+        rt_daily = defaultdict(lambda: defaultdict(int))
+        for res in reservations:
+            overlap_start = max(res['arrival_date'], arrival)
+            overlap_end = min(res['departure_date'], departure)
+            current = overlap_start
+            while current < overlap_end:
+                rt_daily[res['room_type_id']][current] += 1
+                current += timedelta(days=1)
+
+        result = []
+        for rt in room_types:
+            total = rt.number_of_rooms or 0
+            daily_occ = rt_daily.get(rt.id, {})
+            max_occ = max(daily_occ.values()) if daily_occ else 0
+            min_avail = total - max_occ
+            result.append({
+                'room_type_id': rt.id,
+                'room_type_name': rt.name,
+                'total_rooms': total,
+                'max_occupied': max_occ,
+                'min_available': max(0, min_avail),
+            })
+
+        return result
 
     def _make_recommendation(self, displacement, fill_rate, group_rate,
                               breakeven_rate, rooms, total_rooms, nights):

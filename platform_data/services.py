@@ -1359,6 +1359,178 @@ class MarketSignalService:
             'top_driver': 'No data', 'source': '', 'components': [], 'has_data': False,
         })
 
+    @staticmethod
+    def forecast_arrivals_for_month(prop, target_month, trailing_months=6):
+        """
+        Forecast arrivals YoY for a future month using trailing average of
+        actual YoY trends from the most recent data available.
+
+        For each source market in the property's guest mix, averages the last
+        N months of actual YoY data and projects that forward. Same for
+        national totals.
+
+        Returns same shape as get_monthly_demand_indices single entry.
+        """
+        from .models import MarketArrivalData, MarketKeyIndicator
+
+        country_code = getattr(prop, 'country_code', 'MV') or 'MV'
+        year = target_month.year
+        month = target_month.month
+
+        guest_mix = MarketSignalService._get_property_guest_mix_for_month(
+            prop, year, month
+        )
+
+        # --- National forecast (month-specific, recency-weighted) ---
+        # Use all available same-calendar-month data with exponential decay
+        # weighting: most recent year weight=1.0, each older year halved.
+        from django.db.models import Avg
+
+        national_forecast_pct = None
+
+        # Get all same-calendar-month periods, newest first
+        same_month_periods = MarketArrivalData.objects.filter(
+            country_code=country_code,
+            report_period__month=month,
+            yoy_change_pct__isnull=False,
+        ).order_by('-report_period').values('report_period').annotate(
+            avg_yoy=Avg('yoy_change_pct')
+        )
+
+        if same_month_periods:
+            weighted_sum = 0.0
+            weight_total = 0.0
+            for i, row in enumerate(same_month_periods):
+                w = 0.5 ** i  # 1.0, 0.5, 0.25, ...
+                weighted_sum += float(row['avg_yoy']) * w
+                weight_total += w
+            national_forecast_pct = round(weighted_sum / weight_total, 1)
+        else:
+            # Fallback: trailing recency-weighted average across all months
+            recent_periods = MarketArrivalData.objects.filter(
+                country_code=country_code,
+                yoy_change_pct__isnull=False,
+            ).order_by('-report_period').values('report_period').annotate(
+                avg_yoy=Avg('yoy_change_pct')
+            )[:trailing_months]
+
+            if recent_periods:
+                weighted_sum = 0.0
+                weight_total = 0.0
+                for i, row in enumerate(recent_periods):
+                    w = 0.5 ** i
+                    weighted_sum += float(row['avg_yoy']) * w
+                    weight_total += w
+                national_forecast_pct = round(weighted_sum / weight_total, 1)
+
+        # --- Per-market forecast ---
+        total_mix_nights = sum(m['nights'] for m in guest_mix) if guest_mix else 0
+        if total_mix_nights < 20 or len(guest_mix) < 3:
+            guest_mix = []
+
+        if not guest_mix:
+            if national_forecast_pct is not None:
+                half_pct = national_forecast_pct / 2
+                factor = max(0.85, min(1.15, round(1.0 + half_pct / 100, 4)))
+                return {
+                    'factor': factor,
+                    'pct': round(half_pct, 1),
+                    'national_pct': national_forecast_pct,
+                    'top_driver': f"National trend {national_forecast_pct:+.1f}%",
+                    'source': 'Forecast — national trend',
+                    'components': [],
+                    'has_data': True,
+                    'is_forecast': True,
+                }
+            return {
+                'factor': 1.0, 'pct': 0.0, 'national_pct': None,
+                'top_driver': 'No data', 'source': 'No data for forecast',
+                'components': [], 'has_data': False, 'is_forecast': True,
+            }
+
+        components = []
+        weighted_sum = 0.0
+        covered_share = 0.0
+
+        for market in guest_mix:
+            # Recency-weighted: same calendar month across all available years
+            same_month_recs = MarketArrivalData.objects.filter(
+                country_code=country_code,
+                origin_country=market['country'],
+                report_period__month=month,
+                yoy_change_pct__isnull=False,
+            ).order_by('-report_period')
+
+            src_label = ''
+            if same_month_recs.exists():
+                w_sum = 0.0
+                w_total = 0.0
+                for idx, rec in enumerate(same_month_recs):
+                    w = 0.5 ** idx
+                    w_sum += float(rec.yoy_change_pct) * w
+                    w_total += w
+                avg_yoy = round(w_sum / w_total, 1)
+                n = same_month_recs.count()
+                src_label = f'Same month · {n}yr weighted'
+            else:
+                # Fallback: recency-weighted trailing across all periods
+                market_records = MarketArrivalData.objects.filter(
+                    country_code=country_code,
+                    origin_country=market['country'],
+                    yoy_change_pct__isnull=False,
+                ).order_by('-report_period')[:trailing_months]
+
+                if market_records.exists():
+                    w_sum = 0.0
+                    w_total = 0.0
+                    for idx, rec in enumerate(market_records):
+                        w = 0.5 ** idx
+                        w_sum += float(rec.yoy_change_pct) * w
+                        w_total += w
+                    avg_yoy = round(w_sum / w_total, 1)
+                    src_label = f'Trailing {market_records.count()}mo weighted'
+                elif national_forecast_pct is not None:
+                    avg_yoy = national_forecast_pct
+                    src_label = 'National fallback'
+                else:
+                    avg_yoy = 0.0
+                    src_label = 'No data'
+
+            impact = market['share'] * avg_yoy
+            weighted_sum += impact
+            covered_share += market['share']
+
+            components.append({
+                'country': market['country'],
+                'share': round(market['share'] * 100, 1),
+                'country_yoy': avg_yoy,
+                'impact': round(impact, 2),
+                'source': src_label,
+            })
+
+        # Uncovered share
+        uncovered = 1.0 - covered_share
+        if uncovered > 0.01 and national_forecast_pct is not None:
+            weighted_sum += uncovered * national_forecast_pct
+
+        # Half-weight damping
+        damped_pct = weighted_sum / 2
+        factor = max(0.75, min(1.25, round(1.0 + damped_pct / 100, 4)))
+
+        top = max(components, key=lambda c: abs(c['impact'])) if components else None
+        top_driver = f"{top['country']} {top['country_yoy']:+.1f}%" if top else 'No data'
+
+        return {
+            'factor': factor,
+            'pct': round(damped_pct, 1),
+            'national_pct': national_forecast_pct,
+            'top_driver': top_driver,
+            'source': f'Forecast — trailing {trailing_months}mo avg · {len(guest_mix)} markets',
+            'components': components,
+            'has_data': True,
+            'is_forecast': True,
+        }
+
     # -----------------------------------------------------------------
     # Guesthouse demand pipeline
     # -----------------------------------------------------------------

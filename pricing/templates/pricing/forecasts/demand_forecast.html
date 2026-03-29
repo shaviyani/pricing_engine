@@ -143,6 +143,7 @@
                         <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Forecast</th>
                         <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Capacity</th>
                         <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Occ %</th>
+                        <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">Cxl %</th>
                         <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">BB</th>
                         <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">HB</th>
                         <th class="text-right px-4 py-2 text-xs font-semibold text-gray-600">FB</th>
@@ -236,7 +237,9 @@ function renderForecast(data) {
     document.getElementById('kpi-rooms').textContent = data.assumptions.total_rooms;
     document.getElementById('kpi-avg-occ').textContent = avgOcc + '%';
     document.getElementById('kpi-avg-bb').textContent = '$' + avgBB;
-    document.getElementById('kpi-cancel-rate').textContent = Math.round(data.assumptions.cancel_rate * 100) + '%';
+    var crText = Math.round(data.assumptions.cancel_rate * 100) + '%';
+    if (data.assumptions.cancel_rate_type === 'monthly') crText += ' (mo)';
+    document.getElementById('kpi-cancel-rate').textContent = crText;
     document.getElementById('kpi-low-periods').textContent = lowPeriods;
     document.getElementById('kpi-cards').classList.remove('hidden');
 
@@ -282,6 +285,10 @@ function renderTable(periods) {
             '<td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">' + p.net_forecast + '</td>' +
             '<td class="px-4 py-3 text-sm text-right text-gray-500">' + p.capacity + '</td>' +
             '<td class="px-4 py-3 text-sm text-right font-semibold ' + occClass + '">' + p.occupancy_pct.toFixed(1) + '%</td>' +
+            '<td class="px-4 py-3 text-sm text-right">' +
+                '<span class="inline-block px-1.5 py-0.5 rounded text-xs font-medium ' +
+                (p.cancel_rate_pct > 60 ? 'bg-red-100 text-red-700' : p.cancel_rate_pct > 40 ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700') +
+                '">' + p.cancel_rate_pct.toFixed(1) + '%</span></td>' +
             '<td class="px-4 py-3 text-sm text-right font-semibold text-gray-900">$' + p.rate_bb + '</td>' +
             '<td class="px-4 py-3 text-sm text-right text-gray-700">$' + p.rate_hb + '</td>' +
             '<td class="px-4 py-3 text-sm text-right text-gray-700">$' + p.rate_fb + '</td>' +

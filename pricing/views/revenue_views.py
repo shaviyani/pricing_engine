@@ -13,6 +13,7 @@ from django.db import transaction
 
 from pricing.models import (
     MonthlyBudget, GroupAllotment, MarketSegment, LengthOfStayTier,
+    RoomType, RatePlan,
 )
 
 from .admin_views import ManageBaseMixin
@@ -28,6 +29,9 @@ class ManageBudgetView(ManageBaseMixin, TemplateView):
     """Monthly budget management and tracking."""
     template_name = 'pricing/manage/budget.html'
     active_section = 'budget'
+    nav_active_override = 'pricing'
+    nav_sub_override = 'budget'
+    required_roles = ['admin', 'manager']  # PricingAccess
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -91,6 +95,9 @@ class ManageGroupsView(ManageBaseMixin, TemplateView):
     """Group allotment management page."""
     template_name = 'pricing/manage/groups.html'
     active_section = 'groups'
+    nav_active_override = 'distribution'
+    nav_sub_override = 'allotments'
+    required_roles = ['admin', 'manager', 'sales']  # DistributionAccess
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -124,6 +131,15 @@ class ManageGroupsView(ManageBaseMixin, TemplateView):
 
         # Segments for form dropdown
         context['segments'] = MarketSegment.objects.filter(hotel=hotel, is_active=True)
+
+        # Room types and rate plans for displacement form
+        from pricing.models import PricingMatrixVersion
+        active_version = PricingMatrixVersion.get_published(hotel)
+        version_filter = {'hotel': hotel}
+        if active_version:
+            version_filter['version'] = active_version
+        context['room_types'] = RoomType.objects.filter(**version_filter).order_by('sort_order')
+        context['rate_plans'] = RatePlan.objects.filter(**version_filter).order_by('sort_order')
 
         return context
 
@@ -230,31 +246,72 @@ class DisplacementAnalysisView(ManageBaseMixin, View):
         except (ValueError, TypeError):
             return self.error_response("Invalid arrival/departure date format (use YYYY-MM-DD)")
 
-        rooms = int(request.GET.get('rooms', 1))
-        rate = float(request.GET.get('rate', 0))
         commission = float(request.GET.get('commission', 10))
         supplement = float(request.GET.get('supplement', 0))
         pax = int(request.GET.get('pax', 2))
         group_name = request.GET.get('group_name', 'Ad-hoc analysis')
 
+        # Parse room allocations: [{room_type_id, rooms, rate}, ...]
+        room_allocations = []
+        raw_allocs = request.GET.get('room_allocations', '')
+        if raw_allocs:
+            try:
+                room_allocations = json.loads(raw_allocs)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Backward compat: single room_type_id + rooms + rate
+        if not room_allocations:
+            rate = float(request.GET.get('rate', 0))
+            room_type_id = request.GET.get('room_type_id', '')
+            rooms = int(request.GET.get('rooms', 1))
+            if room_type_id:
+                room_allocations = [{'room_type_id': int(room_type_id), 'rooms': rooms, 'rate': rate}]
+            else:
+                room_allocations = [{'rooms': rooms, 'rate': rate}]
+
         from pricing.services import DisplacementService
         svc = DisplacementService(hotel)
 
         result = svc.analyze_displacement(
-            rooms=rooms,
             arrival=arrival,
             departure=departure,
-            rate=rate,
             commission=commission,
             supplement=supplement,
             pax=pax,
             group_name=group_name,
+            room_allocations=room_allocations,
         )
 
         if 'error' in result:
             return self.error_response(result['error'])
 
         return self.success_response(data=result)
+
+
+class RoomAvailabilityView(ManageBaseMixin, View):
+    """
+    AJAX endpoint for per-room-type availability across a date range.
+
+    GET /org/<org>/<prop>/api/room-availability/?arrival=2026-06-01&departure=2026-06-11
+    """
+
+    def get(self, request, *args, **kwargs):
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response("Property not found")
+
+        try:
+            arrival = date.fromisoformat(request.GET.get('arrival', ''))
+            departure = date.fromisoformat(request.GET.get('departure', ''))
+        except (ValueError, TypeError):
+            return self.error_response("Invalid date format (use YYYY-MM-DD)")
+
+        from pricing.services import DisplacementService
+        svc = DisplacementService(hotel)
+        availability = svc.get_room_availability(arrival, departure)
+
+        return self.success_response(data={'room_types': availability})
 
 
 # =============================================================================

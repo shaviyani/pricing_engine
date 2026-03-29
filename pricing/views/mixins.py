@@ -448,6 +448,491 @@ class ModelCrudMixin(PricingManagementMixin, View):
             message=f'{self.model_label} "{name}" deleted successfully'
         )
 
+    # -- Dispatch (consolidated single-URL routing) ---------------------
+
+    def dispatch(self, request, *args, **kwargs):
+        """Route based on HTTP method and pk presence for consolidated URLs."""
+        pk = kwargs.get(self.lookup_field)
+        if request.method == 'GET':
+            return self.list_items(request, *args, **kwargs)
+        elif request.method == 'POST':
+            if pk:
+                return self.update_instance(request, *args, **kwargs)
+            return self.create_instance(request, *args, **kwargs)
+        elif request.method == 'PUT':
+            return self.update_instance(request, *args, **kwargs)
+        elif request.method == 'DELETE':
+            return self.delete_instance(request, *args, **kwargs)
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+# =============================================================================
+# CRUD CONFIGS — Declarative configurations for standard CRUD entities
+# =============================================================================
+
+class _SeasonCrud(ModelCrudMixin):
+    """CRUD config for Season entity."""
+    model_class = Season
+    model_label = 'Season'
+    list_key = 'seasons'
+    list_order = ['start_date']
+    version_scoped = True
+    fields = {
+        'name': {'type': 'str', 'required': True},
+        'start_date': {'type': 'date', 'required': True},
+        'end_date': {'type': 'date', 'required': True},
+        'season_index': {'type': 'decimal', 'default': '1.00'},
+        'expected_occupancy': {'type': 'decimal', 'default': '70.00'},
+    }
+
+    def serialize_item(self, obj):
+        result = super().serialize_item(obj)
+        result['date_range_display'] = obj.date_range_display()
+        return result
+
+    def validate_create(self, data, hotel):
+        start = self.parse_date(data.get('start_date'))
+        end = self.parse_date(data.get('end_date'))
+        if not start or not end:
+            return self.error_response('Valid start and end dates are required')
+        if start > end:
+            return self.error_response('Start date must be before end date')
+
+    def validate_update(self, data, instance):
+        start = self.parse_date(data.get('start_date')) if 'start_date' in data else instance.start_date
+        end = self.parse_date(data.get('end_date')) if 'end_date' in data else instance.end_date
+        if start and end and start > end:
+            return self.error_response('Start date must be before end date')
+
+
+class _RatePlanCrud(ModelCrudMixin):
+    """CRUD config for RatePlan entity."""
+    model_class = RatePlan
+    model_label = 'Rate plan'
+    list_key = 'rate_plans'
+    list_order = ['sort_order']
+    version_scoped = True
+    auto_sort_order = True
+    fields = {
+        'name': {'type': 'str', 'required': True},
+        'meal_supplement': {'type': 'decimal', 'default': '0.00'},
+        'sort_order': {'type': 'int', 'default': 0},
+    }
+
+
+class _ChannelCrud(ModelCrudMixin):
+    """CRUD config for Channel entity (create/update/delete only; list has custom logic)."""
+    model_class = Channel
+    model_label = 'Channel'
+    list_key = 'channels'
+    list_order = ['sort_order']
+    version_scoped = True
+    auto_sort_order = True
+    fields = {
+        'name': {'type': 'str', 'required': True},
+        'base_discount_percent': {'type': 'decimal', 'default': '0.00'},
+        'commission_percent': {'type': 'decimal', 'default': '0.00'},
+        'distribution_share_percent': {'type': 'decimal', 'default': '0.00'},
+        'sort_order': {'type': 'int', 'default': 0},
+    }
+
+
+class _RoomTypeCrud(ModelCrudMixin):
+    """CRUD config for RoomType entity."""
+    model_class = RoomType
+    model_label = 'Room type'
+    list_key = 'room_types'
+    list_order = ['sort_order']
+    version_scoped = True
+    auto_sort_order = True
+    fields = {
+        'name': {'type': 'str', 'required': True},
+        'base_rate': {'type': 'decimal', 'default': '0.00'},
+        'room_index': {'type': 'decimal', 'default': '1.00'},
+        'room_adjustment': {'type': 'decimal', 'default': '0.00'},
+        'pricing_method': {'type': 'str', 'default': 'index'},
+        'number_of_rooms': {'type': 'int', 'default': 1},
+        'sort_order': {'type': 'int', 'default': 0},
+        'description': {'type': 'str', 'default': ''},
+        'target_occupancy': {'type': 'decimal', 'default': '70.00'},
+    }
+
+    def serialize_item(self, obj):
+        result = super().serialize_item(obj)
+        result['effective_rate'] = str(obj.get_effective_base_rate())
+        result['premium_percent'] = str(obj.get_premium_percent())
+        return result
+
+    def create_instance(self, request, *args, **kwargs):
+        """Override to use hotel.reference_base_rate as default for base_rate."""
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        # Set default base_rate from hotel if not provided
+        if 'base_rate' not in data or not data['base_rate']:
+            data['base_rate'] = str(hotel.reference_base_rate)
+
+        # Re-inject body for parent method
+        import io
+        request._stream = io.BytesIO(json.dumps(data).encode())
+        request._body = json.dumps(data).encode()
+
+        return super().create_instance(request, *args, **kwargs)
+
+    def validate_update(self, data, instance):
+        """Validate pricing_method is one of the allowed values."""
+        if 'pricing_method' in data:
+            if data['pricing_method'] not in ('direct', 'index', 'adjustment'):
+                return self.error_response('Invalid pricing method')
+        if 'number_of_rooms' in data:
+            try:
+                val = int(data['number_of_rooms'])
+                if val < 0:
+                    data['number_of_rooms'] = 0
+            except (ValueError, TypeError):
+                data['number_of_rooms'] = instance.number_of_rooms
+
+
+class _TravelAgentCrud(ModelCrudMixin):
+    """CRUD config for TravelAgent entity."""
+    model_label = 'Agent'
+    hotel_field = 'property'
+    list_key = 'agents'
+    list_order = ['name']
+    list_select_related = ['channel']
+    fields = {
+        'name': {'type': 'str', 'required': True},
+        'email': {'type': 'str', 'default': ''},
+        'notes': {'type': 'str', 'default': ''},
+        'is_active': {'type': 'bool', 'default': True},
+    }
+
+    @property
+    def model_class(self):
+        from pricing.models import TravelAgent
+        return TravelAgent
+
+    def serialize_item(self, obj):
+        return {
+            'id': obj.id,
+            'name': obj.name,
+            'email': obj.email,
+            'channel_id': obj.channel_id,
+            'channel_name': obj.channel.name if obj.channel else 'Default',
+            'token': obj.token,
+            'url': obj.get_absolute_url(),
+            'is_active': obj.is_active,
+            'notes': obj.notes,
+            'created_at': obj.created_at.strftime('%Y-%m-%d'),
+        }
+
+    def create_instance(self, request, *args, **kwargs):
+        """Override to handle channel_id FK lookup."""
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        name = (data.get('name') or '').strip()
+        if not name:
+            return self.error_response('Agent name is required')
+
+        channel_id = data.get('channel_id')
+        channel = None
+        if channel_id:
+            channel = Channel.objects.filter(pk=channel_id, hotel=hotel).first()
+
+        from pricing.models import TravelAgent
+        agent = TravelAgent.objects.create(
+            property=hotel,
+            channel=channel,
+            name=name,
+            email=(data.get('email') or '').strip(),
+            notes=(data.get('notes') or '').strip(),
+        )
+
+        return self.success_response(
+            data={
+                'id': agent.id,
+                'name': agent.name,
+                'token': agent.token,
+                'url': agent.get_absolute_url(),
+            },
+            message=f'Agent "{agent.name}" created successfully'
+        )
+
+    def update_instance(self, request, *args, **kwargs):
+        """Override to handle channel_id FK lookup on update."""
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        instance = self._get_instance(hotel)
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        if 'name' in data:
+            name = (data['name'] or '').strip()
+            if not name:
+                return self.error_response('Name cannot be empty')
+            instance.name = name
+
+        if 'email' in data:
+            instance.email = (data['email'] or '').strip()
+
+        if 'notes' in data:
+            instance.notes = (data['notes'] or '').strip()
+
+        if 'is_active' in data:
+            instance.is_active = bool(data['is_active'])
+
+        if 'channel_id' in data:
+            channel_id = data['channel_id']
+            if channel_id:
+                channel = Channel.objects.filter(pk=channel_id, hotel=instance.property).first()
+                instance.channel = channel
+            else:
+                instance.channel = None
+
+        instance.save()
+        return self.success_response(
+            message=f'Agent "{instance.name}" updated successfully'
+        )
+
+
+class _CompetitorCrud(ModelCrudMixin):
+    """CRUD config for CompetitiveSet (Competitor) entity."""
+    model_label = 'Competitor'
+    list_key = 'competitors'
+    list_order = ['-bb_rate']
+    fields = {
+        'competitor_name': {'type': 'str', 'required': True},
+        'bb_rate': {'type': 'decimal'},
+        'hb_rate': {'type': 'decimal'},
+        'fb_rate': {'type': 'decimal'},
+        'rating': {'type': 'decimal'},
+        'total_rooms': {'type': 'int', 'default': 0},
+        'position': {'type': 'str', 'default': 'mid'},
+        'notes': {'type': 'str', 'default': ''},
+        'source': {'type': 'str', 'default': 'Manual'},
+        'is_active': {'type': 'bool', 'default': True},
+    }
+
+    @property
+    def model_class(self):
+        from pricing.models import CompetitiveSet
+        return CompetitiveSet
+
+    def create_instance(self, request, *args, **kwargs):
+        """Override for duplicate-name validation and nullable rate fields."""
+        from pricing.models import CompetitiveSet
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        name = (data.get('competitor_name') or '').strip()
+        if not name:
+            return self.error_response('Competitor name is required')
+
+        if CompetitiveSet.objects.filter(hotel=hotel, competitor_name=name).exists():
+            return self.error_response(f'Competitor "{name}" already exists')
+
+        CompetitiveSet.objects.create(
+            hotel=hotel,
+            competitor_name=name,
+            bb_rate=data.get('bb_rate') or None,
+            hb_rate=data.get('hb_rate') or None,
+            fb_rate=data.get('fb_rate') or None,
+            rating=data.get('rating') or None,
+            total_rooms=data.get('total_rooms') or 0,
+            position=data.get('position', 'mid'),
+            notes=data.get('notes', ''),
+            source=data.get('source', 'Manual'),
+        )
+        return self.success_response(message=f'Competitor "{name}" added')
+
+    def update_instance(self, request, *args, **kwargs):
+        """Override for allowed-field whitelist and nullable decimals."""
+        from pricing.models import CompetitiveSet
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        pk = self.kwargs.get(self.lookup_field)
+        comp = get_object_or_404(CompetitiveSet, pk=pk)
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        allowed = ['competitor_name', 'bb_rate', 'hb_rate', 'fb_rate', 'rating',
+                    'total_rooms', 'position', 'notes', 'source', 'is_active']
+
+        for field, value in data.items():
+            if field in allowed:
+                if field in ('bb_rate', 'hb_rate', 'fb_rate', 'rating'):
+                    value = Decimal(str(value)) if value not in ('', None) else None
+                elif field == 'total_rooms':
+                    value = int(value) if value not in ('', None) else 0
+                elif field == 'is_active':
+                    value = bool(value)
+                setattr(comp, field, value)
+
+        comp.save()
+        return self.success_response(message='Competitor updated')
+
+
+class _ImportTemplateCrud(ModelCrudMixin):
+    """CRUD config for ImportTemplate entity."""
+    model_label = 'Template'
+    list_key = 'templates'
+    list_order = ['-use_count', 'name']
+    fields = {
+        'name': {'type': 'str', 'required': True},
+    }
+
+    @property
+    def model_class(self):
+        from pricing.models import ImportTemplate
+        return ImportTemplate
+
+    def get_queryset(self, hotel):
+        """Templates can be property-scoped or org-scoped."""
+        from pricing.models import ImportTemplate
+        from django.db.models import Q
+        return ImportTemplate.objects.filter(
+            Q(hotel=hotel) | Q(organization=hotel.organization, hotel__isnull=True),
+            is_active=True,
+        ).order_by(*self.list_order)
+
+    def serialize_item(self, obj):
+        return {
+            'id': obj.id,
+            'name': obj.name,
+            'import_type': obj.import_type,
+            'import_type_display': obj.get_import_type_display(),
+            'column_map': obj.column_map,
+            'value_transforms': obj.value_transforms,
+            'settings': obj.settings,
+            'source_headers': obj.source_headers,
+            'is_default': obj.is_default,
+            'use_count': obj.use_count,
+            'last_used_at': obj.last_used_at.isoformat() if obj.last_used_at else None,
+            'scope': 'property' if obj.hotel else 'organization',
+        }
+
+    def list_items(self, request, *args, **kwargs):
+        """Return templates wrapped in success_response to match original API."""
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+        qs = self.get_queryset(hotel)
+        data = [self.serialize_item(obj) for obj in qs]
+        return self.success_response(data={'templates': data})
+
+    def create_instance(self, request, *args, **kwargs):
+        """Override for JSON field handling and scope logic."""
+        from pricing.models import ImportTemplate
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        name = (data.get('name') or '').strip()
+        if not name:
+            return self.error_response('Template name is required')
+
+        scope = data.get('scope', 'property')
+
+        template = ImportTemplate.objects.create(
+            hotel=hotel if scope == 'property' else None,
+            organization=hotel.organization if scope == 'organization' else None,
+            name=name,
+            import_type=data.get('import_type', 'reservation'),
+            column_map=data.get('column_map', {}),
+            value_transforms=data.get('value_transforms', {}),
+            source_headers=data.get('source_headers', []),
+            settings=data.get('settings', {}),
+        )
+
+        return self.success_response(
+            data={'id': template.id, 'name': template.name},
+            message=f'Template "{name}" saved'
+        )
+
+    def update_instance(self, request, *args, **kwargs):
+        """Override for JSON field handling and org/hotel scoping."""
+        from pricing.models import ImportTemplate
+        from django.db.models import Q
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        pk = self.kwargs.get(self.lookup_field)
+        data, err = self._parse_body(request)
+        if err:
+            return err
+
+        template = ImportTemplate.objects.filter(
+            Q(hotel=hotel) | Q(organization=hotel.organization),
+            pk=pk, is_active=True,
+        ).first()
+
+        if not template:
+            return self.error_response('Template not found', 404)
+
+        if 'name' in data:
+            template.name = data['name'].strip()
+        if 'column_map' in data:
+            template.column_map = data['column_map']
+        if 'value_transforms' in data:
+            template.value_transforms = data['value_transforms']
+        if 'source_headers' in data:
+            template.source_headers = data['source_headers']
+        if 'settings' in data:
+            template.settings = data['settings']
+        if 'is_default' in data:
+            template.is_default = bool(data['is_default'])
+
+        template.save()
+        return self.success_response(message=f'Template "{template.name}" updated')
+
+    def delete_instance(self, request, *args, **kwargs):
+        """Soft-delete (set is_active=False) instead of hard delete."""
+        from pricing.models import ImportTemplate
+        from django.db.models import Q
+        hotel = self.get_hotel(request)
+        if not hotel:
+            return self.error_response('Property not found', 404)
+
+        pk = self.kwargs.get(self.lookup_field)
+        template = ImportTemplate.objects.filter(
+            Q(hotel=hotel) | Q(organization=hotel.organization),
+            pk=pk, is_active=True,
+        ).first()
+
+        if not template:
+            return self.error_response('Template not found', 404)
+
+        template.is_active = False
+        template.save()
+        return self.success_response(message=f'Template "{template.name}" deleted')
+
 
 # =============================================================================
 # PRICING MANAGEMENT DASHBOARD
@@ -502,6 +987,72 @@ class SettingsMixin:
             return Decimal(str(value))
         except (InvalidOperation, ValueError):
             return default
+
+
+# =============================================================================
+# ROLE-BASED ACCESS MIXINS
+# =============================================================================
+
+class RoleRequiredMixin:
+    """
+    Restrict view access based on UserOrganizationRole.
+    Set `required_roles` on the view class, e.g. required_roles = ['admin', 'manager'].
+    Superusers always have access.
+    """
+    required_roles = []
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_superuser:
+            return super().dispatch(request, *args, **kwargs)
+
+        if not self.required_roles:
+            return super().dispatch(request, *args, **kwargs)
+
+        # Get user's role — try OrganizationMixin cache first, then DB lookup
+        user_role = getattr(self, '_cached_user_role', None)
+        if user_role is None:
+            org_code = kwargs.get('org_code', '')
+            if org_code:
+                user_role = UserOrganizationRole.objects.filter(
+                    user=request.user,
+                    organization__code=org_code,
+                    is_active=True,
+                ).first()
+
+        if user_role and user_role.role in self.required_roles:
+            return super().dispatch(request, *args, **kwargs)
+
+        # Denied — redirect to dashboard or return 403 for AJAX
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'error': 'Access denied'}, status=403)
+
+        from django.shortcuts import redirect
+        org_code = kwargs.get('org_code', '')
+        prop_code = kwargs.get('prop_code', '')
+        if org_code and prop_code:
+            return redirect('pricing:property_dashboard',
+                            org_code=org_code, prop_code=prop_code)
+        return redirect('pricing:root')
+
+
+class AnalyticsAccessMixin(RoleRequiredMixin):
+    """All roles can access analytics."""
+    required_roles = ['admin', 'manager', 'sales', 'viewer']
+
+
+class PricingAccessMixin(RoleRequiredMixin):
+    """Only admin and manager can access pricing pages."""
+    required_roles = ['admin', 'manager']
+
+
+class DistributionAccessMixin(RoleRequiredMixin):
+    """Admin, manager, and sales can access distribution."""
+    required_roles = ['admin', 'manager', 'sales']
+
+
+class SetupAccessMixin(RoleRequiredMixin):
+    """Only admin can access setup pages."""
+    required_roles = ['admin']
 
 
 # =============================================================================

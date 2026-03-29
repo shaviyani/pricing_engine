@@ -446,6 +446,30 @@ class Reservation(models.Model):
     arrival_date = models.DateField(db_index=True)
     departure_date = models.DateField()
     cancellation_date = models.DateField(null=True, blank=True)
+    cancellation_reason = models.CharField(
+        max_length=200, blank=True, default='',
+        help_text="Reason for cancellation (from PMS or manual entry)"
+    )
+    CANCEL_REASON_CHOICES = [
+        ('change_of_plans', 'Change of Plans'),
+        ('found_better_rate', 'Found Better Rate'),
+        ('found_alternative', 'Found Alternative Property'),
+        ('booking_error', 'Booking Error / Duplicate'),
+        ('travel_restrictions', 'Travel Restrictions'),
+        ('personal', 'Personal Reasons'),
+        ('weather', 'Weather Concerns'),
+        ('no_response', 'No Response / Ghost'),
+        ('other', 'Other'),
+        ('unknown', 'Unknown'),
+    ]
+    cancellation_category = models.CharField(
+        max_length=30, choices=CANCEL_REASON_CHOICES,
+        default='unknown', blank=True,
+    )
+    is_revenue_estimated = models.BooleanField(
+        default=False,
+        help_text="True if total_amount was estimated (not from PMS)"
+    )
     
     nights = models.PositiveIntegerField(default=1)
     adults = models.PositiveIntegerField(default=2)

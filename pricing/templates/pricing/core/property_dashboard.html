@@ -5,288 +5,351 @@
 {% block title %}{{ prop.name }} - Dashboard{% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
 
-    <!-- Section 1: Compact Header -->
-    <div class="mb-6">
-        <div class="flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <h1 class="text-2xl font-bold text-gray-900">{{ prop.name }}</h1>
-                <span class="text-sm text-gray-500">&middot; {{ total_rooms }} rooms</span>
-                {% if current_season %}
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-                    {% if current_season.season_index >= 1.2 %}bg-red-100 text-red-800
-                    {% elif current_season.season_index >= 1.1 %}bg-amber-100 text-amber-800
-                    {% elif current_season.season_index <= 0.9 %}bg-blue-100 text-blue-800
-                    {% else %}bg-gray-100 text-gray-800{% endif %}">
-                    {{ current_season.name }} ({{ current_season.season_index }}×)
-                </span>
+<!-- Single outer container -->
+<div class="border-dash border-dash-border rounded-lg overflow-hidden">
+
+    <!-- HEADER -->
+    <div class="px-5 py-3.5 border-b border-dash-border flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center gap-2.5 flex-wrap">
+            <span class="text-dash-xl font-medium text-dash-primary">{{ prop.name }}</span>
+            <span class="text-dash-md text-dash-secondary">&middot; {{ total_rooms }} rooms</span>
+            {% if current_season %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-dash-badge text-dash-sm font-medium
+                {% if current_season.season_index >= 1.2 %}bg-status-red-bg text-status-red-dark
+                {% elif current_season.season_index >= 1.1 %}bg-status-amber-bg text-status-amber-dark
+                {% elif current_season.season_index <= 0.9 %}bg-status-blue-bg text-status-blue-dark
+                {% else %}bg-gray-100 text-gray-800{% endif %}">
+                {{ current_season.name }} ({{ current_season.season_index }}&times;)
+            </span>
+            {% endif %}
+            {% if review_rating %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-dash-badge text-dash-sm font-medium
+                {% if review_rating >= 9.0 %}bg-status-green-bg text-status-green-dark
+                {% elif review_rating >= 8.0 %}bg-status-amber-bg text-status-amber-dark
+                {% else %}bg-status-red-bg text-status-red-dark{% endif %}">
+                &#9733; {{ review_rating }} ({{ review_count }})
+            </span>
+            {% endif %}
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}"
+               class="inline-flex items-center px-3.5 py-1.5 border border-dash-border text-dash-base font-medium rounded-dash-card text-dash-secondary bg-white hover:bg-gray-50 transition">
+                Rate Lookup
+            </a>
+            <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}"
+               class="inline-flex items-center px-3.5 py-1.5 border border-transparent text-dash-base font-medium rounded-dash-card text-white bg-action hover:bg-action-hover transition">
+                Pricing Matrix
+            </a>
+        </div>
+    </div>
+
+    <!-- KPI STRIP -->
+    <div class="px-5 py-3.5 border-b border-dash-border">
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-2.5">
+            <!-- Next 30 Days OCC -->
+            <div class="bg-dash-metric rounded-dash-card p-3" style="background:#e9eef5;">
+                <p class="text-dash-sm text-dash-muted uppercase tracking-wider">Next 30d occ</p>
+                <p class="text-dash-kpi font-medium text-dash-primary mt-1">{{ kpi_30d.occ }}%</p>
+                <p class="text-dash-sm text-dash-hint mt-0.5">~{{ kpi_30d.net_occ }}% net of cancels</p>
+                <p class="text-dash-sm font-medium mt-0.5 {% if kpi_30d.delta >= 0 %}text-status-green{% else %}text-status-red{% endif %}">
+                    {% if kpi_30d.delta >= 0 %}&#9650; +{% else %}&#9660; {% endif %}{{ kpi_30d.delta }}pp vs STLY
+                </p>
+                {% if kpi_30d.occ < 60 %}
+                <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}" class="text-dash-sm text-action mt-0.5 inline-block">Adjust rates &rarr;</a>
+                {% elif kpi_30d.occ >= 80 %}
+                <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}" class="text-dash-sm text-action mt-0.5 inline-block">Check rates &rarr;</a>
                 {% endif %}
             </div>
-            <div class="flex items-center space-x-3">
-                <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}"
-                   class="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition">
-                    Rate Lookup
-                </a>
-                <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}"
-                   class="inline-flex items-center px-3 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition">
-                    Pricing Matrix
-                </a>
+
+            <!-- Next 90 Days OCC -->
+            <div class="bg-dash-metric rounded-dash-card p-3" style="background:#e9eef5;">
+                <p class="text-dash-sm text-dash-muted uppercase tracking-wider">Next 90d occ</p>
+                <p class="text-dash-kpi font-medium text-dash-primary mt-1">{{ kpi_90d.occ }}%</p>
+                <p class="text-dash-sm text-dash-hint mt-0.5">~{{ kpi_90d.net_occ }}% net of cancels</p>
+                <p class="text-dash-sm font-medium mt-0.5 {% if kpi_90d.delta >= 0 %}text-status-green{% else %}text-status-red{% endif %}">
+                    {% if kpi_90d.delta >= 0 %}&#9650; +{% else %}&#9660; {% endif %}{{ kpi_90d.delta }}pp vs STLY
+                </p>
+                {% if kpi_90d.occ < 60 %}
+                <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}" class="text-dash-sm text-action mt-0.5 inline-block">Adjust rates &rarr;</a>
+                {% elif kpi_90d.occ >= 80 %}
+                <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}" class="text-dash-sm text-action mt-0.5 inline-block">Check rates &rarr;</a>
+                {% endif %}
             </div>
-        </div>
-    </div>
 
-    <!-- Section 2: KPI Strip -->
-    <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
-        <!-- Next 30 Days OCC -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Next 30d OCC</p>
-            <p class="mt-1 text-2xl font-bold text-gray-900">{{ kpi_30d.occ }}%</p>
-            {% if kpi_30d.stly_occ > 0 %}
-            <p class="text-xs {% if kpi_30d.delta >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-                {% if kpi_30d.delta >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ kpi_30d.delta }}pp vs STLY
-            </p>
-            {% endif %}
-            {% if kpi_30d.occ < 60 %}
-            <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop_code %}" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Adjust rates &rarr;</a>
-            {% endif %}
-        </div>
-
-        <!-- Next 90 Days OCC -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Next 90d OCC</p>
-            <p class="mt-1 text-2xl font-bold text-gray-900">{{ kpi_90d.occ }}%</p>
-            {% if kpi_90d.stly_occ > 0 %}
-            <p class="text-xs {% if kpi_90d.delta >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-                {% if kpi_90d.delta >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ kpi_90d.delta }}pp vs STLY
-            </p>
-            {% endif %}
-            {% if kpi_90d.occ < 60 %}
-            <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop_code %}" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Adjust rates &rarr;</a>
-            {% endif %}
-        </div>
-
-        <!-- This Month Revenue -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">This Month Rev</p>
-            <p class="mt-1 text-2xl font-bold text-gray-900">${{ kpi_month_rev.revenue|floatformat:0|intcomma }}</p>
-            <p class="text-xs text-gray-500">net ${{ kpi_month_rev.net_revenue|floatformat:0|intcomma }}</p>
-            {% if budget_month.has_budget %}
-            <div class="mt-1">
-                <div class="flex items-center gap-1">
-                    <div class="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                        <div class="h-full rounded-full {% if budget_month.revenue_pct >= 100 %}bg-green-500{% elif budget_month.revenue_pct >= 70 %}bg-amber-500{% else %}bg-red-400{% endif %}"
-                             style="width: {{ budget_month.revenue_pct|floatformat:0 }}%"></div>
+            <!-- This Month Revenue -->
+            <div class="bg-dash-metric rounded-dash-card p-3" style="background:#e9eef5;">
+                <p class="text-dash-sm text-dash-muted uppercase tracking-wider">This month rev</p>
+                <p class="text-dash-kpi font-medium text-dash-primary mt-1">${{ kpi_month_rev.revenue|floatformat:0|intcomma }}</p>
+                <p class="text-dash-sm text-dash-hint mt-0.5">net ${{ kpi_month_rev.net_revenue|floatformat:0|intcomma }}</p>
+                {% if budget_month.has_budget %}
+                <div class="mt-1.5">
+                    <div class="flex items-center gap-1.5">
+                        <div class="flex-1 h-1 bg-dash-border rounded-dash-bar overflow-hidden">
+                            <div class="h-full rounded-dash-bar {% if budget_month.revenue_pct >= 100 %}bg-status-green{% elif budget_month.revenue_pct >= 70 %}bg-status-amber{% else %}bg-status-red{% endif %}"
+                                 style="width: {{ budget_month.revenue_pct|floatformat:0 }}%"></div>
+                        </div>
+                        <span class="text-dash-xs font-medium {% if budget_month.revenue_pct >= 100 %}text-status-green-dark{% elif budget_month.revenue_pct >= 70 %}text-status-amber-dark{% else %}text-status-red-dark{% endif %}">
+                            {{ budget_month.revenue_pct|floatformat:0 }}%
+                        </span>
                     </div>
-                    <span class="text-[10px] {% if budget_month.revenue_pct >= 100 %}text-green-600{% elif budget_month.revenue_pct >= 70 %}text-amber-600{% else %}text-red-500{% endif %} font-medium">
-                        {{ budget_month.revenue_pct|floatformat:0 }}%
-                    </span>
                 </div>
-                <p class="text-[10px] text-gray-400">of ${{ budget_month.revenue_target|floatformat:0|intcomma }} budget</p>
+                {% else %}
+                <p class="text-dash-sm font-medium mt-0.5 {% if kpi_month_rev.delta_pct >= 0 %}text-status-green{% else %}text-status-red{% endif %}">
+                    {% if kpi_month_rev.delta_pct >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ kpi_month_rev.delta_pct }}% vs STLY
+                </p>
+                {% endif %}
+                <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" class="text-dash-sm text-action mt-0.5 inline-block">Full breakdown &rarr;</a>
             </div>
-            {% elif kpi_month_rev.stly_revenue > 0 %}
-            <p class="text-xs {% if kpi_month_rev.delta_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-                {% if kpi_month_rev.delta_pct >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ kpi_month_rev.delta_pct }}% vs STLY
-            </p>
-            {% endif %}
-            <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop_code %}" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Full breakdown &rarr;</a>
-        </div>
 
-        <!-- Demand Index -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Demand Index</p>
-            {% if kpi_demand.has_data %}
-            <p class="mt-1 text-2xl font-bold {% if kpi_demand.pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-                {% if kpi_demand.pct >= 0 %}+{% endif %}{{ kpi_demand.pct }}%
-            </p>
-            <p class="text-xs text-gray-500">national {% if kpi_demand.national_pct >= 0 %}+{% endif %}{{ kpi_demand.national_pct }}%</p>
-            <a href="/platform/" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Market data &rarr;</a>
-            {% else %}
-            <p class="mt-1 text-2xl font-bold text-gray-400">&mdash;</p>
-            <p class="text-xs text-gray-400">No market data</p>
-            {% endif %}
-        </div>
+            <!-- Demand Index -->
+            <div class="bg-dash-metric rounded-dash-card p-3" style="background:#e9eef5;">
+                <p class="text-dash-sm text-dash-muted uppercase tracking-wider">Demand index</p>
+                {% if kpi_demand.has_data %}
+                <p class="text-dash-kpi font-medium mt-1 {% if kpi_demand.pct >= 0 %}text-status-green{% else %}text-status-red{% endif %}">
+                    {% if kpi_demand.pct >= 0 %}+{% endif %}{{ kpi_demand.pct }}%
+                </p>
+                <p class="text-dash-sm text-dash-hint mt-0.5">national {% if kpi_demand.national_pct >= 0 %}+{% endif %}{{ kpi_demand.national_pct }}%</p>
+                <a href="/platform/" class="text-dash-sm text-action mt-0.5 inline-block">Market data &rarr;</a>
+                {% else %}
+                <p class="text-dash-kpi font-medium text-dash-hint mt-1">&mdash;</p>
+                <p class="text-dash-sm text-dash-hint">No market data</p>
+                {% endif %}
+            </div>
 
-        <!-- Blended ADR -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">90d ADR</p>
-            <p class="mt-1 text-2xl font-bold text-gray-900">${{ kpi_adr.adr|floatformat:0 }}</p>
-            {% if kpi_adr.stly_adr > 0 %}
-            <p class="text-xs {% if kpi_adr.delta >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-                {% if kpi_adr.delta >= 0 %}&#9650; +{% else %}&#9660; {% endif %}${{ kpi_adr.delta|floatformat:0 }} vs STLY
-            </p>
-            {% endif %}
-        </div>
+            <!-- 90d ADR -->
+            <div class="bg-dash-metric rounded-dash-card p-3" style="background:#e9eef5;">
+                <p class="text-dash-sm text-dash-muted uppercase tracking-wider">90d ADR</p>
+                <p class="text-dash-kpi font-medium text-dash-primary mt-1">${{ kpi_adr.adr|floatformat:0 }}</p>
+                <p class="text-dash-sm font-medium mt-0.5 {% if kpi_adr.delta >= 0 %}text-status-green{% else %}text-status-red{% endif %}">
+                    {% if kpi_adr.delta >= 0 %}&#9650; +{% else %}&#9660; {% endif %}${{ kpi_adr.delta|floatformat:0 }} vs STLY
+                </p>
+            </div>
 
-        <!-- RevPAR -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">90d RevPAR</p>
-            <p class="mt-1 text-2xl font-bold text-gray-900">${{ kpi_revpar.revpar|floatformat:0 }}</p>
-            {% if kpi_revpar.stly_revpar > 0 %}
-            <p class="text-xs {% if kpi_revpar.delta >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-                {% if kpi_revpar.delta >= 0 %}&#9650; +{% else %}&#9660; {% endif %}${{ kpi_revpar.delta|floatformat:0 }} vs STLY
-            </p>
-            {% endif %}
-            <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop_code %}" class="text-xs text-blue-600 hover:text-blue-800 mt-1 inline-block">Rate card &rarr;</a>
+            <!-- RevPAR -->
+            <div class="bg-dash-metric rounded-dash-card p-3" style="background:#e9eef5;">
+                <p class="text-dash-sm text-dash-muted uppercase tracking-wider">90d RevPAR</p>
+                <p class="text-dash-kpi font-medium text-dash-primary mt-1">${{ kpi_revpar.revpar|floatformat:0 }}</p>
+                <p class="text-dash-sm font-medium mt-0.5 {% if kpi_revpar.delta >= 0 %}text-status-green{% else %}text-status-red{% endif %}">
+                    {% if kpi_revpar.delta >= 0 %}&#9650; +{% else %}&#9660; {% endif %}${{ kpi_revpar.delta|floatformat:0 }} vs STLY
+                </p>
+                <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}" class="text-dash-sm text-action mt-0.5 inline-block">Rate card &rarr;</a>
+            </div>
         </div>
     </div>
 
-    <!-- Setup Checklist (shown only if incomplete) -->
+    <!-- ALERTS -->
+    {% if alerts %}
+    <div class="px-5 py-2.5 border-b border-dash-border flex flex-col gap-1.5">
+        {% for alert in alerts %}
+        <div class="flex items-center justify-between px-3.5 py-2 rounded-dash-card border-dash
+            {% if alert.severity == 'error' %}bg-status-red-bg border-status-red-border
+            {% elif alert.severity == 'warning' %}bg-status-amber-bg border-status-amber-border
+            {% else %}bg-status-blue-bg border-status-blue-border{% endif %}">
+            <span class="text-dash-md
+                {% if alert.severity == 'error' %}text-status-red-dark
+                {% elif alert.severity == 'warning' %}text-status-amber-dark
+                {% else %}text-status-blue-dark{% endif %}">{{ alert.message }}</span>
+            <a href="{{ alert.action_url }}" class="text-dash-base font-medium underline whitespace-nowrap ml-3
+                {% if alert.severity == 'error' %}text-status-red-dark
+                {% elif alert.severity == 'warning' %}text-status-amber-dark
+                {% else %}text-status-blue-dark{% endif %}">
+                {{ alert.action_label }} &rarr;
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- TWO-COLUMN: LEFT = Charts + Heatmap | RIGHT = Intelligence -->
+    <div class="grid grid-cols-1 lg:grid-cols-5">
+
+        <!-- LEFT COLUMN -->
+        <div class="lg:col-span-3 lg:border-r border-dash-border">
+
+            <!-- 12-MONTH CHART -->
+            {% if monthly_snapshot %}
+            <div class="px-5 py-3.5 border-b border-dash-border">
+                <div class="flex items-center justify-between mb-2.5">
+                    <div>
+                        <h2 class="text-dash-lg font-medium text-dash-primary">12-month revenue & occupancy</h2>
+                        <p class="text-dash-base text-dash-hint">Click any month to adjust rates</p>
+                    </div>
+                    <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}"
+                       class="text-dash-base text-action">Full breakdown &rarr;</a>
+                </div>
+                <div style="height: 200px;">
+                    <canvas id="snapshotChart"></canvas>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- BOOKING HEATMAP (AJAX) — directly below calendar in left column -->
+            <div class="px-5 py-3.5 border-b border-dash-border" id="booking-heatmap-card">
+                <div class="flex items-center justify-center py-8">
+                    <svg class="animate-spin h-5 w-5 text-action" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="ml-2 text-dash-sm text-dash-muted">Loading heatmap...</span>
+                </div>
+            </div>
+
+            <!-- ARRIVAL FORECAST CHART (AJAX) — below heatmap in left column -->
+            <div class="px-5 py-3.5" id="arrival-forecast-card">
+                <div class="flex items-center justify-center py-8">
+                    <svg class="animate-spin h-5 w-5 text-action" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="ml-2 text-dash-sm text-dash-muted">Loading arrival forecast...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Intelligence Stack -->
+        <div class="lg:col-span-2 px-5 py-3.5 flex flex-col gap-3">
+
+            <!-- OCCUPANCY CALENDAR -->
+            <div class="border-dash border-dash-border rounded-dash-card p-3" id="occupancy-calendar-card">
+                <div class="flex items-center justify-between mb-2">
+                    <div>
+                        <h2 class="text-dash-md font-medium text-dash-primary">Occupancy calendar</h2>
+                        <p class="text-dash-xs text-dash-hint" id="occ-cal-subtitle">Click any day for rate card</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span id="occ-cal-forecast-badge" class="hidden inline-flex items-center px-2.5 py-0.5 rounded-dash-badge text-dash-sm font-medium bg-status-blue-bg text-status-blue-dark"></span>
+                        <button onclick="navigateOccCal('prev')" class="px-2 py-0.5 text-dash-base hover:bg-gray-100 rounded transition-colors">&larr;</button>
+                        <span class="text-dash-sm font-medium text-dash-primary" id="occ-cal-month-title">Loading...</span>
+                        <button onclick="navigateOccCal('next')" class="px-2 py-0.5 text-dash-base hover:bg-gray-100 rounded transition-colors">&rarr;</button>
+                    </div>
+                </div>
+
+                <!-- Calendar Grid (AJAX) -->
+                <div id="occ-cal-grid" class="overflow-hidden rounded-dash-card">
+                    <div class="flex items-center justify-center py-10">
+                        <svg class="animate-spin h-6 w-6 text-action" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="ml-2 text-dash-sm text-dash-muted">Loading calendar...</span>
+                    </div>
+                </div>
+
+                <!-- Legend -->
+                <div class="flex items-center gap-2.5 mt-1.5 text-dash-xs text-dash-muted flex-wrap">
+                    <div class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm bg-occ-low"></span> &lt;50%</div>
+                    <div class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm bg-occ-mid"></span> 50-80%</div>
+                    <div class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm bg-occ-high"></span> &gt;80%</div>
+                    <div class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm bg-occ-full"></span> Full</div>
+                    <div class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full bg-allotment"></span> Group</div>
+                </div>
+            </div>
+
+            <!-- Pickup + Arrivals (AJAX) -->
+            <div class="border-dash border-dash-border rounded-dash-card" id="pickup-arrivals-card">
+                <div class="flex items-center justify-center py-8">
+                    <svg class="animate-spin h-5 w-5 text-action" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="ml-2 text-dash-sm text-dash-muted">Loading pickup data...</span>
+                </div>
+            </div>
+
+            <!-- Market Position (inline) -->
+            <div class="border-dash border-dash-border rounded-dash-card p-3">
+                <h2 class="text-dash-md font-medium text-dash-primary mb-1.5">Market position</h2>
+                {% if market_position.has_data %}
+                <div class="flex justify-between text-dash-base py-0.5">
+                    <span class="text-dash-secondary">Your BB range</span>
+                    <span class="font-medium text-dash-primary">${{ market_position.bb_floor|floatformat:0 }} &ndash; ${{ market_position.bb_ceiling|floatformat:0 }}</span>
+                </div>
+                {% if market_position.market_avg %}
+                <div class="flex justify-between text-dash-base py-0.5">
+                    <span class="text-dash-secondary">Market avg</span>
+                    <span class="font-medium text-dash-primary">${{ market_position.market_avg|floatformat:0 }}</span>
+                </div>
+                {% endif %}
+                <div class="flex justify-between text-dash-base py-0.5">
+                    <span class="text-dash-secondary">Rating</span>
+                    <span class="font-medium text-dash-primary">{% if review_rating %}&#9733; {{ review_rating }}{% if market_position.market_avg_rating %} vs mkt &#9733; {{ market_position.market_avg_rating }}{% endif %}{% else %}&mdash;{% endif %}</span>
+                </div>
+                <a href="{% url 'pricing:manage_competitive' org_code=org.code prop_code=prop.code %}" class="text-dash-sm text-action mt-1 inline-block">Update comp set &rarr;</a>
+                {% else %}
+                <p class="text-dash-base text-dash-hint py-3 text-center">No competitive data</p>
+                {% endif %}
+            </div>
+
+            <!-- Cancellation Forecast (inline) -->
+            <div class="border-dash rounded-dash-card p-3 {% if cancel_forecast.is_high_cancel %}border-status-amber-border{% else %}border-dash-border{% endif %}">
+                <h2 class="text-dash-md font-medium text-dash-primary mb-1.5">Cancellation forecast</h2>
+                {% if cancel_forecast.has_data %}
+                <div class="flex justify-between text-dash-base py-0.5">
+                    <span class="text-dash-secondary">{{ cancel_forecast.month_name }} OTB</span>
+                    <span class="font-medium text-dash-primary">{{ cancel_forecast.otb_count }} bookings</span>
+                </div>
+                <div class="flex justify-between text-dash-base py-0.5">
+                    <span class="text-dash-secondary">Expected cancels</span>
+                    <span class="font-medium text-status-amber">~{{ cancel_forecast.predicted_cancels }} ({{ cancel_forecast.cancel_rate }}%)</span>
+                </div>
+                <div class="flex justify-between text-dash-base py-0.5">
+                    <span class="text-dash-secondary">Net forecast</span>
+                    <span class="font-medium text-dash-primary">~{{ cancel_forecast.net_forecast }} bookings</span>
+                </div>
+                <div class="flex gap-1.5 mt-1.5">
+                    <span class="text-dash-xs font-medium px-1.5 py-0.5 rounded-dash-pill bg-status-red-bg text-status-red-dark">{{ cancel_forecast.high_risk }} high</span>
+                    <span class="text-dash-xs font-medium px-1.5 py-0.5 rounded-dash-pill bg-status-amber-bg text-status-amber-dark">{{ cancel_forecast.medium_risk }} med</span>
+                    <span class="text-dash-xs font-medium px-1.5 py-0.5 rounded-dash-pill bg-status-green-bg text-status-green-dark">{{ cancel_forecast.low_risk }} low</span>
+                </div>
+                <a href="{% url 'pricing:cancellation_dashboard' org_code=org.code prop_code=prop.code %}" class="text-dash-sm text-action mt-1 inline-block">View cancellation analysis &rarr;</a>
+                {% else %}
+                <p class="text-dash-base text-dash-hint py-3 text-center">No upcoming bookings</p>
+                {% endif %}
+            </div>
+
+        </div>
+    </div>
+
+</div><!-- end single outer container -->
+
+    <!-- Setup Checklist (outside main container) -->
     {% if not setup_complete %}
-    <div class="bg-white rounded-xl shadow-sm border border-amber-200 mb-6">
-        <div class="px-6 py-4 border-b border-amber-100">
+    <div class="border-dash border-status-amber-border rounded-lg overflow-hidden mt-4">
+        <div class="px-5 py-3 border-b border-status-amber-bg">
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                    <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-4 h-4 text-status-amber" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
                     </svg>
-                    <h2 class="text-base font-semibold text-gray-900">Setup Checklist</h2>
+                    <h2 class="text-dash-md font-medium text-dash-primary">Setup checklist</h2>
                 </div>
-                <span class="text-xs text-gray-500">
-                    {{ setup_checklist|length }} items
-                </span>
+                <span class="text-dash-xs text-dash-hint">{{ setup_checklist|length }} items</span>
             </div>
         </div>
-        <div class="px-6 py-4">
-            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="px-5 py-3">
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2">
                 {% for item in setup_checklist %}
-                <a href="{% url item.link_name org_code=org.code prop_code=prop_code %}"
-                   class="flex items-center gap-2 p-3 rounded-lg border transition
-                   {% if item.done %}border-green-200 bg-green-50{% else %}border-gray-200 bg-gray-50 hover:border-blue-300 hover:bg-blue-50{% endif %}">
+                <a href="{% url item.link_name org_code=org.code prop_code=prop.code %}"
+                   class="flex items-center gap-2 p-2.5 rounded-dash-card border-dash transition
+                   {% if item.done %}border-status-green-border bg-status-green-bg{% else %}border-dash-border bg-dash-metric hover:border-action hover:bg-status-blue-bg{% endif %}">
                     {% if item.done %}
-                    <svg class="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-4 h-4 text-status-green flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                     </svg>
                     {% else %}
-                    <svg class="w-5 h-5 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-4 h-4 text-dash-hint flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <circle cx="12" cy="12" r="10" stroke-width="2"/>
                     </svg>
                     {% endif %}
-                    <span class="text-sm {% if item.done %}text-green-700{% else %}text-gray-600{% endif %}">
-                        {{ item.label }}
-                    </span>
+                    <span class="text-dash-sm {% if item.done %}text-status-green-dark{% else %}text-dash-secondary{% endif %}">{{ item.label }}</span>
                 </a>
                 {% endfor %}
             </div>
         </div>
     </div>
     {% endif %}
-
-    <!-- Section 3: 12-Month Chart (no table) -->
-    {% if monthly_snapshot %}
-    <div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
-        <div class="px-6 py-4 border-b border-gray-100">
-            <div class="flex items-center justify-between">
-                <div>
-                    <h2 class="text-lg font-semibold text-gray-900">12-Month Revenue & Occupancy</h2>
-                    <p class="mt-1 text-sm text-gray-500">OTB + projected occupancy ({{ total_rooms }} rooms)</p>
-                </div>
-                <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}"
-                   class="text-sm text-blue-600 hover:text-blue-800">Full breakdown &rarr;</a>
-            </div>
-        </div>
-        <div class="px-6 pt-4 pb-4">
-            <div style="height: 260px;">
-                <canvas id="snapshotChart"></canvas>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Section 4: Two-Column Grid -->
-    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
-
-        <!-- Left Column (60%): Occupancy Calendar -->
-        <div class="lg:col-span-3">
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200" id="occupancy-calendar-card">
-                <div class="px-6 py-4 border-b border-gray-100">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <h2 class="text-lg font-semibold text-gray-900">Occupancy Calendar</h2>
-                            <p class="mt-1 text-sm text-gray-500" id="occ-cal-subtitle">Daily room occupancy</p>
-                        </div>
-                        <span id="occ-cal-forecast-badge" class="hidden inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"></span>
-                    </div>
-                </div>
-
-                <div class="p-4 sm:p-6">
-                    <!-- Month Navigation -->
-                    <div class="flex items-center justify-between mb-4">
-                        <button onclick="navigateOccCal('prev')"
-                                class="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                            <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-                            </svg>
-                        </button>
-                        <h3 class="text-lg font-bold text-gray-900" id="occ-cal-month-title">Loading...</h3>
-                        <button onclick="navigateOccCal('next')"
-                                class="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                            <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                            </svg>
-                        </button>
-                    </div>
-
-                    <!-- Legend -->
-                    <div class="flex items-center gap-4 mb-4 text-xs text-gray-500 flex-wrap">
-                        <div class="flex items-center gap-1">
-                            <span class="inline-block w-3 h-3 rounded-sm bg-red-500"></span> &lt;50%
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <span class="inline-block w-3 h-3 rounded-sm bg-amber-500"></span> 50-80%
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <span class="inline-block w-3 h-3 rounded-sm bg-green-500"></span> &gt;80%
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <span class="inline-block w-3 h-3 rounded-sm bg-green-700"></span> Full
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <span class="inline-block w-3 h-3 rounded-sm border-2 border-blue-500 bg-blue-50"></span> Today
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <span class="inline-block w-3 h-3 rounded-full bg-purple-500"></span> Group Allotment
-                        </div>
-                    </div>
-
-                    <!-- Calendar Grid -->
-                    <div id="occ-cal-grid" class="overflow-hidden rounded-lg border border-gray-200">
-                        <div class="flex items-center justify-center py-12">
-                            <svg class="animate-spin h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24">
-                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            <span class="ml-3 text-gray-500">Loading calendar...</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Right Column (40%): Intelligence Stack -->
-        <div class="lg:col-span-2 space-y-6">
-
-            <!-- Market Context (AJAX — condensed with demand index) -->
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200" id="market-context-card">
-                <div class="px-6 py-4 border-b border-gray-100">
-                    <div class="flex items-center justify-between">
-                        <h2 class="text-lg font-semibold text-gray-900">Market Intelligence</h2>
-                        <span id="market-ctx-period" class="text-xs text-gray-400"></span>
-                    </div>
-                </div>
-                <div id="market-context-content" class="p-6">
-                    <div class="flex items-center justify-center py-6">
-                        <svg class="animate-spin h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <span class="ml-3 text-sm text-gray-500">Loading market data...</span>
-                    </div>
-                </div>
-            </div>
-
-        </div>
-    </div>
 
 </div>
 {% endblock %}
@@ -295,22 +358,576 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <script>
-window.DASHBOARD_CFG = {
-    currency: '{{ property.get_currency_symbol|escapejs }}',
+/* ============================================================================
+   DASHBOARD CONFIG — passed from Django view
+   ============================================================================ */
+window.DASH = {
+    currency: '$',
     todayYear: {{ today_year }},
     todayMonth: {{ today_month }},
-    occCalendarUrl: "{% url 'pricing:occupancy_calendar_ajax' org_code=org.code prop_code=prop.code %}",
-    marketContextUrl: "{% url 'pricing:market_context_api' org_code=org.code prop_code=prop.code %}",
-    overrideCalendarUrl: "{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}",
+    urls: {
+        occCalendar: "{% url 'pricing:occupancy_calendar_ajax' org_code=org.code prop_code=prop.code %}",
+        rateLookup: "{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}",
+        overrideCalendar: "{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}",
+        bookingHeatmap: "{% url 'pricing:booking_heatmap_ajax' org_code=org.code prop_code=prop.code %}",
+        pickupArrivals: "{% url 'pricing:pickup_summary_ajax' org_code=org.code prop_code=prop.code %}",
+        pickupDashboard: "{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}",
+        bookingOrigin: "{% url 'pricing:booking_origin_matrix' org_code=org.code prop_code=prop.code %}",
+        arrivalForecast: "{% url 'pricing:arrival_forecast_ajax' org_code=org.code prop_code=prop.code %}",
+    },
     {% if monthly_snapshot %}
-    snapshotData: {{ snapshot_json|safe }},
+    snapshot: {{ snapshot_json|safe }},
     stlyOcc: {{ stly_occ_json|safe }},
     projectedOcc: {{ projected_occ_json|safe }},
     demandPct: {{ demand_factor_pct }},
     {% else %}
-    snapshotData: null,
+    snapshot: null,
     {% endif %}
 };
+
+/* ============================================================================
+   12-MONTH CHART
+   ============================================================================ */
+{% if monthly_snapshot %}
+(function() {
+    var D = window.DASH;
+    var data = D.snapshot;
+    var ctx = document.getElementById('snapshotChart');
+    if (!ctx || !data) return;
+
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(function(m) { return m.month_name + ' ' + String(m.year).slice(2); }),
+            datasets: [
+                {
+                    label: 'Revenue ($)',
+                    data: data.map(function(m) { return m.revenue; }),
+                    backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                    borderRadius: 3,
+                    yAxisID: 'y',
+                    order: 3,
+                },
+                {
+                    label: 'OTB Occupancy (%)',
+                    data: data.map(function(m) { return m.occupancy; }),
+                    type: 'line',
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#22c55e',
+                    tension: 0.3,
+                    fill: false,
+                    yAxisID: 'y1',
+                    order: 1,
+                },
+                {
+                    label: 'Projected (STLY + demand)',
+                    data: D.projectedOcc,
+                    type: 'line',
+                    borderColor: '#f97316',
+                    borderWidth: 2,
+                    borderDash: [6, 3],
+                    pointRadius: 2,
+                    pointBackgroundColor: '#f97316',
+                    pointStyle: 'triangle',
+                    tension: 0.3,
+                    fill: false,
+                    yAxisID: 'y1',
+                    order: 2,
+                },
+                {
+                    label: 'Cancel Rate (%)',
+                    data: data.map(function(m) { return m.cancel_rate; }),
+                    type: 'line',
+                    borderColor: '#ef4444',
+                    borderWidth: 1.5,
+                    borderDash: [3, 3],
+                    pointRadius: 2,
+                    pointBackgroundColor: '#ef4444',
+                    pointStyle: 'circle',
+                    tension: 0.3,
+                    fill: false,
+                    yAxisID: 'y1',
+                    order: 4,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            onClick: function(event, elements) {
+                if (elements.length > 0) {
+                    var idx = elements[0].index;
+                    var snap = data[idx];
+                    window.location.href = D.urls.overrideCalendar + '?year=' + snap.year + '&month=' + snap.month;
+                }
+            },
+            onHover: function(event, elements) {
+                event.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { usePointStyle: true, padding: 14, font: { size: 10 } }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                    padding: 10,
+                    titleFont: { size: 11 },
+                    bodyFont: { size: 11 },
+                    callbacks: {
+                        label: function(ctx) {
+                            var label = ctx.dataset.label || '';
+                            var val = ctx.parsed.y;
+                            if (val === null || val === undefined) return null;
+                            if (ctx.dataset.yAxisID === 'y') {
+                                return 'Revenue: $' + val.toLocaleString('en-US', {maximumFractionDigits: 0});
+                            }
+                            return label + ': ' + val.toFixed(1) + '%';
+                        },
+                        afterBody: function(tooltipItems) {
+                            var idx = tooltipItems[0].dataIndex;
+                            var snap = data[idx];
+                            var lines = [];
+                            if (snap.net_occ !== null && snap.net_occ !== undefined) {
+                                lines.push('Net forecast: ~' + snap.net_occ + '%');
+                            }
+                            if (snap.demand_pct !== null && snap.demand_pct !== undefined) {
+                                lines.push('Demand: ' + (snap.demand_pct > 0 ? '+' : '') + snap.demand_pct.toFixed(1) + '%');
+                            }
+                            if (snap.demand_driver) {
+                                lines.push('Driver: ' + snap.demand_driver);
+                            }
+                            return lines;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    position: 'left',
+                    ticks: {
+                        callback: function(v) { return v >= 1000 ? '$' + (v / 1000).toFixed(0) + 'k' : '$' + v; },
+                        color: '#6b7280',
+                        font: { size: 10 }
+                    },
+                    grid: { color: 'rgba(0,0,0,0.04)' }
+                },
+                y1: {
+                    beginAtZero: true,
+                    max: 100,
+                    position: 'right',
+                    ticks: {
+                        callback: function(v) { return v + '%'; },
+                        color: '#22c55e',
+                        font: { size: 10 }
+                    },
+                    grid: { drawOnChartArea: false }
+                },
+                x: {
+                    ticks: { color: '#6b7280', font: { size: 10 } },
+                    grid: { display: false }
+                }
+            }
+        }
+    });
+})();
+{% endif %}
+
+/* ============================================================================
+   OCCUPANCY CALENDAR
+   ============================================================================ */
+var occCalYear = window.DASH.todayYear;
+var occCalMonth = window.DASH.todayMonth;
+var occCalPrev = null;
+var occCalNext = null;
+
+function loadOccupancyCalendar(year, month) {
+    fetch(window.DASH.urls.occCalendar + '?year=' + year + '&month=' + month)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) renderOccupancyCalendar(data);
+            else document.getElementById('occ-cal-grid').innerHTML = '<div class="text-center py-8 text-dash-sm text-dash-hint">' + (data.message || 'Unable to load calendar') + '</div>';
+        })
+        .catch(function() {
+            document.getElementById('occ-cal-grid').innerHTML = '<div class="text-center py-8 text-dash-sm text-dash-hint">Unable to load calendar data</div>';
+        });
+}
+
+function renderOccupancyCalendar(data) {
+    occCalYear = data.year;
+    occCalMonth = data.month;
+    occCalPrev = data.prev;
+    occCalNext = data.next;
+
+    document.getElementById('occ-cal-month-title').textContent = data.month_name;
+    document.getElementById('occ-cal-subtitle').textContent =
+        data.total_rooms + ' rooms' + (data.forecast_occupancy !== null ? ' \u2022 Forecast: ' + data.forecast_occupancy + '%' : '');
+
+    var badge = document.getElementById('occ-cal-forecast-badge');
+    if (data.forecast_occupancy !== null) {
+        badge.textContent = 'Forecast: ' + data.forecast_occupancy + '%';
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
+
+    var dayNames = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+    var html = '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:#e5e7eb;border-radius:6px;overflow:hidden;font-size:11px;">';
+    for (var i = 0; i < 7; i++) {
+        html += '<div style="background:#f8fafc;padding:4px;text-align:center;color:#6b7280;font-weight:500;">' + dayNames[i] + '</div>';
+    }
+
+    var firstDateStr = data.year + '-' + String(data.month).padStart(2, '0') + '-01';
+    var firstDayData = data.days[firstDateStr];
+    var startWeekday = firstDayData ? firstDayData.weekday : 0;
+    var dateKeys = Object.keys(data.days).sort();
+
+    for (var i = 0; i < startWeekday; i++) {
+        html += '<div style="background:white;min-height:38px;"></div>';
+    }
+
+    for (var d = 0; d < dateKeys.length; d++) {
+        var dateStr = dateKeys[d];
+        var day = data.days[dateStr];
+        var occ = day.occupancy_percent;
+        var barColor = occ >= 100 ? '#15803d' : occ >= 80 ? '#22c55e' : occ >= 50 ? '#f59e0b' : '#ef4444';
+        var opacity = day.is_past ? 'opacity:0.5;' : '';
+        var lookupUrl = window.DASH.urls.rateLookup + '?date=' + dateStr;
+
+        html += '<div style="background:white;padding:3px;cursor:pointer;min-height:38px;position:relative;' + opacity + '" onclick="window.location.href=\'' + lookupUrl + '\'">';
+        html += '<div style="font-weight:500;">' + day.day + '</div>';
+        html += '<div style="color:#6b7280;font-size:10px;">' + day.rooms_occupied + '/' + day.total_rooms + '</div>';
+
+        if (occ > 0) {
+            html += '<div style="height:3px;background:#e5e7eb;border-radius:2px;margin-top:1px;">';
+            html += '<div style="height:100%;width:' + Math.min(occ, 100) + '%;background:' + barColor + ';border-radius:2px;"></div>';
+            html += '</div>';
+        }
+
+        if (day.allotments && day.allotments.length > 0) {
+            html += '<div style="position:absolute;top:2px;right:2px;width:5px;height:5px;border-radius:50%;background:#7F77DD;"></div>';
+        }
+
+        html += '</div>';
+    }
+
+    var lastDateStr = dateKeys[dateKeys.length - 1];
+    var lastWeekday = data.days[lastDateStr].weekday;
+    for (var i = lastWeekday + 1; i < 7; i++) {
+        html += '<div style="background:white;min-height:38px;"></div>';
+    }
+
+    html += '</div>';
+    document.getElementById('occ-cal-grid').innerHTML = html;
+}
+
+function navigateOccCal(direction) {
+    var target = direction === 'prev' ? occCalPrev : occCalNext;
+    if (target) loadOccupancyCalendar(target.year, target.month);
+}
+
+/* ============================================================================
+   BOOKING HEATMAP (AJAX)
+   ============================================================================ */
+function loadBookingHeatmap() {
+    fetch(window.DASH.urls.bookingHeatmap)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success || !data.booking_months || data.booking_months.length === 0) {
+                document.getElementById('booking-heatmap-card').style.display = 'none';
+                return;
+            }
+            renderBookingHeatmap(data);
+        })
+        .catch(function() {
+            document.getElementById('booking-heatmap-card').style.display = 'none';
+        });
+}
+
+function renderBookingHeatmap(data) {
+    var MS = {'01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'May','06':'Jun','07':'Jul','08':'Aug','09':'Sep','10':'Oct','11':'Nov','12':'Dec'};
+    function fmt(ym) { var p = ym.split('-'); return MS[p[1]] + ' ' + p[0].slice(2); }
+    function fmtS(ym) { return MS[ym.split('-')[1]]; }
+    function intensity(rn, mx) {
+        if (rn === 0) return 'transparent';
+        var p = rn / mx * 100;
+        return p >= 60 ? '#1e3a8a' : p >= 35 ? '#2563eb' : p >= 15 ? '#60a5fa' : p >= 5 ? '#bfdbfe' : '#eff6ff';
+    }
+    function tc(bg) { return (bg === '#1e3a8a' || bg === '#2563eb' || bg === '#60a5fa') ? '#fff' : '#1e3a8a'; }
+
+    var bms = data.booking_months, ams = data.arrival_months, mx = data.max_rn || 1;
+
+    var h = '<div class="flex items-center justify-between mb-2">';
+    h += '<div><h2 class="text-dash-lg font-medium text-dash-primary">Booking heatmap</h2>';
+    h += '<p class="text-dash-base text-dash-hint">Last 3 booking months &rarr; future arrival months (room nights)</p></div>';
+    h += '<a href="' + window.DASH.urls.bookingOrigin + '" class="text-dash-base text-action">Full matrix &rarr;</a>';
+    h += '</div>';
+
+    h += '<div style="overflow-x:auto;">';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    h += '<thead><tr>';
+    h += '<th style="text-align:left;padding:7px 8px;font-size:10px;font-weight:500;color:#6b7280;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid #e5e7eb;background:#f8fafc;">Booked &#8595;</th>';
+    for (var ai = 0; ai < ams.length; ai++) {
+        h += '<th style="text-align:center;padding:7px 4px;font-size:10px;font-weight:500;color:#6b7280;text-transform:uppercase;border-bottom:2px solid #e5e7eb;">' + fmtS(ams[ai]) + '</th>';
+    }
+    h += '<th style="text-align:center;padding:7px 4px;font-size:10px;font-weight:500;color:#374151;text-transform:uppercase;border-bottom:2px solid #e5e7eb;background:#f8fafc;">Total</th>';
+    h += '</tr></thead><tbody>';
+
+    for (var bi = 0; bi < bms.length; bi++) {
+        var bm = bms[bi], isNow = bm === data.current_month;
+        h += '<tr>';
+        h += '<td style="padding:5px 8px;font-weight:500;border-bottom:0.5px solid #e5e7eb;font-size:11px;">' + fmt(bm);
+        if (isNow) h += ' <span style="font-size:9px;color:#3b82f6;">now</span>';
+        h += '</td>';
+        for (var ai = 0; ai < ams.length; ai++) {
+            var rn = (data.matrix[bm] || {})[ams[ai]] || 0;
+            h += '<td style="text-align:center;padding:3px;border-bottom:0.5px solid #e5e7eb;">';
+            if (rn > 0) {
+                var bg = intensity(rn, mx);
+                h += '<div style="padding:4px 2px;border-radius:3px;background:' + bg + ';color:' + tc(bg) + ';font-weight:500;">' + rn + '</div>';
+            }
+            h += '</td>';
+        }
+        h += '<td style="text-align:center;padding:5px;font-weight:500;border-bottom:0.5px solid #e5e7eb;background:#f8fafc;font-size:11px;">' + (data.booking_totals[bm] || 0) + '</td>';
+        h += '</tr>';
+    }
+
+    h += '<tr><td style="padding:5px 8px;font-weight:500;color:#6b7280;font-size:10px;text-transform:uppercase;background:#f8fafc;">Arrival total</td>';
+    var gt = 0;
+    for (var ai = 0; ai < ams.length; ai++) {
+        var at = data.arrival_totals[ams[ai]] || 0; gt += at;
+        h += '<td style="text-align:center;padding:5px;font-weight:500;background:#f8fafc;font-size:11px;">' + at + '</td>';
+    }
+    h += '<td style="text-align:center;padding:5px;font-weight:500;background:#f1f5f9;font-size:11px;">' + gt + '</td>';
+    h += '</tr></tbody></table></div>';
+
+    h += '<p class="text-dash-sm text-dash-hint mt-1">Across &rarr; when bookings land. Down &#8595; where arrivals came from.</p>';
+
+    document.getElementById('booking-heatmap-card').innerHTML = h;
+}
+
+/* ============================================================================
+   PICKUP + ARRIVALS CARD (AJAX)
+   ============================================================================ */
+function loadPickupArrivals() {
+    fetch(window.DASH.urls.pickupArrivals)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success || !data.has_data) {
+                document.getElementById('pickup-arrivals-card').innerHTML = '<div class="px-4 py-6 text-center text-dash-sm text-dash-hint">No pickup data available</div>';
+                return;
+            }
+            renderPickupArrivals(data);
+        })
+        .catch(function() {
+            document.getElementById('pickup-arrivals-card').innerHTML = '<div class="px-4 py-6 text-center text-dash-sm text-dash-hint">Unable to load pickup data</div>';
+        });
+}
+
+function renderPickupArrivals(data) {
+    var h = '<div class="p-3">';
+    h += '<div class="text-dash-md font-medium text-dash-primary mb-2">Next 3 months &mdash; pace & arrivals</div>';
+
+    var forecasts = data.forecasts || data.forecast_summary || [];
+    for (var i = 0; i < forecasts.length; i++) {
+        var f = forecasts[i];
+        var last = i === forecasts.length - 1;
+        var bdr = last ? '' : 'border-bottom:0.5px solid #f1f5f9;';
+
+        h += '<div style="padding:4px 0;' + bdr + '">';
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+        h += '<span class="text-dash-base font-semibold text-dash-primary">' + (f.month_name || '').slice(0, 3) + '</span>';
+
+        var occVal = f.forecast_occupancy || f.otb_occ || 0;
+        h += '<span class="text-dash-base font-semibold text-dash-primary">' + occVal + '% OTB</span>';
+
+        var stly = f.vs_stly !== null && f.vs_stly !== undefined ? f.vs_stly : (f.vs_stly_pace || null);
+        if (stly !== null) {
+            var sc = stly >= 0 ? '#16a34a' : '#dc2626';
+            var sa = stly >= 0 ? '&#9650;' : '&#9660;';
+            var warn = stly < -10 ? ' &#9888;' : '';
+            h += '<span class="text-dash-sm font-medium" style="color:' + sc + ';">' + sa + ' ' + (stly >= 0 ? '+' : '') + stly + '%' + warn + '</span>';
+        } else {
+            h += '<span class="text-dash-sm text-dash-hint">&mdash; no STLY</span>';
+        }
+        h += '</div>';
+
+        var arrPct = f.arrival_pct !== null && f.arrival_pct !== undefined ? Math.round(f.arrival_pct) : 0;
+        h += '<div style="display:flex;align-items:center;gap:4px;margin-top:2px;flex-wrap:wrap;">';
+        var arrLabel = f.arrival_is_forecast ? 'Arrivals (fcst)' : 'Arrivals';
+        h += '<span class="text-dash-xs text-dash-hint">' + arrLabel + '</span>';
+        var ac = arrPct >= 0 ? '#16a34a' : '#dc2626';
+        h += '<span class="text-dash-xs font-medium" style="color:' + ac + ';">' + (arrPct >= 0 ? '&#9650; +' : '&#9660; ') + arrPct + '%</span>';
+        if (f.top_movers && f.top_movers.length > 0) {
+            for (var mi = 0; mi < Math.min(f.top_movers.length, 3); mi++) {
+                var m = f.top_movers[mi], yoy = m.country_yoy || 0;
+                var pb = yoy >= 5 ? '#dcfce7' : yoy >= -5 ? '#fef3c7' : '#fee2e2';
+                var pc = yoy >= 5 ? '#166534' : yoy >= -5 ? '#92400e' : '#991b1b';
+                var lbl = (m.country || '').slice(0, 3) + ' ' + (yoy >= 0 ? '+' : '') + Math.round(yoy);
+                h += '<span class="text-dash-xs font-medium" style="padding:1px 5px;border-radius:8px;background:' + pb + ';color:' + pc + ';">' + lbl + '</span>';
+            }
+        }
+        h += '</div>';
+        h += '</div>';
+    }
+
+    if (data.velocity && data.velocity.per_day > 0) {
+        h += '<div class="text-dash-sm text-dash-hint" style="margin-top:6px;padding-top:6px;border-top:0.5px solid #f1f5f9;">';
+        h += 'Velocity: ' + data.velocity.per_day.toFixed(1) + ' bookings/day';
+        if (data.velocity.delta) h += ' (' + (data.velocity.delta >= 0 ? '&uarr;' : '&darr;') + ' ' + Math.abs(data.velocity.delta).toFixed(1) + ')';
+        h += '</div>';
+    }
+
+    h += '<a href="' + window.DASH.urls.pickupDashboard + '" class="text-dash-sm text-action mt-1 inline-block">View full forecast &rarr;</a>';
+    h += '</div>';
+
+    document.getElementById('pickup-arrivals-card').innerHTML = h;
+}
+
+/* ============================================================================
+   ARRIVAL FORECAST CHART (AJAX)
+   ============================================================================ */
+function loadArrivalForecast() {
+    fetch(window.DASH.urls.arrivalForecast)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success || !data.months || data.months.length === 0) {
+                document.getElementById('arrival-forecast-card').innerHTML = '<div class="text-center py-6 text-dash-sm text-dash-hint">No arrival forecast data</div>';
+                return;
+            }
+            renderArrivalForecast(data);
+        })
+        .catch(function() {
+            document.getElementById('arrival-forecast-card').innerHTML = '<div class="text-center py-6 text-dash-sm text-dash-hint">Unable to load arrival forecast</div>';
+        });
+}
+
+function renderArrivalForecast(data) {
+    var months = data.months;
+    var labels = months.map(function(m) { return m.month; });
+    var hotelValues = months.map(function(m) { return m.hotel_pct; });
+    var natValues = months.map(function(m) { return m.national_pct; });
+    var occValues = months.map(function(m) { return m.occupancy; });
+
+    var subtitle = '';
+    if (data.hotel_years) subtitle += data.hotel_years + 'yr hotel';
+    if (data.national_years) subtitle += (subtitle ? ', ' : '') + data.national_years + 'yr national';
+
+    var el = document.getElementById('arrival-forecast-card');
+    el.innerHTML = '<div class="flex items-center justify-between mb-2">' +
+        '<h2 class="text-dash-lg font-medium text-dash-primary">Seasonality forecast</h2>' +
+        '<span class="text-dash-xs text-dash-hint">Monthly share of annual total' + (subtitle ? ' · ' + subtitle : '') + '</span>' +
+        '</div>' +
+        '<div style="height:160px;"><canvas id="arrivalForecastChart"></canvas></div>';
+
+    var ctx = document.getElementById('arrivalForecastChart');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Hotel room nights %',
+                    data: hotelValues,
+                    borderColor: '#2563eb',
+                    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#2563eb',
+                    tension: 0.3,
+                    fill: true,
+                },
+                {
+                    label: 'National arrivals %',
+                    data: natValues,
+                    borderColor: '#6366f1',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.5,
+                    borderDash: [4, 3],
+                    pointRadius: 2,
+                    pointBackgroundColor: '#6366f1',
+                    tension: 0.3,
+                    fill: false,
+                },
+                {
+                    label: 'Hotel occupancy %',
+                    data: occValues,
+                    borderColor: '#16a34a',
+                    backgroundColor: 'rgba(22, 163, 74, 0.06)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#16a34a',
+                    tension: 0.3,
+                    fill: true,
+                    yAxisID: 'y1',
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                    labels: { font: { size: 10 }, boxWidth: 12, padding: 8 }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(c) {
+                            var v = c.parsed.y;
+                            if (c.datasetIndex === 2) return c.dataset.label + ': ' + v.toFixed(1) + '% OTB';
+                            return c.dataset.label + ': ' + v.toFixed(1) + '% of year';
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { font: { size: 10 }, color: '#6b7280' }
+                },
+                y: {
+                    position: 'left',
+                    grid: { color: '#f1f5f9' },
+                    title: { display: true, text: 'Seasonality %', font: { size: 9 }, color: '#94a3b8' },
+                    ticks: {
+                        font: { size: 10 },
+                        color: '#6b7280',
+                        callback: function(v) { return v + '%'; }
+                    }
+                },
+                y1: {
+                    position: 'right',
+                    grid: { display: false },
+                    title: { display: true, text: 'Occupancy %', font: { size: 9 }, color: '#16a34a' },
+                    min: 0,
+                    max: 100,
+                    ticks: {
+                        font: { size: 10 },
+                        color: '#16a34a',
+                        callback: function(v) { return v + '%'; }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/* ============================================================================
+   INIT
+   ============================================================================ */
+document.addEventListener('DOMContentLoaded', function() {
+    loadOccupancyCalendar(occCalYear, occCalMonth);
+    loadBookingHeatmap();
+    loadPickupArrivals();
+    loadArrivalForecast();
+});
 </script>
-<script src="{% static 'pricing/js/dashboard-charts.js' %}"></script>
 {% endblock %}

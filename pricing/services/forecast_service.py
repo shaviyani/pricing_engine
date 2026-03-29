@@ -896,18 +896,22 @@ class PickupAnalysisService:
         
         # Get STLY data
         stly_data = self.get_stly_otb(target_month)
-        stly_room_nights = stly_data['otb_room_nights'] or curve_forecast
-        
+        stly_room_nights = stly_data['otb_room_nights']  # 0 if no data
+        has_stly = stly_room_nights > 0
+
+        # For forecast blend, use curve_forecast as STLY stand-in when no real data
+        stly_for_blend = stly_room_nights if has_stly else curve_forecast
+
         # Get velocity trend
         velocity = self.calculate_booking_velocity(target_month)
         velocity_forecast = otb_room_nights
         if days_out > 0 and velocity['room_nights_per_day'] > 0:
             velocity_forecast = otb_room_nights + int(velocity['room_nights_per_day'] * days_out)
-        
+
         # Weighted forecast: 50% curve, 30% STLY, 20% velocity
         base_forecast = int(
             curve_forecast * 0.5 +
-            stly_room_nights * 0.3 +
+            stly_for_blend * 0.3 +
             velocity_forecast * 0.2
         )
 
@@ -933,10 +937,10 @@ class PickupAnalysisService:
         if total_available > 0:
             forecast_occupancy = round(forecast_room_nights / total_available * 100, 1)
         
-        # Calculate pace vs STLY
-        pace_variance = otb_room_nights - stly_room_nights
+        # Calculate pace vs STLY (only when real STLY data exists)
+        pace_variance = otb_room_nights - stly_room_nights if has_stly else 0
         vs_stly = None
-        if stly_room_nights > 0:
+        if has_stly:
             vs_stly = round(pace_variance / stly_room_nights * 100, 1)
         
         # Get scenario occupancy from Season expected_occupancy

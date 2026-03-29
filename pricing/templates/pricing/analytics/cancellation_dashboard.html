@@ -1,0 +1,344 @@
+{% extends "pricing/base.html" %}
+{% load humanize %}
+
+{% block title %}Cancellation Intelligence{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="space-y-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Cancellation Intelligence</h1>
+            <p class="text-gray-600 mt-1">
+                Cancel rate analysis, timing patterns, and revenue impact &bull; {{ selected_year }}
+            </p>
+        </div>
+        <div class="flex items-center gap-4 no-print">
+            <select id="yearSelector" class="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+                {% for y in available_years %}
+                <option value="{{ y }}" {% if y == selected_year %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    {% if not has_data %}
+    <div class="bg-gray-50 rounded-xl p-12 text-center">
+        <p class="text-gray-500">No reservation data imported yet.</p>
+    </div>
+    {% else %}
+
+    <!-- Row 1: KPI Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <!-- Overall Cancel Rate -->
+        <div class="bg-white rounded-xl shadow-sm border p-5">
+            <div class="text-xs font-medium text-gray-500 uppercase">Cancel Rate</div>
+            <div class="text-3xl font-bold mt-1 {% if cancel_rates.overall.rate > 60 %}text-red-600{% elif cancel_rates.overall.rate > 40 %}text-amber-600{% else %}text-green-600{% endif %}">
+                {{ cancel_rates.overall.rate }}%
+            </div>
+            <div class="text-xs text-gray-400 mt-1">
+                {{ cancel_rates.overall.count }} of {{ cancel_rates.overall.total }} bookings
+            </div>
+        </div>
+
+        <!-- Estimated Lost Revenue -->
+        <div class="bg-white rounded-xl shadow-sm border p-5">
+            <div class="text-xs font-medium text-gray-500 uppercase">Est. Lost Revenue</div>
+            <div class="text-3xl font-bold text-red-600 mt-1">
+                ${{ revenue_impact.total_estimated_lost|floatformat:0|intcomma }}
+            </div>
+            <div class="text-xs text-gray-400 mt-1">
+                {{ cancel_rates.overall.lost_nights|intcomma }} room-nights lost
+            </div>
+        </div>
+
+        <!-- Late Cancellations -->
+        <div class="bg-white rounded-xl shadow-sm border p-5">
+            <div class="text-xs font-medium text-gray-500 uppercase">Late Cancels (&lt;7d)</div>
+            <div class="text-3xl font-bold text-orange-600 mt-1">
+                {{ revenue_impact.late_cancellations.count }}
+            </div>
+            <div class="text-xs text-gray-400 mt-1">
+                {{ revenue_impact.late_cancellations.room_nights }} room-nights &mdash; high damage
+            </div>
+        </div>
+
+        <!-- Rebooking Rate -->
+        <div class="bg-white rounded-xl shadow-sm border p-5">
+            <div class="text-xs font-medium text-gray-500 uppercase">Rebooking Rate</div>
+            <div class="text-3xl font-bold text-blue-600 mt-1">
+                {{ rebooking.rebooking_rate }}%
+            </div>
+            <div class="text-xs text-gray-400 mt-1">
+                {{ rebooking.rebooked_guests }} of {{ rebooking.cancel_only_guests|add:rebooking.rebooked_guests }} cancelling guests rebook
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 2: Cancellation Timing Chart -->
+    {% if timing_curve %}
+    <div class="bg-white rounded-xl shadow-sm border p-6">
+        <h2 class="text-lg font-semibold text-gray-900 mb-1">Cancellation Timing</h2>
+        <p class="text-sm text-gray-500 mb-4">When cancellations happen relative to arrival date</p>
+        <div style="height: 280px;">
+            <canvas id="timingChart"></canvas>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Row 3: Two columns -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Cancel Rate by Month -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-1">Cancel Rate by Month</h2>
+            <p class="text-sm text-gray-500 mb-4">Monthly cancellation patterns</p>
+            <div style="height: 260px;">
+                <canvas id="monthlyChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Source Market Risk Table -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-1">Source Market Risk</h2>
+            <p class="text-sm text-gray-500 mb-4">Cancel rate by guest country</p>
+            <div class="overflow-y-auto" style="max-height: 300px;">
+                <table class="w-full text-sm">
+                    <thead class="sticky top-0 bg-white">
+                        <tr class="border-b">
+                            <th class="text-left py-2 font-medium text-gray-600">Country</th>
+                            <th class="text-right py-2 font-medium text-gray-600">Cancel Rate</th>
+                            <th class="text-right py-2 font-medium text-gray-600">Bookings</th>
+                            <th class="text-right py-2 font-medium text-gray-600">Avg LOS</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in cancel_rates.by_country %}
+                        <tr class="border-b border-gray-100 hover:bg-gray-50">
+                            <td class="py-2 font-medium">{{ c.country }}</td>
+                            <td class="text-right py-2">
+                                <span class="inline-block px-2 py-0.5 rounded text-xs font-medium
+                                    {% if c.rate > 60 %}bg-red-100 text-red-700
+                                    {% elif c.rate > 40 %}bg-amber-100 text-amber-700
+                                    {% else %}bg-green-100 text-green-700{% endif %}">
+                                    {{ c.rate }}%
+                                </span>
+                            </td>
+                            <td class="text-right py-2 text-gray-600">{{ c.total }}</td>
+                            <td class="text-right py-2 text-gray-600">{{ c.avg_los }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" class="text-center py-4 text-gray-400">No country data</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 3b: Additional breakdowns -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- By Room Type -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-sm font-semibold text-gray-900 mb-3">By Room Type</h2>
+            <div class="space-y-2">
+                {% for rt in cancel_rates.by_room_type %}
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-gray-700 truncate mr-2">{{ rt.name }}</span>
+                    <div class="flex items-center gap-2">
+                        <div class="w-20 bg-gray-200 rounded-full h-2">
+                            <div class="h-2 rounded-full {% if rt.rate > 60 %}bg-red-500{% elif rt.rate > 40 %}bg-amber-500{% else %}bg-green-500{% endif %}"
+                                 style="width:{{ rt.rate }}%"></div>
+                        </div>
+                        <span class="text-xs font-medium w-12 text-right {% if rt.rate > 60 %}text-red-600{% elif rt.rate > 40 %}text-amber-600{% else %}text-green-600{% endif %}">{{ rt.rate }}%</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- By LOS -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-sm font-semibold text-gray-900 mb-3">By Length of Stay</h2>
+            <div class="space-y-2">
+                {% for b in cancel_rates.by_los_bucket %}
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-gray-700">{{ b.bucket }} nights</span>
+                    <div class="flex items-center gap-2">
+                        <div class="w-20 bg-gray-200 rounded-full h-2">
+                            <div class="h-2 rounded-full {% if b.rate > 60 %}bg-red-500{% elif b.rate > 40 %}bg-amber-500{% else %}bg-green-500{% endif %}"
+                                 style="width:{{ b.rate }}%"></div>
+                        </div>
+                        <span class="text-xs font-medium w-12 text-right {% if b.rate > 60 %}text-red-600{% elif b.rate > 40 %}text-amber-600{% else %}text-green-600{% endif %}">{{ b.rate }}%</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- By Channel -->
+        <div class="bg-white rounded-xl shadow-sm border p-6">
+            <h2 class="text-sm font-semibold text-gray-900 mb-3">By Channel</h2>
+            <div class="space-y-2">
+                {% for ch in cancel_rates.by_channel %}
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-gray-700 truncate mr-2">{{ ch.channel }}</span>
+                    <div class="flex items-center gap-2">
+                        <div class="w-20 bg-gray-200 rounded-full h-2">
+                            <div class="h-2 rounded-full {% if ch.rate > 60 %}bg-red-500{% elif ch.rate > 40 %}bg-amber-500{% else %}bg-green-500{% endif %}"
+                                 style="width:{{ ch.rate }}%"></div>
+                        </div>
+                        <span class="text-xs font-medium w-12 text-right {% if ch.rate > 60 %}text-red-600{% elif ch.rate > 40 %}text-amber-600{% else %}text-green-600{% endif %}">{{ ch.rate }}%</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 4: Future Month Forecast -->
+    {% if cancel_forecasts %}
+    <div class="bg-white rounded-xl shadow-sm border p-6">
+        <h2 class="text-lg font-semibold text-gray-900 mb-1">Cancellation Forecast</h2>
+        <p class="text-sm text-gray-500 mb-4">Predicted cancellations for upcoming months based on booking risk scoring</p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {% for f in cancel_forecasts %}
+            <div class="border rounded-lg p-4 {% if f.predicted_cancel_rate > 50 %}border-red-200 bg-red-50{% elif f.predicted_cancel_rate > 30 %}border-amber-200 bg-amber-50{% else %}border-green-200 bg-green-50{% endif %}">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="font-semibold text-gray-900">{{ f.month_name }} {{ f.year }}</span>
+                    <span class="text-xs px-2 py-0.5 rounded font-medium
+                        {% if f.confidence == 'high' %}bg-green-100 text-green-700
+                        {% elif f.confidence == 'medium' %}bg-amber-100 text-amber-700
+                        {% else %}bg-gray-100 text-gray-600{% endif %}">
+                        {{ f.confidence }} confidence
+                    </span>
+                </div>
+                <div class="text-sm text-gray-700 space-y-1">
+                    <div>{{ f.otb_bookings }} OTB bookings &bull; {{ f.otb_room_nights }} room-nights</div>
+                    <div>Historical cancel rate: <strong>{{ f.historical_cancel_rate }}%</strong></div>
+                    <div class="font-medium {% if f.predicted_cancel_rate > 50 %}text-red-700{% elif f.predicted_cancel_rate > 30 %}text-amber-700{% else %}text-green-700{% endif %}">
+                        Predicted: {{ f.predicted_cancels }} cancels ({{ f.predicted_cancel_rate }}%)
+                        &rarr; ~{{ f.predicted_lost_nights }} lost nights
+                    </div>
+                    <div class="text-xs text-gray-500">
+                        Net forecast: <strong>{{ f.net_room_nights }}</strong> room-nights
+                    </div>
+                </div>
+                {% if f.risk_breakdown %}
+                <div class="flex gap-2 mt-2">
+                    {% for r in f.risk_breakdown %}
+                    {% if r.count > 0 %}
+                    <span class="text-xs px-1.5 py-0.5 rounded
+                        {% if r.level == 'high' %}bg-red-100 text-red-700
+                        {% elif r.level == 'medium' %}bg-amber-100 text-amber-700
+                        {% else %}bg-green-100 text-green-700{% endif %}">
+                        {{ r.count }} {{ r.level }}
+                    </span>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% endif %}{# has_data #}
+
+</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    // Year selector
+    var yearSel = document.getElementById('yearSelector');
+    if (yearSel) {
+        yearSel.addEventListener('change', function() {
+            var url = new URL(window.location);
+            url.searchParams.set('year', this.value);
+            window.location = url;
+        });
+    }
+
+    // Timing Chart
+    var timingCanvas = document.getElementById('timingChart');
+    if (timingCanvas) {
+        var timingData = {{ timing_curve_json|safe }};
+        new Chart(timingCanvas, {
+            type: 'bar',
+            data: {
+                labels: timingData.map(function(d) { return d.bucket; }),
+                datasets: [{
+                    label: 'Cancellations',
+                    data: timingData.map(function(d) { return d.count; }),
+                    backgroundColor: timingData.map(function(d) {
+                        return d.days_before_lo <= 7 ? '#ef4444' :
+                               d.days_before_lo <= 30 ? '#f59e0b' : '#6b7280';
+                    }),
+                    borderRadius: 4,
+                }, {
+                    label: 'Cumulative %',
+                    data: timingData.map(function(d) { return d.cumulative_pct; }),
+                    type: 'line',
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'transparent',
+                    yAxisID: 'y1',
+                    pointRadius: 4,
+                    tension: 0.3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, position: 'top' },
+                },
+                scales: {
+                    y: { beginAtZero: true, title: { display: true, text: 'Count' } },
+                    y1: { position: 'right', min: 0, max: 100,
+                           title: { display: true, text: 'Cumulative %' },
+                           grid: { drawOnChartArea: false } },
+                },
+            },
+        });
+    }
+
+    // Monthly Chart
+    var monthlyCanvas = document.getElementById('monthlyChart');
+    if (monthlyCanvas) {
+        var monthlyData = {{ monthly_rates_json|safe }};
+        new Chart(monthlyCanvas, {
+            type: 'bar',
+            data: {
+                labels: monthlyData.map(function(d) { return d.month_name; }),
+                datasets: [{
+                    label: 'Cancel Rate %',
+                    data: monthlyData.map(function(d) { return d.rate; }),
+                    backgroundColor: monthlyData.map(function(d) {
+                        return d.rate > 60 ? '#ef4444' :
+                               d.rate > 40 ? '#f59e0b' : '#22c55e';
+                    }),
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, max: 100,
+                         title: { display: true, text: 'Cancel Rate %' } },
+                },
+            },
+        });
+    }
+})();
+</script>
+{% endblock %}

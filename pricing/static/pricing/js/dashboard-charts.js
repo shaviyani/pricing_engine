@@ -1,56 +1,77 @@
 // ============================================================================
 // 12-MONTH SNAPSHOT CHART (with projected occupancy line)
 // ============================================================================
-function initSnapshotChart(data, stlyOcc, projectedOcc, demandPct) {
+function initSnapshotChart(data, stlyOcc, projectedOcc, demandPct, cancelRates) {
     var ctx = document.getElementById('snapshotChart');
     if (!ctx) return;
 
     var demandSign = demandPct >= 0 ? '+' : '';
     var projLabel = 'Projected (STLY + per-month demand index)';
 
+    var datasets = [
+        {
+            label: 'Revenue ($)',
+            data: data.map(function(m) { return m.revenue; }),
+            backgroundColor: 'rgba(59, 130, 246, 0.7)',
+            borderRadius: 4,
+            yAxisID: 'y',
+            order: 4,
+        },
+        {
+            label: 'OTB Occupancy (%)',
+            data: data.map(function(m) { return m.occupancy; }),
+            type: 'line',
+            borderColor: 'rgb(34, 197, 94)',
+            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+            borderWidth: 2,
+            pointRadius: 4,
+            pointBackgroundColor: 'rgb(34, 197, 94)',
+            tension: 0.3,
+            fill: false,
+            yAxisID: 'y1',
+            order: 1,
+        },
+        {
+            label: projLabel,
+            data: projectedOcc,
+            type: 'line',
+            borderColor: 'rgb(249, 115, 22)',
+            borderWidth: 2,
+            borderDash: [6, 3],
+            pointRadius: 3,
+            pointBackgroundColor: 'rgb(249, 115, 22)',
+            pointStyle: 'triangle',
+            tension: 0.3,
+            fill: false,
+            yAxisID: 'y1',
+            order: 2,
+        }
+    ];
+
+    // Cancel rate line (if data available)
+    if (cancelRates && cancelRates.length > 0) {
+        datasets.push({
+            label: 'Cancel Rate (%)',
+            data: cancelRates,
+            type: 'line',
+            borderColor: 'rgb(239, 68, 68)',
+            borderWidth: 2,
+            borderDash: [3, 3],
+            pointRadius: 3,
+            pointBackgroundColor: 'rgb(239, 68, 68)',
+            pointStyle: 'rectRot',
+            tension: 0.3,
+            fill: false,
+            yAxisID: 'y1',
+            order: 3,
+        });
+    }
+
     var chart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: data.map(function(m) { return m.month_name + ' ' + String(m.year).slice(2); }),
-            datasets: [
-                {
-                    label: 'Revenue ($)',
-                    data: data.map(function(m) { return m.revenue; }),
-                    backgroundColor: 'rgba(59, 130, 246, 0.7)',
-                    borderRadius: 4,
-                    yAxisID: 'y',
-                    order: 3,
-                },
-                {
-                    label: 'OTB Occupancy (%)',
-                    data: data.map(function(m) { return m.occupancy; }),
-                    type: 'line',
-                    borderColor: 'rgb(34, 197, 94)',
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                    borderWidth: 2,
-                    pointRadius: 4,
-                    pointBackgroundColor: 'rgb(34, 197, 94)',
-                    tension: 0.3,
-                    fill: false,
-                    yAxisID: 'y1',
-                    order: 1,
-                },
-                {
-                    label: projLabel,
-                    data: projectedOcc,
-                    type: 'line',
-                    borderColor: 'rgb(249, 115, 22)',
-                    borderWidth: 2,
-                    borderDash: [6, 3],
-                    pointRadius: 3,
-                    pointBackgroundColor: 'rgb(249, 115, 22)',
-                    pointStyle: 'triangle',
-                    tension: 0.3,
-                    fill: false,
-                    yAxisID: 'y1',
-                    order: 2,
-                }
-            ]
+            datasets: datasets
         },
         options: {
             responsive: true,
@@ -81,10 +102,28 @@ function initSnapshotChart(data, stlyOcc, projectedOcc, demandPct) {
                                 }
                                 return parts;
                             }
+                            if (label === 'Cancel Rate (%)') {
+                                return 'Cancel Rate: ' + val.toFixed(1) + '%';
+                            }
                             if (ctx.dataset.yAxisID === 'y1') {
                                 return label + ': ' + val.toFixed(1) + '%';
                             }
                             return 'Revenue: ' + window.DASHBOARD_CFG.currency + val.toLocaleString('en-US', {maximumFractionDigits: 0});
+                        },
+                        afterBody: function(tooltipItems) {
+                            var idx = tooltipItems[0].dataIndex;
+                            var snap = data[idx];
+                            var lines = [];
+                            if (snap.cancel_rate !== null && snap.cancel_rate !== undefined) {
+                                lines.push('Cancel rate: ' + snap.cancel_rate + '%');
+                            }
+                            if (snap.net_occ !== null && snap.net_occ !== undefined) {
+                                lines.push('Net forecast: ~' + snap.net_occ + '%');
+                            }
+                            if (snap.demand_pct !== null && snap.demand_pct !== undefined) {
+                                lines.push('Demand: ' + (snap.demand_pct > 0 ? '+' : '') + snap.demand_pct.toFixed(1) + '%');
+                            }
+                            return lines;
                         }
                     }
                 }
@@ -122,7 +161,7 @@ function initSnapshotChart(data, stlyOcc, projectedOcc, demandPct) {
         }
     });
 
-    // Click a month bar → navigate to override calendar for that month
+    // Click a month bar -> navigate to override calendar for that month
     ctx.onclick = function(evt) {
         var points = chart.getElementsAtEventForMode(evt, 'nearest', {intersect: true}, false);
         if (points.length > 0 && window.DASHBOARD_CFG.overrideCalendarUrl) {
@@ -144,7 +183,7 @@ function initSnapshotChart(data, stlyOcc, projectedOcc, demandPct) {
 }
 
 // ============================================================================
-// OCCUPANCY CALENDAR
+// OCCUPANCY CALENDAR (clickable days)
 // ============================================================================
 var occCalYear = null;
 var occCalMonth = null;
@@ -197,9 +236,9 @@ function renderOccupancyCalendar(data) {
     var dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
     // Header row
-    html += '<div class="grid grid-cols-7 bg-gray-50 border-b border-gray-200">';
+    html += '<div class="grid grid-cols-7 bg-dash-metric border-b border-dash-divider">';
     for (var i = 0; i < 7; i++) {
-        html += '<div class="px-1 py-2 text-center text-xs font-semibold text-gray-500 uppercase">' + dayNames[i] + '</div>';
+        html += '<div class="px-1 py-2 text-center text-dash-xs font-semibold text-dash-hint uppercase">' + dayNames[i] + '</div>';
     }
     html += '</div>';
 
@@ -210,14 +249,15 @@ function renderOccupancyCalendar(data) {
 
     var dateKeys = Object.keys(data.days).sort();
 
-    html += '<div class="grid grid-cols-7 gap-px bg-gray-200">';
+    html += '<div class="grid grid-cols-7 gap-px bg-dash-border">';
 
     // Empty cells before first day
     for (var i = 0; i < startWeekday; i++) {
-        html += '<div class="bg-gray-50 min-h-[72px] sm:min-h-[92px]"></div>';
+        html += '<div class="bg-dash-subtle min-h-dash-day sm:min-h-[72px]"></div>';
     }
 
-    // Day cells
+    // Day cells — clickable, linking to rate lookup
+    var rateLookupBase = window.DASHBOARD_CFG.rateLookupBaseUrl || '';
     for (var d = 0; d < dateKeys.length; d++) {
         var dateStr = dateKeys[d];
         var day = data.days[dateStr];
@@ -230,45 +270,47 @@ function renderOccupancyCalendar(data) {
         else if (occ >= 50) barColor = '#f59e0b';
         else barColor = '#ef4444';
 
-        var cellClass = day.is_today ? 'ring-2 ring-inset ring-blue-500 bg-blue-50' : 'bg-white';
+        var cellClass = day.is_today ? 'ring-2 ring-inset ring-blue-500 bg-blue-50' : 'bg-dash-card';
         if (day.is_past) cellClass += ' opacity-60';
 
-        html += '<div class="' + cellClass + ' min-h-[72px] sm:min-h-[92px] p-1.5 sm:p-2 flex flex-col relative group">';
+        var clickHandler = rateLookupBase ? ' onclick="window.location.href=\'' + rateLookupBase + '?date=' + dateStr + '\'"' : '';
+
+        html += '<div class="' + cellClass + ' min-h-dash-day sm:min-h-[72px] p-0.5 flex flex-col relative group cursor-pointer"' + clickHandler + '>';
 
         // Day number
         if (day.is_today) {
-            html += '<div class="flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold mb-0.5">' + day.day + '</div>';
+            html += '<div class="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-dash-xs font-bold mb-0.5">' + day.day + '</div>';
         } else {
-            html += '<div class="text-xs sm:text-sm font-semibold text-gray-700 mb-0.5">' + day.day + '</div>';
+            html += '<div class="text-dash-sm font-semibold text-dash-primary mb-0.5">' + day.day + '</div>';
         }
 
         // Season name (desktop)
         if (day.season_name) {
-            html += '<div class="hidden sm:block text-[9px] text-gray-400 truncate leading-tight" title="' + day.season_name + '">' + day.season_name + '</div>';
+            html += '<div class="hidden sm:block text-dash-xxs text-dash-hint truncate leading-tight" title="' + day.season_name + '">' + day.season_name + '</div>';
         }
 
         // Spacer
         html += '<div class="mt-auto">';
 
         // Rooms fraction
-        html += '<div class="text-[10px] sm:text-xs font-medium text-gray-600">' + day.rooms_occupied + '/' + day.total_rooms + '</div>';
+        html += '<div class="text-dash-xs text-dash-hint">' + day.rooms_occupied + '/' + day.total_rooms + '</div>';
 
-        // Occupancy bar
-        html += '<div class="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">';
-        html += '<div class="h-full rounded-full transition-all" style="width:' + Math.min(occ, 100) + '%;background:' + barColor + '"></div>';
+        // Occupancy bar (3px, rounded-dash-bar)
+        html += '<div class="h-[3px] bg-dash-border rounded-dash-bar mt-0.5 overflow-hidden">';
+        html += '<div class="h-full rounded-dash-bar transition-all" style="width:' + Math.min(occ, 100) + '%;background:' + barColor + '"></div>';
         html += '</div>';
 
         // Percent (desktop)
-        html += '<div class="hidden sm:block text-[9px] text-gray-500 text-right mt-0.5">' + occ + '%</div>';
+        html += '<div class="hidden sm:block text-dash-xxs text-dash-hint text-right mt-0.5">' + occ + '%</div>';
 
         // Group allotment indicator
         if (day.allotments && day.allotments.length > 0) {
             for (var ai = 0; ai < day.allotments.length; ai++) {
                 var allot = day.allotments[ai];
-                var allotColor = allot.status === 'confirmed' ? 'bg-purple-500' : 'bg-purple-300';
+                var allotColor = allot.status === 'confirmed' ? 'bg-allotment' : 'bg-allotment/50';
                 html += '<div class="hidden sm:flex items-center gap-0.5 mt-0.5">';
                 html += '<span class="inline-block w-1.5 h-1.5 rounded-full ' + allotColor + ' flex-shrink-0"></span>';
-                html += '<span class="text-[8px] text-purple-700 truncate leading-tight">' + allot.name + '</span>';
+                html += '<span class="text-dash-xxs text-allotment truncate leading-tight">' + allot.name + '</span>';
                 html += '</div>';
             }
         }
@@ -297,7 +339,7 @@ function renderOccupancyCalendar(data) {
     var lastDateStr = dateKeys[dateKeys.length - 1];
     var lastWeekday = data.days[lastDateStr].weekday;
     for (var i = lastWeekday + 1; i < 7; i++) {
-        html += '<div class="bg-gray-50 min-h-[72px] sm:min-h-[92px]"></div>';
+        html += '<div class="bg-dash-subtle min-h-dash-day sm:min-h-[72px]"></div>';
     }
 
     html += '</div>';
@@ -313,196 +355,229 @@ function navigateOccCal(direction) {
 }
 
 // ============================================================================
-// MARKET CONTEXT + DEMAND INDEX (condensed)
+// BOOKING HEATMAP (NEW)
 // ============================================================================
-function loadMarketContext() {
-    var url = window.DASHBOARD_CFG.marketContextUrl;
+function loadBookingHeatmap() {
+    var url = window.DASHBOARD_CFG.bookingHeatmapUrl;
+    if (!url) return;
 
     fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            var el = document.getElementById('market-context-content');
-            if (!data.has_data) {
-                el.innerHTML =
-                    '<div class="text-center py-6">' +
-                        '<svg class="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
-                            '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' +
-                        '</svg>' +
-                        '<p class="mt-2 text-sm text-gray-500">No market data available</p>' +
-                        '<p class="text-xs text-gray-400">Import a MoT report to see market context</p>' +
-                    '</div>';
+            if (!data.success || data.booking_months.length === 0) {
+                document.getElementById('booking-heatmap-card').style.display = 'none';
                 return;
             }
-
-            document.getElementById('market-ctx-period').textContent = data.period_label;
-
-            var html = '<div class="space-y-3">';
-
-            // Compact KPI row
-            html += '<div class="grid grid-cols-2 gap-3">';
-
-            // Arrivals
-            html += '<div class="bg-blue-50 rounded-lg p-3">';
-            html += '<p class="text-xs font-medium text-blue-600 uppercase">Arrivals</p>';
-            html += '<p class="text-lg font-bold text-gray-900">' + Number(data.total_arrivals).toLocaleString() + '</p>';
-            if (data.yoy_arrivals_pct !== null) {
-                var arrColor = data.yoy_arrivals_pct >= 0 ? 'text-green-600' : 'text-red-600';
-                var arrArrow = data.yoy_arrivals_pct >= 0 ? '\u2191' : '\u2193';
-                html += '<p class="text-xs ' + arrColor + '">' + arrArrow + ' ' + Math.abs(data.yoy_arrivals_pct) + '% YoY</p>';
-            }
-            html += '</div>';
-
-            // Occupancy
-            html += '<div class="bg-green-50 rounded-lg p-3">';
-            html += '<p class="text-xs font-medium text-green-600 uppercase">Mkt Occupancy</p>';
-            html += '<p class="text-lg font-bold text-gray-900">' + (data.occupancy_rate !== null ? data.occupancy_rate.toFixed(1) + '%' : '\u2014') + '</p>';
-            if (data.yoy_occupancy_pp !== null) {
-                var occColor = data.yoy_occupancy_pp >= 0 ? 'text-green-600' : 'text-red-600';
-                var occArrow = data.yoy_occupancy_pp >= 0 ? '\u2191' : '\u2193';
-                html += '<p class="text-xs ' + occColor + '">' + occArrow + ' ' + Math.abs(data.yoy_occupancy_pp) + 'pp YoY</p>';
-            }
-            html += '</div>';
-
-            html += '</div>'; // grid
-
-            // Property vs Market comparison (condensed -- top 5)
-            if (data.comparison && data.comparison.length > 0) {
-                html += '<div class="border-t border-gray-100 pt-3 mt-3">';
-                html += '<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Your Markets vs National</p>';
-                html += '<table class="w-full text-xs">';
-                html += '<thead><tr class="text-gray-400 uppercase">';
-                html += '<th class="text-left py-1 font-medium">Market</th>';
-                html += '<th class="text-right py-1 font-medium">National</th>';
-                html += '<th class="text-right py-1 font-medium">Yours</th>';
-                html += '<th class="text-right py-1 font-medium">Gap</th>';
-                html += '</tr></thead><tbody>';
-
-                var maxShow = Math.min(data.comparison.length, 5);
-                for (var i = 0; i < maxShow; i++) {
-                    var c = data.comparison[i];
-                    var gapColor = 'text-gray-400';
-                    var gapText = (c.gap >= 0 ? '+' : '') + c.gap.toFixed(1) + 'pp';
-
-                    if (c.gap > 2) {
-                        gapColor = 'text-blue-600 font-semibold';
-                    } else if (c.gap < -2) {
-                        gapColor = 'text-amber-600 font-semibold';
-                    }
-
-                    html += '<tr class="border-b border-gray-50">';
-                    html += '<td class="py-1.5 text-gray-700">' + c.country + '</td>';
-                    html += '<td class="py-1.5 text-right text-gray-500">' + c.national_share.toFixed(1) + '%</td>';
-                    html += '<td class="py-1.5 text-right text-gray-700 font-medium">' + c.prop_share.toFixed(1) + '%</td>';
-                    html += '<td class="py-1.5 text-right ' + gapColor + '">' + gapText + '</td>';
-                    html += '</tr>';
-                }
-
-                html += '</tbody></table>';
-
-                html += '<div class="flex items-center gap-3 mt-2 text-xs text-gray-400">';
-                html += '<span class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1"></span>Over-indexed</span>';
-                html += '<span class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1"></span>Opportunity</span>';
-                html += '</div>';
-                html += '</div>';
-
-            } else if (data.top_markets && data.top_markets.length > 0) {
-                // Fallback: top markets without comparison
-                html += '<div class="border-t border-gray-100 pt-3 mt-3">';
-                html += '<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Top Source Markets</p>';
-                var maxMkt = Math.min(data.top_markets.length, 5);
-                for (var i = 0; i < maxMkt; i++) {
-                    var m = data.top_markets[i];
-                    html += '<div class="flex items-center justify-between py-1">';
-                    html += '<span class="text-sm text-gray-700">' + m.origin_country + '</span>';
-                    html += '<div class="text-right">';
-                    html += '<span class="text-sm font-medium text-gray-900">' + Number(m.arrivals).toLocaleString() + '</span>';
-                    if (m.yoy_change_pct !== null) {
-                        var mktColor = parseFloat(m.yoy_change_pct) >= 0 ? 'text-green-600' : 'text-red-600';
-                        html += ' <span class="text-xs ' + mktColor + '">(' + (parseFloat(m.yoy_change_pct) >= 0 ? '+' : '') + parseFloat(m.yoy_change_pct).toFixed(1) + '%)</span>';
-                    }
-                    html += '</div>';
-                    html += '</div>';
-                }
-                html += '</div>';
-            }
-
-            // --- Demand Index (expandable breakdown) ---
-            if (data.demand_index && data.demand_index.backward.has_data) {
-                var di = data.demand_index.backward;
-                var diSign = di.pct >= 0 ? '+' : '';
-                var natSign = di.national_pct >= 0 ? '+' : '';
-                var diColor = di.pct >= 0 ? 'text-green-600' : 'text-red-600';
-
-                html += '<div class="mt-4 pt-4 border-t border-gray-200">';
-                html += '<div class="flex items-center justify-between mb-2">';
-                html += '<h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Property Demand Index</h4>';
-                html += '<button onclick="toggleDemandDetail()" class="text-xs text-blue-600 hover:underline" id="demand-toggle-btn">details</button>';
-                html += '</div>';
-
-                // Headline
-                html += '<div class="flex items-baseline gap-3">';
-                html += '<span class="text-2xl font-bold ' + diColor + '">' + diSign + di.pct.toFixed(1) + '%</span>';
-                html += '<span class="text-sm text-gray-500">vs national ' + natSign + di.national_pct.toFixed(1) + '%</span>';
-                html += '</div>';
-
-                // Expandable detail
-                html += '<div id="demand-detail" class="hidden mt-3">';
-                html += '<table class="min-w-full text-xs">';
-                html += '<thead><tr class="text-gray-500">';
-                html += '<th class="text-left py-1">Market</th>';
-                html += '<th class="text-right py-1">Share</th>';
-                html += '<th class="text-right py-1">MoT YoY</th>';
-                html += '<th class="text-right py-1">Impact</th>';
-                html += '</tr></thead><tbody>';
-
-                var maxComp = Math.min(di.components.length, 10);
-                for (var ci = 0; ci < maxComp; ci++) {
-                    var comp = di.components[ci];
-                    var yoySign = comp.country_yoy >= 0 ? '+' : '';
-                    var yoyColor = comp.country_yoy >= 0 ? 'text-green-600' : 'text-red-600';
-                    var impact = (comp.prop_share / 100) * comp.country_yoy;
-                    var impactSign = impact >= 0 ? '+' : '';
-                    var impactColor = impact >= 0 ? 'text-green-600' : 'text-red-600';
-
-                    html += '<tr class="border-t border-gray-100">';
-                    html += '<td class="py-1 text-gray-900">' + comp.country + '</td>';
-                    html += '<td class="py-1 text-right text-gray-600">' + comp.prop_share.toFixed(1) + '%</td>';
-                    html += '<td class="py-1 text-right ' + yoyColor + '">' + yoySign + comp.country_yoy.toFixed(1) + '%</td>';
-                    html += '<td class="py-1 text-right ' + impactColor + '">' + impactSign + impact.toFixed(1) + '%</td>';
-                    html += '</tr>';
-                }
-
-                html += '</tbody></table>';
-                html += '<p class="mt-2 text-xs text-gray-400">Based on ' + di.components.length + ' source markets</p>';
-                html += '</div></div>';
-            }
-
-            // Source
-            if (data.source_report) {
-                html += '<p class="text-xs text-gray-400 mt-2 pt-2 border-t border-gray-100">' + data.source_report + '</p>';
-            }
-
-            html += '</div>';
-            el.innerHTML = html;
+            renderBookingHeatmap(data);
         })
         .catch(function(err) {
-            console.error('Market context error:', err);
-            document.getElementById('market-context-content').innerHTML =
-                '<div class="text-center py-6 text-gray-500"><p class="text-sm">Unable to load market data</p></div>';
+            console.error('Booking heatmap error:', err);
+            document.getElementById('booking-heatmap-card').style.display = 'none';
         });
 }
 
-function toggleDemandDetail() {
-    var el = document.getElementById('demand-detail');
-    if (el) el.classList.toggle('hidden');
+function renderBookingHeatmap(data) {
+    var MONTHS_SHORT = {'01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'May','06':'Jun',
+                        '07':'Jul','08':'Aug','09':'Sep','10':'Oct','11':'Nov','12':'Dec'};
+    function fmtMonth(ym) {
+        var parts = ym.split('-');
+        return MONTHS_SHORT[parts[1]] + ' ' + parts[0].slice(2);
+    }
+    function fmtShort(ym) {
+        return MONTHS_SHORT[ym.split('-')[1]];
+    }
+    function getIntensity(rn, maxRn) {
+        if (rn === 0) return 'transparent';
+        var pct = rn / maxRn * 100;
+        if (pct >= 60) return '#1e3a8a';   // heat-5
+        if (pct >= 35) return '#2563eb';   // heat-4
+        if (pct >= 15) return '#60a5fa';   // heat-3
+        if (pct >= 5)  return '#bfdbfe';   // heat-2
+        return '#eff6ff';                   // heat-1
+    }
+    function textColor(bg) {
+        return (bg === '#1e3a8a' || bg === '#2563eb' || bg === '#60a5fa') ? '#fff' : '#1e3a8a';
+    }
+
+    var bms = data.booking_months;
+    var ams = data.arrival_months;
+    var matrix = data.matrix;
+    var maxRn = data.max_rn || 1;
+
+    var originUrl = window.DASHBOARD_CFG.bookingOriginUrl || '#';
+
+    var html = '<div class="px-5 py-3 border-b border-dash-inner">';
+    html += '<div class="flex items-center justify-between">';
+    html += '<div>';
+    html += '<h2 class="text-dash-lg font-semibold text-dash-primary">Booking heatmap</h2>';
+    html += '<p class="text-dash-base text-dash-hint mt-0.5">Last 3 booking months \u2192 future arrival months (room nights)</p>';
+    html += '</div>';
+    html += '<a href="' + originUrl + '" class="text-dash-base text-action">Full matrix \u2192</a>';
+    html += '</div></div>';
+
+    html += '<div class="px-5 py-3"><div class="overflow-x-auto">';
+    html += '<table class="w-full border-collapse text-dash-base">';
+
+    // Header row
+    html += '<thead><tr>';
+    html += '<th class="text-left px-2 py-1.5 text-dash-xs font-semibold text-dash-muted uppercase tracking-wider border-b-dash-heavy border-dash-divider bg-dash-metric">Booked \u2193</th>';
+    for (var ai = 0; ai < ams.length; ai++) {
+        html += '<th class="text-center px-1 py-1.5 text-dash-xs font-semibold text-dash-muted uppercase border-b-dash-heavy border-dash-divider" style="min-width:48px">' + fmtShort(ams[ai]) + '</th>';
+    }
+    html += '<th class="text-center px-1 py-1.5 text-dash-xs font-semibold text-dash-primary uppercase border-b-dash-heavy border-dash-divider bg-dash-metric">Total</th>';
+    html += '</tr></thead>';
+
+    // Data rows
+    html += '<tbody>';
+    for (var bi = 0; bi < bms.length; bi++) {
+        var bm = bms[bi];
+        var isNow = bm === data.current_month;
+        html += '<tr>';
+        html += '<td class="px-2 py-1.5 font-semibold text-dash-sm text-dash-primary border-b border-dash-inner">';
+        html += fmtMonth(bm);
+        if (isNow) html += ' <span class="text-dash-xxs text-status-blue font-medium">now</span>';
+        html += '</td>';
+
+        for (var ai = 0; ai < ams.length; ai++) {
+            var am = ams[ai];
+            var rn = (matrix[bm] || {})[am] || 0;
+            html += '<td class="text-center p-0.5 border-b border-dash-inner">';
+            if (rn > 0) {
+                var bg = getIntensity(rn, maxRn);
+                var tc = textColor(bg);
+                html += '<div class="p-1 rounded-dash-cell font-medium text-dash-base text-center" style="background:' + bg + '; color:' + tc + ';">' + rn + '</div>';
+            }
+            html += '</td>';
+        }
+
+        var rowTotal = data.booking_totals[bm] || 0;
+        html += '<td class="text-center py-1.5 font-semibold text-dash-sm text-dash-primary border-b border-dash-inner bg-dash-metric">' + rowTotal + '</td>';
+        html += '</tr>';
+    }
+
+    // Arrival totals row
+    html += '<tr>';
+    html += '<td class="px-2 py-1.5 font-semibold text-dash-xs text-dash-muted uppercase bg-dash-metric">Arrival total</td>';
+    var grandTotal = 0;
+    for (var ai = 0; ai < ams.length; ai++) {
+        var at = data.arrival_totals[ams[ai]] || 0;
+        grandTotal += at;
+        html += '<td class="text-center py-1.5 font-semibold text-dash-sm text-dash-primary bg-dash-metric">' + at + '</td>';
+    }
+    html += '<td class="text-center py-1.5 font-bold text-dash-sm text-dash-primary bg-dash-subtle">' + grandTotal + '</td>';
+    html += '</tr></tbody></table></div>';
+
+    // Reading hint
+    html += '<p class="text-dash-sm text-dash-hint mt-1.5">Across \u2192 when bookings land. Down \u2193 where arrivals came from.</p>';
+    html += '</div>';
+
+    document.getElementById('booking-heatmap-card').innerHTML = html;
+}
+
+// ============================================================================
+// PICKUP + ARRIVALS CARD (NEW — replaces Market Intelligence)
+// ============================================================================
+function loadPickupArrivals() {
+    var url = window.DASHBOARD_CFG.pickupArrivalsUrl;
+    if (!url) return;
+
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success || !data.has_data) {
+                document.getElementById('pickup-arrivals-card').innerHTML =
+                    '<div class="px-5 py-6 text-center text-dash-md text-dash-secondary">No pickup data available</div>';
+                return;
+            }
+            renderPickupArrivals(data);
+        })
+        .catch(function(err) {
+            console.error('Pickup arrivals error:', err);
+            document.getElementById('pickup-arrivals-card').innerHTML =
+                '<div class="px-5 py-6 text-center text-dash-md text-dash-secondary">Unable to load pickup data</div>';
+        });
+}
+
+function renderPickupArrivals(data) {
+    var pickupUrl = window.DASHBOARD_CFG.pickupDashboardUrl || '#';
+
+    var html = '<div class="px-5 py-3 border-b border-dash-inner">';
+    html += '<h2 class="text-dash-md font-semibold text-dash-primary">Next 3 months \u2014 pace & arrivals</h2>';
+    html += '</div>';
+    html += '<div class="px-5 py-2">';
+
+    for (var i = 0; i < data.forecasts.length; i++) {
+        var f = data.forecasts[i];
+        var isLast = i === data.forecasts.length - 1;
+        var borderStyle = isLast ? '' : 'border-bottom: 0.5px solid #f1f5f9;';
+
+        html += '<div style="padding: 4px 0; ' + borderStyle + '">';
+
+        // Line 1: month, OTB, vs STLY
+        html += '<div class="flex items-center justify-between">';
+        html += '<span class="text-dash-base font-semibold text-dash-primary">' + f.month_name.slice(0, 3) + '</span>';
+        html += '<span class="text-dash-base font-semibold text-dash-primary">' + f.forecast_occupancy + '% OTB</span>';
+
+        if (f.vs_stly !== null && f.vs_stly !== undefined) {
+            var stlyClass = f.vs_stly >= 0 ? 'text-status-green' : 'text-status-red';
+            var stlyArrow = f.vs_stly >= 0 ? '\u25b2' : '\u25bc';
+            var warn = f.vs_stly < -10 ? ' \u26a0' : '';
+            html += '<span class="text-dash-sm font-medium ' + stlyClass + '">' + stlyArrow + ' ' + (f.vs_stly >= 0 ? '+' : '') + f.vs_stly + '%' + warn + '</span>';
+        } else {
+            html += '<span class="text-dash-sm text-dash-hint">\u2014 no STLY</span>';
+        }
+        html += '</div>';
+
+        // Line 2: arrival trend + market mover pills
+        if (f.arrival_has_data && f.arrival_pct !== null) {
+            html += '<div class="flex items-center gap-1 mt-0.5 flex-wrap">';
+            html += '<span class="text-dash-xs text-dash-hint">Arrivals</span>';
+            var arrClass = f.arrival_pct >= 0 ? 'text-status-green' : 'text-status-red';
+            var arrArrow = f.arrival_pct >= 0 ? '\u25b2' : '\u25bc';
+            html += '<span class="text-dash-xs font-medium ' + arrClass + '">' + arrArrow + ' ' + (f.arrival_pct >= 0 ? '+' : '') + Math.round(f.arrival_pct) + '%</span>';
+
+            // Top mover pills
+            if (f.top_movers) {
+                for (var mi = 0; mi < Math.min(f.top_movers.length, 3); mi++) {
+                    var m = f.top_movers[mi];
+                    var yoy = m.country_yoy || 0;
+                    var pillBg, pillText;
+                    if (yoy >= 5) { pillBg = 'bg-status-green-bg'; pillText = 'text-status-green-dark'; }
+                    else if (yoy >= -5) { pillBg = 'bg-status-amber-bg'; pillText = 'text-status-amber-dark'; }
+                    else { pillBg = 'bg-status-red-bg'; pillText = 'text-status-red-dark'; }
+                    var label = (m.country || '').slice(0, 3) + ' ' + (yoy >= 0 ? '+' : '') + Math.round(yoy);
+                    html += '<span class="text-dash-xs font-medium px-1.5 py-px rounded-lg ' + pillBg + ' ' + pillText + '">' + label + '</span>';
+                }
+            }
+            html += '</div>';
+        }
+
+        html += '</div>';
+    }
+
+    // Velocity
+    if (data.velocity && data.velocity.per_day > 0) {
+        html += '<div class="text-dash-sm text-dash-hint mt-1.5 pt-1.5 border-t border-dash-inner">';
+        html += 'Velocity: ' + data.velocity.per_day.toFixed(1) + ' bookings/day';
+        if (data.velocity.delta) {
+            html += ' (' + (data.velocity.delta >= 0 ? '\u2191' : '\u2193') + ' ' + Math.abs(data.velocity.delta).toFixed(1) + ')';
+        }
+        html += '</div>';
+    }
+
+    html += '<a href="' + pickupUrl + '" class="text-dash-sm text-action mt-1 inline-block">View full forecast \u2192</a>';
+    html += '</div>';
+
+    document.getElementById('pickup-arrivals-card').innerHTML = html;
 }
 
 // ============================================================================
 // INIT
 // ============================================================================
 document.addEventListener('DOMContentLoaded', function() {
-    loadMarketContext();
     loadOccupancyCalendar(window.DASHBOARD_CFG.todayYear, window.DASHBOARD_CFG.todayMonth);
+    loadBookingHeatmap();
+    loadPickupArrivals();
 
     // Init snapshot chart if config data is available
     if (window.DASHBOARD_CFG.snapshotData) {
@@ -510,7 +585,8 @@ document.addEventListener('DOMContentLoaded', function() {
             window.DASHBOARD_CFG.snapshotData,
             window.DASHBOARD_CFG.stlyOcc,
             window.DASHBOARD_CFG.projectedOcc,
-            window.DASHBOARD_CFG.demandPct
+            window.DASHBOARD_CFG.demandPct,
+            window.DASHBOARD_CFG.cancelRates || []
         );
     }
 });

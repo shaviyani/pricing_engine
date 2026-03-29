@@ -23,11 +23,16 @@ from pricing.models import (
 )
 from pricing.services import PricingService
 
-from .mixins import PricingManagementMixin, PropertyMixin, SettingsMixin, ModelCrudMixin
+from .mixins import (
+    PricingManagementMixin, PropertyMixin, SettingsMixin, ModelCrudMixin,
+    _SeasonCrud, _RatePlanCrud, _ChannelCrud, _RoomTypeCrud,
+    _TravelAgentCrud, _CompetitorCrud, _ImportTemplateCrud,
+    SetupAccessMixin, PricingAccessMixin, DistributionAccessMixin,
+)
 
 logger = logging.getLogger(__name__)
 
-class ManageBaseMixin(PricingManagementMixin):
+class ManageBaseMixin(SetupAccessMixin, PricingManagementMixin):
     """Base mixin for all management section views."""
     
     def get_context_data(self, **kwargs):
@@ -47,7 +52,9 @@ class ManageBaseMixin(PricingManagementMixin):
             context['room_types'] = RoomType.objects.filter(hotel=hotel).order_by('sort_order')
         
         context['active_section'] = getattr(self, 'active_section', 'landing')
-        context['nav_active'] = 'manage'
+        context['nav_active'] = getattr(self, 'nav_active_override', 'setup')
+        if hasattr(self, 'nav_sub_override'):
+            context['nav_sub'] = self.nav_sub_override
         return context
 
 
@@ -162,6 +169,9 @@ class ManageDynamicView(ManageBaseMixin, TemplateView):
     """Dynamic pricing rules and event uplifts."""
     template_name = 'pricing/manage/dynamic.html'
     active_section = 'dynamic'
+    nav_active_override = 'pricing'
+    nav_sub_override = 'dynamic'
+    required_roles = ['admin', 'manager']  # PricingAccess
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -469,39 +479,11 @@ class PropertyUpdateView(PricingManagementMixin, View):
 # SEASON MANAGEMENT
 # =============================================================================
 
-class _SeasonCrud(ModelCrudMixin):
-    model_class = Season
-    model_label = 'Season'
-    list_key = 'seasons'
-    list_order = ['start_date']
-    version_scoped = True
-    fields = {
-        'name': {'type': 'str', 'required': True},
-        'start_date': {'type': 'date', 'required': True},
-        'end_date': {'type': 'date', 'required': True},
-        'season_index': {'type': 'decimal', 'default': '1.00'},
-        'expected_occupancy': {'type': 'decimal', 'default': '70.00'},
-    }
+class SeasonCrudView(_SeasonCrud):
+    """Consolidated Season CRUD — dispatch routes GET=list, POST=create, POST/<pk>=update, DELETE/<pk>=delete."""
+    pass
 
-    def serialize_item(self, obj):
-        result = super().serialize_item(obj)
-        result['date_range_display'] = obj.date_range_display()
-        return result
-
-    def validate_create(self, data, hotel):
-        start = self.parse_date(data.get('start_date'))
-        end = self.parse_date(data.get('end_date'))
-        if not start or not end:
-            return self.error_response('Valid start and end dates are required')
-        if start > end:
-            return self.error_response('Start date must be before end date')
-
-    def validate_update(self, data, instance):
-        start = self.parse_date(data.get('start_date')) if 'start_date' in data else instance.start_date
-        end = self.parse_date(data.get('end_date')) if 'end_date' in data else instance.end_date
-        if start and end and start > end:
-            return self.error_response('Start date must be before end date')
-
+# Backward-compatible aliases (used by old URL patterns and getApiUrl JS)
 class SeasonListView(_SeasonCrud):
     get = ModelCrudMixin.list_items
 
@@ -519,145 +501,21 @@ class SeasonDeleteView(_SeasonCrud):
 # ROOM TYPE MANAGEMENT
 # =============================================================================
 
-class RoomTypeListView(PricingManagementMixin, View):
-    """API: List room types for a property."""
-    
-    def get(self, request, *args, **kwargs):
-        from pricing.models import RoomType
-        
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-        
-        room_types = RoomType.objects.filter(hotel=hotel).order_by('sort_order')
-        
-        data = [{
-            'id': r.id,
-            'name': r.name,
-            'base_rate': str(r.base_rate),
-            'room_index': str(r.room_index),
-            'room_adjustment': str(r.room_adjustment),
-            'pricing_method': r.pricing_method,
-            'number_of_rooms': r.number_of_rooms,
-            'sort_order': r.sort_order,
-            'effective_rate': str(r.get_effective_base_rate()),
-            'description': r.description,
-            'target_occupancy': str(r.target_occupancy),
-            'premium_percent': str(r.get_premium_percent()),
-        } for r in room_types]
-        
-        return self.json_response({'room_types': data})
+class RoomTypeCrudView(_RoomTypeCrud):
+    """Consolidated RoomType CRUD — dispatch routes GET=list, POST=create, POST/<pk>=update, DELETE/<pk>=delete."""
+    pass
 
+# Backward-compatible aliases
+class RoomTypeListView(_RoomTypeCrud):
+    get = ModelCrudMixin.list_items
 
-class RoomTypeCreateView(PricingManagementMixin, View):
-    """API: Create a new room type."""
+class RoomTypeCreateView(_RoomTypeCrud):
+    post = ModelCrudMixin.create_instance
 
-    def post(self, request, *args, **kwargs):
-        from pricing.models import RoomType, PricingMatrixVersion
+class RoomTypeUpdateView(_RoomTypeCrud):
+    post = ModelCrudMixin.update_instance
 
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-
-        vid = data.get('version_id')
-        if vid:
-            version = get_object_or_404(PricingMatrixVersion, pk=vid, hotel=hotel)
-        else:
-            version = PricingMatrixVersion.get_published(hotel)
-
-        name = data.get('name', '').strip()
-        if not name:
-            return self.error_response('Name is required')
-
-        # Get max sort order
-        from django.db.models import Max
-        max_order = RoomType.objects.filter(hotel=hotel).aggregate(
-            max_order=Max('sort_order')
-        )['max_order'] or 0
-
-        room_type = RoomType.objects.create(
-            hotel=hotel,
-            version=version,
-            name=name,
-            base_rate=self.parse_decimal(data.get('base_rate'), hotel.reference_base_rate),
-            room_index=self.parse_decimal(data.get('room_index'), Decimal('1.00')),
-            room_adjustment=self.parse_decimal(data.get('room_adjustment'), Decimal('0.00')),
-            pricing_method=data.get('pricing_method', 'index'),
-            number_of_rooms=int(data.get('number_of_rooms', 1)),
-            sort_order=int(data.get('sort_order', max_order + 1)),
-            description=data.get('description', ''),
-            target_occupancy=self.parse_decimal(data.get('target_occupancy'), Decimal('70.00')),
-        )
-        
-        return self.success_response(
-            data={'id': room_type.id, 'name': room_type.name},
-            message=f'Room type "{room_type.name}" created successfully'
-        )
-
-
-class RoomTypeUpdateView(PricingManagementMixin, View):
-    """API: Update a room type."""
-    
-    def post(self, request, *args, **kwargs):
-        from pricing.models import RoomType
-        
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-        
-        room_id = kwargs.get('pk')
-        room_type = get_object_or_404(RoomType, pk=room_id, hotel=hotel)
-        
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-        
-        if 'name' in data:
-            name = data['name'].strip()
-            if not name:
-                return self.error_response('Name cannot be empty')
-            room_type.name = name
-        
-        if 'base_rate' in data:
-            room_type.base_rate = self.parse_decimal(data['base_rate'], room_type.base_rate)
-        
-        if 'room_index' in data:
-            room_type.room_index = self.parse_decimal(data['room_index'], room_type.room_index)
-        
-        if 'room_adjustment' in data:
-            room_type.room_adjustment = self.parse_decimal(data['room_adjustment'], room_type.room_adjustment)
-        
-        if 'pricing_method' in data:
-            if data['pricing_method'] in ['direct', 'index', 'adjustment']:
-                room_type.pricing_method = data['pricing_method']
-        
-        if 'number_of_rooms' in data:
-            room_type.number_of_rooms = max(0, int(data.get('number_of_rooms', room_type.number_of_rooms)))
-        
-        if 'sort_order' in data:
-            room_type.sort_order = int(data.get('sort_order', room_type.sort_order))
-        
-        if 'description' in data:
-            room_type.description = data.get('description', '')
-        
-        if 'target_occupancy' in data:
-            room_type.target_occupancy = self.parse_decimal(data['target_occupancy'], room_type.target_occupancy)
-        
-        room_type.save()
-        
-        return self.success_response(message=f'Room type "{room_type.name}" updated successfully')
-
-
-class RoomTypeDeleteView(ModelCrudMixin):
-    """API: Delete a room type."""
-    model_class = RoomType
-    model_label = 'Room type'
+class RoomTypeDeleteView(_RoomTypeCrud):
     post = ModelCrudMixin.delete_instance
 
 
@@ -689,19 +547,11 @@ class RoomTypeReorderView(PricingManagementMixin, View):
 # RATE PLAN MANAGEMENT (SHARED)
 # =============================================================================
 
-class _RatePlanCrud(ModelCrudMixin):
-    model_class = RatePlan
-    model_label = 'Rate plan'
-    list_key = 'rate_plans'
-    list_order = ['sort_order']
-    version_scoped = True
-    auto_sort_order = True
-    fields = {
-        'name': {'type': 'str', 'required': True},
-        'meal_supplement': {'type': 'decimal', 'default': '0.00'},
-        'sort_order': {'type': 'int', 'default': 0},
-    }
+class RatePlanCrudView(_RatePlanCrud):
+    """Consolidated RatePlan CRUD — dispatch routes GET=list, POST=create, POST/<pk>=update, DELETE/<pk>=delete."""
+    pass
 
+# Backward-compatible aliases
 class RatePlanListView(_RatePlanCrud):
     get = ModelCrudMixin.list_items
 
@@ -752,21 +602,12 @@ class ChannelListView(PricingManagementMixin, View):
         })
 
 
-class _ChannelCrud(ModelCrudMixin):
-    model_class = Channel
-    model_label = 'Channel'
-    list_key = 'channels'
-    list_order = ['sort_order']
-    version_scoped = True
-    auto_sort_order = True
-    fields = {
-        'name': {'type': 'str', 'required': True},
-        'base_discount_percent': {'type': 'decimal', 'default': '0.00'},
-        'commission_percent': {'type': 'decimal', 'default': '0.00'},
-        'distribution_share_percent': {'type': 'decimal', 'default': '0.00'},
-        'sort_order': {'type': 'int', 'default': 0},
-    }
+class ChannelCrudView(_ChannelCrud):
+    """Consolidated Channel CRUD — dispatch routes POST=create, POST/<pk>=update, DELETE/<pk>=delete.
+    Note: ChannelListView kept separate due to custom distribution validation logic."""
+    pass
 
+# Backward-compatible aliases
 class ChannelCreateView(_ChannelCrud):
     post = ModelCrudMixin.create_instance
 
@@ -1648,151 +1489,22 @@ class ImportExecuteView(PricingManagementMixin, View):
             return self.error_response(str(e))
 
 
-class ImportTemplateListView(PricingManagementMixin, View):
-    """GET: List saved import templates for this property."""
+class ImportTemplateCrudView(_ImportTemplateCrud):
+    """Consolidated ImportTemplate CRUD — dispatch routes GET=list, POST=create, POST/<pk>=update, DELETE/<pk>=delete."""
+    pass
 
-    def get(self, request, *args, **kwargs):
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
+# Backward-compatible aliases
+class ImportTemplateListView(_ImportTemplateCrud):
+    get = _ImportTemplateCrud.list_items
 
-        from pricing.models import ImportTemplate
+class ImportTemplateSaveView(_ImportTemplateCrud):
+    post = _ImportTemplateCrud.create_instance
 
-        templates = ImportTemplate.objects.filter(
-            Q(hotel=hotel) | Q(organization=hotel.organization, hotel__isnull=True),
-            is_active=True,
-        ).order_by('-use_count', 'name')
+class ImportTemplateUpdateView(_ImportTemplateCrud):
+    post = _ImportTemplateCrud.update_instance
 
-        data = []
-        for t in templates:
-            data.append({
-                'id': t.id,
-                'name': t.name,
-                'import_type': t.import_type,
-                'import_type_display': t.get_import_type_display(),
-                'column_map': t.column_map,
-                'value_transforms': t.value_transforms,
-                'settings': t.settings,
-                'source_headers': t.source_headers,
-                'is_default': t.is_default,
-                'use_count': t.use_count,
-                'last_used_at': t.last_used_at.isoformat() if t.last_used_at else None,
-                'scope': 'property' if t.hotel else 'organization',
-            })
-
-        return self.success_response(data={'templates': data})
-
-
-class ImportTemplateSaveView(PricingManagementMixin, View):
-    """POST: Save a new import template."""
-
-    def post(self, request, *args, **kwargs):
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-
-        from pricing.models import ImportTemplate
-
-        name = data.get('name', '').strip()
-        if not name:
-            return self.error_response('Template name is required')
-
-        import_type = data.get('import_type', 'reservation')
-        column_map = data.get('column_map', {})
-        value_transforms = data.get('value_transforms', {})
-        source_headers = data.get('source_headers', [])
-        settings = data.get('settings', {})
-        scope = data.get('scope', 'property')
-
-        template = ImportTemplate.objects.create(
-            hotel=hotel if scope == 'property' else None,
-            organization=hotel.organization if scope == 'organization' else None,
-            name=name,
-            import_type=import_type,
-            column_map=column_map,
-            value_transforms=value_transforms,
-            source_headers=source_headers,
-            settings=settings,
-        )
-
-        return self.success_response(
-            data={'id': template.id, 'name': template.name},
-            message=f'Template "{name}" saved'
-        )
-
-
-class ImportTemplateUpdateView(PricingManagementMixin, View):
-    """POST: Update an existing import template."""
-
-    def post(self, request, *args, **kwargs):
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-
-        pk = self.kwargs.get('pk')
-
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-
-        from pricing.models import ImportTemplate
-
-        template = ImportTemplate.objects.filter(
-            Q(hotel=hotel) | Q(organization=hotel.organization),
-            pk=pk, is_active=True,
-        ).first()
-
-        if not template:
-            return self.error_response('Template not found', 404)
-
-        if 'name' in data:
-            template.name = data['name'].strip()
-        if 'column_map' in data:
-            template.column_map = data['column_map']
-        if 'value_transforms' in data:
-            template.value_transforms = data['value_transforms']
-        if 'source_headers' in data:
-            template.source_headers = data['source_headers']
-        if 'settings' in data:
-            template.settings = data['settings']
-        if 'is_default' in data:
-            template.is_default = bool(data['is_default'])
-
-        template.save()
-
-        return self.success_response(message=f'Template "{template.name}" updated')
-
-
-class ImportTemplateDeleteView(PricingManagementMixin, View):
-    """POST: Soft-delete an import template."""
-
-    def post(self, request, *args, **kwargs):
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found', 404)
-
-        pk = self.kwargs.get('pk')
-
-        from pricing.models import ImportTemplate
-
-        template = ImportTemplate.objects.filter(
-            Q(hotel=hotel) | Q(organization=hotel.organization),
-            pk=pk, is_active=True,
-        ).first()
-
-        if not template:
-            return self.error_response('Template not found', 404)
-
-        template.is_active = False
-        template.save()
-
-        return self.success_response(message=f'Template "{template.name}" deleted')
+class ImportTemplateDeleteView(_ImportTemplateCrud):
+    post = _ImportTemplateCrud.delete_instance
 
 
 class ReservationListView(PricingManagementMixin, View):
@@ -2090,6 +1802,9 @@ class ManageAgentsView(ManageBaseMixin, TemplateView):
     """Management page for travel agents and their unique URLs."""
     template_name = 'pricing/manage/agents.html'
     active_section = 'agents'
+    nav_active_override = 'distribution'
+    nav_sub_override = 'agents'
+    required_roles = ['admin', 'manager', 'sales']  # DistributionAccess
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -2103,122 +1818,21 @@ class ManageAgentsView(ManageBaseMixin, TemplateView):
         return context
 
 
-class TravelAgentListView(PricingManagementMixin, View):
-    """API: List all travel agents for this property."""
+class TravelAgentCrudView(_TravelAgentCrud):
+    """Consolidated TravelAgent CRUD — dispatch routes GET=list, POST=create, POST/<pk>=update, DELETE/<pk>=delete."""
+    pass
 
-    def get(self, request, *args, **kwargs):
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found')
+# Backward-compatible aliases
+class TravelAgentListView(_TravelAgentCrud):
+    get = ModelCrudMixin.list_items
 
-        agents = TravelAgent.objects.filter(
-            property=hotel
-        ).select_related('channel').order_by('name')
+class TravelAgentCreateView(_TravelAgentCrud):
+    post = _TravelAgentCrud.create_instance
 
-        data = [{
-            'id': a.id,
-            'name': a.name,
-            'email': a.email,
-            'channel_id': a.channel_id,
-            'channel_name': a.channel.name if a.channel else 'Default',
-            'token': a.token,
-            'url': a.get_absolute_url(),
-            'is_active': a.is_active,
-            'notes': a.notes,
-            'created_at': a.created_at.strftime('%Y-%m-%d'),
-        } for a in agents]
+class TravelAgentUpdateView(_TravelAgentCrud):
+    post = _TravelAgentCrud.update_instance
 
-        return self.json_response({'agents': data})
-
-
-class TravelAgentCreateView(PricingManagementMixin, View):
-    """API: Create a new travel agent."""
-
-    def post(self, request, *args, **kwargs):
-        hotel = self.get_hotel(request)
-        if not hotel:
-            return self.error_response('Property not found')
-
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-
-        name = data.get('name', '').strip()
-        if not name:
-            return self.error_response('Agent name is required')
-
-        channel_id = data.get('channel_id')
-        channel = None
-        if channel_id:
-            channel = Channel.objects.filter(pk=channel_id, hotel=hotel).first()
-
-        agent = TravelAgent.objects.create(
-            property=hotel,
-            channel=channel,
-            name=name,
-            email=data.get('email', '').strip(),
-            notes=data.get('notes', '').strip(),
-        )
-
-        return self.success_response(
-            data={
-                'id': agent.id,
-                'name': agent.name,
-                'token': agent.token,
-                'url': agent.get_absolute_url(),
-            },
-            message=f'Agent "{agent.name}" created successfully'
-        )
-
-
-class TravelAgentUpdateView(PricingManagementMixin, View):
-    """API: Update a travel agent."""
-
-    def post(self, request, *args, **kwargs):
-        agent_id = kwargs.get('pk')
-        agent = get_object_or_404(TravelAgent, pk=agent_id)
-
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return self.error_response('Invalid JSON')
-
-        if 'name' in data:
-            name = data['name'].strip()
-            if not name:
-                return self.error_response('Name cannot be empty')
-            agent.name = name
-
-        if 'email' in data:
-            agent.email = data['email'].strip()
-
-        if 'notes' in data:
-            agent.notes = data['notes'].strip()
-
-        if 'is_active' in data:
-            agent.is_active = bool(data['is_active'])
-
-        if 'channel_id' in data:
-            channel_id = data['channel_id']
-            if channel_id:
-                channel = Channel.objects.filter(pk=channel_id, hotel=agent.property).first()
-                agent.channel = channel
-            else:
-                agent.channel = None
-
-        agent.save()
-
-        return self.success_response(
-            message=f'Agent "{agent.name}" updated successfully'
-        )
-
-
-class TravelAgentDeleteView(ModelCrudMixin):
-    """API: Delete a travel agent."""
-    model_class = TravelAgent
-    model_label = 'Agent'
-    hotel_field = 'property'
+class TravelAgentDeleteView(_TravelAgentCrud):
     post = ModelCrudMixin.delete_instance
 
 
@@ -2226,6 +1840,9 @@ class ManageCompetitiveView(ManageBaseMixin, TemplateView):
     """Management page for competitive set and market position."""
     template_name = 'pricing/manage/competitive.html'
     active_section = 'competitive'
+    nav_active_override = 'pricing'
+    nav_sub_override = 'competitive'
+    required_roles = ['admin', 'manager']  # PricingAccess
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -2270,71 +1887,18 @@ class CompetitiveSetUploadView(PropertyMixin, View):
             os.unlink(tmp_path)
 
 
-class CompetitorCreateView(PricingManagementMixin, View):
-    """API: Create a competitor."""
+class CompetitorCrudView(_CompetitorCrud):
+    """Consolidated Competitor CRUD — dispatch routes POST=create, POST/<pk>=update, DELETE/<pk>=delete."""
+    pass
 
-    def post(self, request, *args, **kwargs):
-        from pricing.models import CompetitiveSet
-        hotel = self.get_hotel(request)
-        data = json.loads(request.body)
+# Backward-compatible aliases
+class CompetitorCreateView(_CompetitorCrud):
+    post = _CompetitorCrud.create_instance
 
-        name = data.get('competitor_name', '').strip()
-        if not name:
-            return self.error_response('Competitor name is required')
+class CompetitorUpdateView(_CompetitorCrud):
+    post = _CompetitorCrud.update_instance
 
-        if CompetitiveSet.objects.filter(hotel=hotel, competitor_name=name).exists():
-            return self.error_response(f'Competitor "{name}" already exists')
-
-        CompetitiveSet.objects.create(
-            hotel=hotel,
-            competitor_name=name,
-            bb_rate=data.get('bb_rate') or None,
-            hb_rate=data.get('hb_rate') or None,
-            fb_rate=data.get('fb_rate') or None,
-            rating=data.get('rating') or None,
-            total_rooms=data.get('total_rooms') or 0,
-            position=data.get('position', 'mid'),
-            notes=data.get('notes', ''),
-            source=data.get('source', 'Manual'),
-        )
-        return self.success_response(message=f'Competitor "{name}" added')
-
-
-class CompetitorUpdateView(PricingManagementMixin, View):
-    """API: Update a competitor field."""
-
-    def post(self, request, *args, **kwargs):
-        from pricing.models import CompetitiveSet
-        comp_id = kwargs.get('pk')
-        comp = get_object_or_404(CompetitiveSet, pk=comp_id)
-        data = json.loads(request.body)
-
-        allowed = ['competitor_name', 'bb_rate', 'hb_rate', 'fb_rate', 'rating',
-                    'total_rooms', 'position', 'notes', 'source', 'is_active']
-
-        for field, value in data.items():
-            if field in allowed:
-                if field in ('bb_rate', 'hb_rate', 'fb_rate', 'rating'):
-                    value = Decimal(str(value)) if value not in ('', None) else None
-                elif field == 'total_rooms':
-                    value = int(value) if value not in ('', None) else 0
-                elif field == 'is_active':
-                    value = bool(value)
-                setattr(comp, field, value)
-
-        comp.save()
-        return self.success_response(message='Competitor updated')
-
-
-class CompetitorDeleteView(ModelCrudMixin):
-    """API: Delete a competitor."""
-    model_label = 'Competitor'
-
-    @property
-    def model_class(self):
-        from pricing.models import CompetitiveSet
-        return CompetitiveSet
-
+class CompetitorDeleteView(_CompetitorCrud):
     post = ModelCrudMixin.delete_instance
 
 

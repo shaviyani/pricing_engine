@@ -8,6 +8,82 @@
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    'dash-primary':   '#0f172a',
+                    'dash-secondary': '#475569',
+                    'dash-muted':     '#6b7280',
+                    'dash-hint':      '#94a3b8',
+                    'dash-card':      '#ffffff',
+                    'dash-metric':    '#f8fafc',
+                    'dash-subtle':    '#f1f5f9',
+                    'dash-border':    '#e2e8f0',
+                    'dash-divider':   '#e5e7eb',
+                    'dash-inner':     '#f1f5f9',
+                    'status-green':       '#16a34a',
+                    'status-green-bg':    '#dcfce7',
+                    'status-green-border':'#bbf7d0',
+                    'status-green-dark':  '#166534',
+                    'status-amber':       '#d97706',
+                    'status-amber-bg':    '#fef3c7',
+                    'status-amber-border':'#fde68a',
+                    'status-amber-dark':  '#92400e',
+                    'status-red':         '#dc2626',
+                    'status-red-bg':      '#fee2e2',
+                    'status-red-border':  '#fecaca',
+                    'status-red-dark':    '#991b1b',
+                    'status-blue':        '#2563eb',
+                    'status-blue-bg':     '#eff6ff',
+                    'status-blue-border': '#bfdbfe',
+                    'status-blue-dark':   '#1e40af',
+                    'heat-1': '#eff6ff',
+                    'heat-2': '#bfdbfe',
+                    'heat-3': '#60a5fa',
+                    'heat-4': '#2563eb',
+                    'heat-5': '#1e3a8a',
+                    'occ-low':    '#ef4444',
+                    'occ-mid':    '#f59e0b',
+                    'occ-high':   '#22c55e',
+                    'occ-full':   '#15803d',
+                    'allotment':  '#7F77DD',
+                    'action':     '#2563eb',
+                    'action-hover':'#1d4ed8',
+                },
+                fontSize: {
+                    'dash-xxs':  ['9px',  { lineHeight: '1.2' }],
+                    'dash-xs':   ['10px', { lineHeight: '1.3' }],
+                    'dash-sm':   ['11px', { lineHeight: '1.4' }],
+                    'dash-base': ['12px', { lineHeight: '1.5' }],
+                    'dash-md':   ['13px', { lineHeight: '1.5' }],
+                    'dash-lg':   ['15px', { lineHeight: '1.4' }],
+                    'dash-xl':   ['18px', { lineHeight: '1.3' }],
+                    'dash-kpi':  ['22px', { lineHeight: '1.2' }],
+                },
+                spacing: {
+                    'dash-card': '12px',
+                    'dash-section': '20px',
+                },
+                borderRadius: {
+                    'dash-bar':  '2px',
+                    'dash-cell': '4px',
+                    'dash-card': '8px',
+                    'dash-pill': '10px',
+                    'dash-badge':'20px',
+                },
+                borderWidth: {
+                    'dash':      '0.5px',
+                    'dash-heavy':'2px',
+                },
+                minHeight: {
+                    'dash-day': '38px',
+                },
+            },
+        },
+    }
+    </script>
 
     <style>
         /* Custom scrollbar */
@@ -69,13 +145,30 @@
                     <!-- Main Navigation -->
                     <div class="hidden md:flex items-center space-x-1">
                         {% if org and prop %}
-                        <!-- Dashboard -->
+                        <!-- Dashboard — always visible -->
                         <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}"
                             class="{% if nav_active == 'dashboard' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:text-gray-900 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm font-medium transition">
                             Dashboard
                         </a>
 
-                        <!-- Pricing dropdown -->
+                        <!-- Analytics — visible to all roles -->
+                        <div class="relative" data-dropdown="analytics-nav">
+                            <button type="button" onclick="toggleNavDropdown('analytics-nav')"
+                                class="{% if nav_active == 'analytics' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:text-gray-900 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm font-medium transition inline-flex items-center">
+                                Analytics
+                                <svg class="ml-1 w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </button>
+                            <div class="nav-dropdown-menu hidden absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                                <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'booking_analysis' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Booking Analysis</a>
+                                <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'pickup' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Pickup & Forecast</a>
+                                <a href="{% url 'pricing:demand_forecast' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'demand_forecast' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Demand Forecast</a>
+                                <a href="{% url 'pricing:booking_origin_matrix' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'booking_heatmap' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Booking Heatmap</a>
+                                <a href="{% url 'pricing:cancellation_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'cancellations' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Cancellations</a>
+                            </div>
+                        </div>
+
+                        <!-- Pricing — visible to admin and manager -->
+                        {% if user.is_superuser or user_org_role.role == 'admin' or user_org_role.role == 'manager' %}
                         <div class="relative" data-dropdown="pricing-nav">
                             <button type="button" onclick="toggleNavDropdown('pricing-nav')"
                                 class="{% if nav_active == 'pricing' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:text-gray-900 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm font-medium transition inline-flex items-center">
@@ -84,44 +177,37 @@
                             </button>
                             <div class="nav-dropdown-menu hidden absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
                                 <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'matrix' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Pricing Matrix</a>
-                                <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'override_calendar' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Override Calendar</a>
-                            </div>
-                        </div>
-
-                        <!-- Analytics dropdown -->
-                        <div class="relative" data-dropdown="analytics-nav">
-                            <button type="button" onclick="toggleNavDropdown('analytics-nav')"
-                                class="{% if nav_active == 'analytics' or nav_active == 'forecasts' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:text-gray-900 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm font-medium transition inline-flex items-center">
-                                Analytics
-                                <svg class="ml-1 w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                            </button>
-                            <div class="nav-dropdown-menu hidden absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
-                                <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'booking_analysis' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Booking Analysis</a>
-                                <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'pickup' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Pickup & Forecast</a>
-                                <a href="{% url 'pricing:demand_forecast' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'demand_forecast' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Demand Forecast</a>
-                                <a href="{% url 'pricing:booking_origin_matrix' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'booking_origin' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Booking Origin</a>
-                            </div>
-                        </div>
-
-                        <!-- Rates dropdown -->
-                        <div class="relative" data-dropdown="rates-nav">
-                            <button type="button" onclick="toggleNavDropdown('rates-nav')"
-                                class="{% if nav_active == 'rates' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:text-gray-900 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm font-medium transition inline-flex items-center">
-                                Rates
-                                <svg class="ml-1 w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                            </button>
-                            <div class="nav-dropdown-menu hidden absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
                                 <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'rate_lookup' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Rate Lookup</a>
-                                <a href="{% url 'pricing:agent_rates' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'agent_rates' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Agent Rates</a>
+                                <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'override_calendar' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Override Calendar</a>
+                                <hr class="my-1">
+                                <a href="{% url 'pricing:manage_dynamic' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'dynamic' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Dynamic Pricing</a>
+                                <a href="{% url 'pricing:manage_competitive' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'competitive' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Competitive Set</a>
+                                <a href="{% url 'pricing:manage_budget' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'budget' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Budget & Targets</a>
                             </div>
                         </div>
+                        {% endif %}
 
-                        <!-- Management (direct link, separated) — hidden for viewers -->
-                        {% if user.is_superuser or user_org_role.role == 'manager' or user_org_role.role == 'admin' %}
+                        <!-- Distribution — visible to admin, manager, and sales -->
+                        {% if user.is_superuser or user_org_role.role == 'admin' or user_org_role.role == 'manager' or user_org_role.role == 'sales' %}
+                        <div class="relative" data-dropdown="distribution-nav">
+                            <button type="button" onclick="toggleNavDropdown('distribution-nav')"
+                                class="{% if nav_active == 'distribution' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:text-gray-900 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm font-medium transition inline-flex items-center">
+                                Distribution
+                                <svg class="ml-1 w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </button>
+                            <div class="nav-dropdown-menu hidden absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                                <a href="{% url 'pricing:agent_rates' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'agents' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Agent Management</a>
+                                <a href="{% url 'pricing:manage_groups' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'allotments' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Allotments & Groups</a>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Setup — admin only, separated with border -->
+                        {% if user.is_superuser or user_org_role.role == 'admin' %}
                         <a href="{% url 'pricing:manage_property' org_code=org.code prop_code=prop.code %}"
-                            class="{% if nav_active == 'manage' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:text-gray-900 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm font-medium transition border-l border-gray-200 ml-1 pl-3">
+                            class="{% if nav_active == 'setup' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:text-gray-900 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm font-medium transition border-l border-gray-200 ml-1 pl-3">
                             <svg class="w-4 h-4 inline -mt-0.5 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                            Manage
+                            Setup
                         </a>
                         {% endif %}
 
@@ -261,34 +347,18 @@
         <div class="md:hidden border-t border-gray-200">
             <div class="px-2 pt-2 pb-3 space-y-1">
                 {% if org and prop %}
+                <!-- Dashboard -->
                 <a href="{% url 'pricing:property_dashboard' org_code=org.code prop_code=prop.code %}"
                     class="block {% if nav_active == 'dashboard' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-base font-medium">
                     Dashboard
                 </a>
-                <div class="pl-3 border-l-2 border-gray-200 ml-3 space-y-1">
-                    <span class="block px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Pricing</span>
-                    <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}"
-                        class="block {% if nav_sub == 'matrix' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
-                        Pricing Matrix
-                    </a>
-                    <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}"
-                        class="block {% if nav_sub == 'override_calendar' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
-                        Override Calendar
-                    </a>
-                    <a href="{% url 'pricing:pricing_matrix_channel' org_code=org.code prop_code=prop.code %}"
-                        class="block {% if nav_sub == 'channel_matrix' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
-                        Channel Matrix
-                    </a>
-                </div>
+
+                <!-- Analytics (all roles) -->
                 <div class="pl-3 border-l-2 border-gray-200 ml-3 space-y-1">
                     <span class="block px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Analytics</span>
                     <a href="{% url 'pricing:booking_analysis_dashboard' org_code=org.code prop_code=prop.code %}"
                         class="block {% if nav_sub == 'booking_analysis' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
                         Booking Analysis
-                    </a>
-                    <a href="{% url 'pricing:booking_trends' org_code=org.code prop_code=prop.code %}"
-                        class="block {% if nav_sub == 'booking_trends' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
-                        Booking Trends
                     </a>
                     <a href="{% url 'pricing:pickup_dashboard' org_code=org.code prop_code=prop.code %}"
                         class="block {% if nav_sub == 'pickup' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
@@ -298,22 +368,67 @@
                         class="block {% if nav_sub == 'demand_forecast' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
                         Demand Forecast
                     </a>
+                    <a href="{% url 'pricing:booking_origin_matrix' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'booking_heatmap' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Booking Heatmap
+                    </a>
+                    <a href="{% url 'pricing:cancellation_dashboard' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'cancellations' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Cancellations
+                    </a>
                 </div>
+
+                <!-- Pricing (admin + manager) -->
+                {% if user.is_superuser or user_org_role.role == 'admin' or user_org_role.role == 'manager' %}
                 <div class="pl-3 border-l-2 border-gray-200 ml-3 space-y-1">
-                    <span class="block px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Rates</span>
+                    <span class="block px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Pricing</span>
+                    <a href="{% url 'pricing:matrix' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'matrix' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Pricing Matrix
+                    </a>
                     <a href="{% url 'pricing:rate_lookup' org_code=org.code prop_code=prop.code %}"
                         class="block {% if nav_sub == 'rate_lookup' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
                         Rate Lookup
                     </a>
-                    <a href="{% url 'pricing:agent_rates' org_code=org.code prop_code=prop.code %}"
-                        class="block {% if nav_sub == 'agent_rates' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
-                        Agent Rates
+                    <a href="{% url 'pricing:override_calendar' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'override_calendar' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Override Calendar
+                    </a>
+                    <a href="{% url 'pricing:manage_dynamic' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'dynamic' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Dynamic Pricing
+                    </a>
+                    <a href="{% url 'pricing:manage_competitive' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'competitive' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Competitive Set
+                    </a>
+                    <a href="{% url 'pricing:manage_budget' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'budget' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Budget & Targets
                     </a>
                 </div>
-                {% if user.is_superuser or user_org_role.role == 'manager' or user_org_role.role == 'admin' %}
+                {% endif %}
+
+                <!-- Distribution (admin + manager + sales) -->
+                {% if user.is_superuser or user_org_role.role == 'admin' or user_org_role.role == 'manager' or user_org_role.role == 'sales' %}
+                <div class="pl-3 border-l-2 border-gray-200 ml-3 space-y-1">
+                    <span class="block px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Distribution</span>
+                    <a href="{% url 'pricing:agent_rates' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'agents' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Agent Management
+                    </a>
+                    <a href="{% url 'pricing:manage_groups' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'allotments' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Allotments & Groups
+                    </a>
+                </div>
+                {% endif %}
+
+                <!-- Setup (admin only) -->
+                {% if user.is_superuser or user_org_role.role == 'admin' %}
                 <a href="{% url 'pricing:manage_property' org_code=org.code prop_code=prop.code %}"
-                    class="block {% if nav_active == 'manage' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-base font-medium mt-2 pt-2 border-t border-gray-200">
-                    Manage
+                    class="block {% if nav_active == 'setup' %}text-blue-700 bg-blue-50{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-base font-medium mt-2 pt-2 border-t border-gray-200">
+                    Setup
                 </a>
                 {% endif %}
                 {% endif %}

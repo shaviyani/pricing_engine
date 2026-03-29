@@ -85,9 +85,10 @@ class UserOrganizationRole(models.Model):
     - admin: Can manage org settings and user assignments
     """
     ROLE_CHOICES = [
+        ('admin', 'Administrator'),
+        ('manager', 'Revenue Manager'),
+        ('sales', 'Sales / Distribution'),
         ('viewer', 'Viewer'),
-        ('manager', 'Manager'),
-        ('admin', 'Admin'),
     ]
 
     user = models.ForeignKey(
