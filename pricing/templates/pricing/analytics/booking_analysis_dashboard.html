@@ -54,6 +54,14 @@
                class="main-tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
                 Trends
             </button>
+            <button onclick="switchMainTab('bookings')" id="mainTab-bookings"
+               class="main-tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                Bookings
+            </button>
+            <button onclick="switchMainTab('arrivals')" id="mainTab-arrivals"
+               class="main-tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                Arrivals
+            </button>
             <button onclick="switchMainTab('channelmix')" id="mainTab-channelmix"
                class="main-tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
                 Channel Mix
@@ -517,6 +525,91 @@
     {% endif %}
 
     </div><!-- end trends tab content -->
+
+    <!-- ============================================================ -->
+    <!-- TAB: BOOKINGS (activity by booking_date / cancellation_date)  -->
+    <!-- ============================================================ -->
+    <div id="mainContent-bookings" class="main-tab-content hidden space-y-6">
+
+    <!-- KPI Strip -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4" id="bookingsKpis"></div>
+
+    <!-- Bookings Chart -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Monthly Booking Activity</h3>
+        <div style="height:280px;"><canvas id="bookingsChart"></canvas></div>
+    </div>
+
+    <!-- Bookings Table -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Bookings &amp; Cancellations by Month</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead><tr class="border-b border-gray-200 text-xs text-gray-500 uppercase">
+                    <th class="text-left py-2">Month</th>
+                    <th class="text-right py-2">Confirmed</th>
+                    <th class="text-right py-2">Conf RN</th>
+                    <th class="text-right py-2">Conf Rev</th>
+                    <th class="text-right py-2">Cancelled</th>
+                    <th class="text-right py-2">Canc RN</th>
+                    <th class="text-right py-2">Canc Rev</th>
+                    <th class="text-right py-2 font-bold">Net</th>
+                    <th class="text-right py-2 font-bold">Net RN</th>
+                    <th class="text-right py-2 font-bold">Net Rev</th>
+                </tr></thead>
+                <tbody id="bookingsTable"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Net Heatmap: Bookings - Cancellations by arrival month -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Net Room Nights (Bookings &minus; Cancellations) by Arrival Month</h3>
+        <p class="text-xs text-gray-500 mb-3">Rows = month activity happened &bull; Columns = arrival month &bull; Green = net gain &bull; Red = net loss</p>
+        <div class="overflow-x-auto">
+            <table class="w-full text-xs" id="netHeatmap"></table>
+        </div>
+    </div>
+
+    </div><!-- end bookings tab content -->
+
+    <!-- ============================================================ -->
+    <!-- TAB: ARRIVALS (position by arrival_date, prorated)            -->
+    <!-- ============================================================ -->
+    <div id="mainContent-arrivals" class="main-tab-content hidden space-y-6">
+
+    <!-- KPI Strip -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4" id="arrivalsKpis"></div>
+
+    <!-- Arrivals Chart -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Monthly Arrival Position (Net Room Nights)</h3>
+        <div style="height:280px;"><canvas id="arrivalsChart"></canvas></div>
+    </div>
+
+    <!-- Arrivals Table -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Arrival Position by Month (Prorated)</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead><tr class="border-b border-gray-200 text-xs text-gray-500 uppercase">
+                    <th class="text-left py-2">Month</th>
+                    <th class="text-right py-2">Gross RN</th>
+                    <th class="text-right py-2">Cancel RN</th>
+                    <th class="text-right py-2 font-bold">Net RN</th>
+                    <th class="text-right py-2">Available</th>
+                    <th class="text-right py-2 font-bold">Occupancy</th>
+                    <th class="text-right py-2">Gross Rev</th>
+                    <th class="text-right py-2">Cancel Rev</th>
+                    <th class="text-right py-2 font-bold">Net Rev</th>
+                    <th class="text-right py-2">ADR</th>
+                </tr></thead>
+                <tbody id="arrivalsTable"></tbody>
+            </table>
+        </div>
+    </div>
+
+    </div><!-- end arrivals tab content -->
 
     <!-- ============================================================ -->
     <!-- TAB: CHANNEL MIX                                              -->
@@ -1186,5 +1279,246 @@
     });
 </script>
 <script src="{% static 'pricing/js/analysis-dashboard.js' %}"></script>
+<script>
+(function() {
+    var bookingsData = {% if bookings_by_month_json %}{{ bookings_by_month_json|safe }}{% else %}[]{% endif %};
+    var arrivalsData = {% if arrivals_by_month_json %}{{ arrivals_by_month_json|safe }}{% else %}[]{% endif %};
+    var bookingsChartsInit = false;
+    var arrivalsChartsInit = false;
+
+    function fmt(n) { return n != null ? n.toLocaleString() : '—'; }
+    function fmtMoney(n) { return '$' + (n >= 0 ? n.toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:0}) : '-$' + Math.abs(n).toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:0})); }
+
+    // ── Bookings Tab ────────────────────────────────────────────────────
+    function renderBookingsTab() {
+        if (bookingsChartsInit || !bookingsData.length) return;
+        bookingsChartsInit = true;
+
+        // KPIs — totals for the year
+        var totConf = 0, totCanc = 0, totNetRn = 0, totNetRev = 0;
+        bookingsData.forEach(function(m) {
+            totConf += m.confirmed;
+            totCanc += m.cancelled;
+            totNetRn += m.net_rn;
+            totNetRev += m.net_rev;
+        });
+        document.getElementById('bookingsKpis').innerHTML =
+            '<div class="bg-white border border-gray-200 rounded-lg p-4"><div class="text-xs font-semibold text-gray-500 uppercase">Confirmed</div><div class="text-2xl font-semibold text-green-700">' + fmt(totConf) + '</div></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-4"><div class="text-xs font-semibold text-gray-500 uppercase">Cancelled</div><div class="text-2xl font-semibold text-red-700">' + fmt(totCanc) + '</div></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-4"><div class="text-xs font-semibold text-gray-500 uppercase">Net Room Nights</div><div class="text-2xl font-semibold text-gray-900">' + fmt(totNetRn) + '</div></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-4"><div class="text-xs font-semibold text-gray-500 uppercase">Net Revenue</div><div class="text-2xl font-semibold text-gray-900">' + fmtMoney(totNetRev) + '</div></div>';
+
+        // Chart
+        var labels = bookingsData.map(function(m) { return m.month_name; });
+        new Chart(document.getElementById('bookingsChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'Confirmed RN', data: bookingsData.map(function(m) { return m.confirmed_rn; }), backgroundColor: 'rgba(34,197,94,0.7)', borderRadius: 3 },
+                    { label: 'Cancelled RN', data: bookingsData.map(function(m) { return -m.cancelled_rn; }), backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 3 },
+                    { label: 'Net RN', data: bookingsData.map(function(m) { return m.net_rn; }), type: 'line', borderColor: '#1e40af', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, order: 0 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } },
+                scales: {
+                    x: { stacked: true, ticks: { font: { size: 11 } } },
+                    y: { ticks: { font: { size: 10 } } }
+                }
+            }
+        });
+
+        // Table
+        var html = '';
+        bookingsData.forEach(function(m) {
+            var netCls = m.net_rn >= 0 ? 'text-green-700' : 'text-red-700';
+            html += '<tr class="border-b border-gray-100">' +
+                '<td class="py-1.5 font-medium">' + m.month_name + '</td>' +
+                '<td class="py-1.5 text-right text-green-700">' + m.confirmed + '</td>' +
+                '<td class="py-1.5 text-right text-green-600">' + fmt(m.confirmed_rn) + '</td>' +
+                '<td class="py-1.5 text-right text-green-600">' + fmtMoney(m.confirmed_rev) + '</td>' +
+                '<td class="py-1.5 text-right text-red-700">' + m.cancelled + '</td>' +
+                '<td class="py-1.5 text-right text-red-600">' + fmt(m.cancelled_rn) + '</td>' +
+                '<td class="py-1.5 text-right text-red-600">' + fmtMoney(m.cancelled_rev) + '</td>' +
+                '<td class="py-1.5 text-right font-semibold ' + netCls + '">' + m.net + '</td>' +
+                '<td class="py-1.5 text-right font-semibold ' + netCls + '">' + fmt(m.net_rn) + '</td>' +
+                '<td class="py-1.5 text-right font-semibold ' + netCls + '">' + fmtMoney(m.net_rev) + '</td>' +
+                '</tr>';
+        });
+        // Totals row
+        html += '<tr class="border-t-2 border-gray-300 font-semibold">' +
+            '<td class="py-2">Total</td>' +
+            '<td class="py-2 text-right text-green-700">' + fmt(totConf) + '</td>' +
+            '<td class="py-2 text-right"></td><td class="py-2 text-right"></td>' +
+            '<td class="py-2 text-right text-red-700">' + fmt(totCanc) + '</td>' +
+            '<td class="py-2 text-right"></td><td class="py-2 text-right"></td>' +
+            '<td class="py-2 text-right">' + fmt(totConf - totCanc) + '</td>' +
+            '<td class="py-2 text-right">' + fmt(totNetRn) + '</td>' +
+            '<td class="py-2 text-right">' + fmtMoney(totNetRev) + '</td></tr>';
+        document.getElementById('bookingsTable').innerHTML = html;
+
+        // Net Heatmap: bookings - cancellations per cell
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+        // Build net matrix (12 rows x 12 cols)
+        var netMatrix = [];
+        var maxPos = 0, maxNeg = 0;
+        for (var bi = 0; bi < 12; bi++) {
+            var row = [];
+            var bDist = bookingsData[bi] ? (bookingsData[bi].arrival_distribution || []) : [];
+            var cDist = bookingsData[bi] ? (bookingsData[bi].cancel_distribution || []) : [];
+            for (var ai = 0; ai < 12; ai++) {
+                var bFound = bDist.find(function(d) { return d.arrival_month === ai + 1; });
+                var cFound = cDist.find(function(d) { return d.arrival_month === ai + 1; });
+                var net = (bFound ? bFound.rn : 0) - (cFound ? cFound.rn : 0);
+                row.push(net);
+                if (net > maxPos) maxPos = net;
+                if (net < maxNeg) maxNeg = net;
+            }
+            netMatrix.push(row);
+        }
+
+        function getNetColor(val) {
+            if (val === 0) return 'background:#f9fafb;color:#9ca3af;';
+            if (val > 0) {
+                var pct = maxPos > 0 ? val / maxPos : 0;
+                if (pct > 0.75) return 'background:#166534;color:#fff;';
+                if (pct > 0.50) return 'background:#22c55e;color:#fff;';
+                if (pct > 0.25) return 'background:#86efac;color:#14532d;';
+                return 'background:#dcfce7;color:#14532d;';
+            } else {
+                var pct = maxNeg < 0 ? val / maxNeg : 0;
+                if (pct > 0.75) return 'background:#991b1b;color:#fff;';
+                if (pct > 0.50) return 'background:#dc2626;color:#fff;';
+                if (pct > 0.25) return 'background:#fca5a5;color:#991b1b;';
+                return 'background:#fef2f2;color:#b91c1c;';
+            }
+        }
+
+        var html = '<thead><tr class="text-gray-500"><th class="text-left py-1 pr-1" style="font-size:10px;">Activity Month</th>';
+        months.forEach(function(m) { html += '<th class="text-center py-1" style="min-width:38px;font-size:10px;">' + m + '</th>'; });
+        html += '<th class="text-right py-1 pl-2" style="font-size:10px;">Net Total</th></tr></thead><tbody>';
+
+        netMatrix.forEach(function(row, bi) {
+            var rowTotal = row.reduce(function(a, b) { return a + b; }, 0);
+            var hasData = row.some(function(v) { return v !== 0; });
+            if (!hasData) return;
+            html += '<tr class="border-t border-gray-100"><td class="py-1 pr-1 font-medium" style="font-size:10px;">' + months[bi] + '</td>';
+            row.forEach(function(v) {
+                var display = v !== 0 ? (v > 0 ? '+' + v : v) : '';
+                html += '<td class="text-center py-1" style="' + getNetColor(v) + 'font-size:10px;">' + display + '</td>';
+            });
+            var totalColor = rowTotal > 0 ? 'color:#166534;' : rowTotal < 0 ? 'color:#991b1b;' : '';
+            html += '<td class="text-right py-1 pl-2 font-semibold" style="font-size:10px;' + totalColor + '">' + (rowTotal > 0 ? '+' : '') + rowTotal + '</td></tr>';
+        });
+
+        // Column totals
+        html += '<tr class="border-t-2 border-gray-300"><td class="py-1 pr-1 font-semibold" style="font-size:10px;">Arrival Total</td>';
+        var grandTotal = 0;
+        for (var ai = 0; ai < 12; ai++) {
+            var colTotal = netMatrix.reduce(function(sum, row) { return sum + row[ai]; }, 0);
+            grandTotal += colTotal;
+            var colColor = colTotal > 0 ? 'color:#166534;' : colTotal < 0 ? 'color:#991b1b;' : '';
+            html += '<td class="text-center py-1 font-semibold" style="font-size:10px;' + colColor + '">' + (colTotal !== 0 ? (colTotal > 0 ? '+' : '') + colTotal : '') + '</td>';
+        }
+        var gtColor = grandTotal > 0 ? 'color:#166534;' : grandTotal < 0 ? 'color:#991b1b;' : '';
+        html += '<td class="text-right py-1 pl-2 font-bold" style="font-size:10px;' + gtColor + '">' + (grandTotal > 0 ? '+' : '') + grandTotal + '</td></tr>';
+
+        html += '</tbody>';
+        document.getElementById('netHeatmap').innerHTML = html;
+    }
+
+    // ── Arrivals Tab ────────────────────────────────────────────────────
+    function renderArrivalsTab() {
+        if (arrivalsChartsInit || !arrivalsData.length) return;
+        arrivalsChartsInit = true;
+
+        // KPIs
+        var totNetRn = 0, totNetRev = 0, totAvail = 0, totGross = 0;
+        arrivalsData.forEach(function(m) {
+            totNetRn += m.net_rn;
+            totNetRev += m.net_rev;
+            totAvail += m.available;
+            totGross += m.gross_rn;
+        });
+        var totOcc = totAvail > 0 ? (totNetRn / totAvail * 100).toFixed(1) : 0;
+        var totAdr = totNetRn > 0 ? Math.round(totNetRev / totNetRn) : 0;
+        document.getElementById('arrivalsKpis').innerHTML =
+            '<div class="bg-white border border-gray-200 rounded-lg p-4"><div class="text-xs font-semibold text-gray-500 uppercase">Net Room Nights</div><div class="text-2xl font-semibold text-gray-900">' + fmt(totNetRn) + '</div></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-4"><div class="text-xs font-semibold text-gray-500 uppercase">Net Revenue</div><div class="text-2xl font-semibold text-gray-900">' + fmtMoney(totNetRev) + '</div></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-4"><div class="text-xs font-semibold text-gray-500 uppercase">Avg Occupancy</div><div class="text-2xl font-semibold text-gray-900">' + totOcc + '%</div></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-4"><div class="text-xs font-semibold text-gray-500 uppercase">Avg ADR</div><div class="text-2xl font-semibold text-gray-900">$' + fmt(totAdr) + '</div></div>';
+
+        // Chart
+        var labels = arrivalsData.map(function(m) { return m.month_name; });
+        new Chart(document.getElementById('arrivalsChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'Gross RN', data: arrivalsData.map(function(m) { return m.gross_rn; }), backgroundColor: 'rgba(59,130,246,0.3)', borderColor: 'rgba(59,130,246,0.6)', borderWidth: 1, borderRadius: 3 },
+                    { label: 'Net RN', data: arrivalsData.map(function(m) { return m.net_rn; }), backgroundColor: 'rgba(34,197,94,0.7)', borderRadius: 3 },
+                    { label: 'Available', data: arrivalsData.map(function(m) { return m.available; }), type: 'line', borderColor: '#9ca3af', backgroundColor: 'transparent', borderWidth: 1, borderDash: [4,4], pointRadius: 0, order: 0 },
+                    { label: 'Occupancy %', data: arrivalsData.map(function(m) { return m.occupancy; }), type: 'line', borderColor: '#f59e0b', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, yAxisID: 'y1', order: 0 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } },
+                scales: {
+                    y: { ticks: { font: { size: 10 } } },
+                    y1: { position: 'right', min: 0, max: 100, ticks: { callback: function(v) { return v + '%'; }, font: { size: 10 } }, grid: { drawOnChartArea: false } },
+                    x: { ticks: { font: { size: 11 } } }
+                }
+            }
+        });
+
+        // Table
+        var html = '';
+        arrivalsData.forEach(function(m) {
+            var occCls = m.occupancy > 80 ? 'text-green-700 font-semibold' : m.occupancy > 50 ? 'text-blue-700' : m.occupancy > 0 ? 'text-gray-700' : 'text-gray-400';
+            html += '<tr class="border-b border-gray-100">' +
+                '<td class="py-1.5 font-medium">' + m.month_name + '</td>' +
+                '<td class="py-1.5 text-right">' + fmt(m.gross_rn) + '</td>' +
+                '<td class="py-1.5 text-right text-red-600">' + fmt(m.cancel_rn) + '</td>' +
+                '<td class="py-1.5 text-right font-semibold">' + fmt(m.net_rn) + '</td>' +
+                '<td class="py-1.5 text-right text-gray-500">' + fmt(m.available) + '</td>' +
+                '<td class="py-1.5 text-right ' + occCls + '">' + m.occupancy + '%</td>' +
+                '<td class="py-1.5 text-right">' + fmtMoney(m.gross_rev) + '</td>' +
+                '<td class="py-1.5 text-right text-red-600">' + fmtMoney(m.cancel_rev) + '</td>' +
+                '<td class="py-1.5 text-right font-semibold">' + fmtMoney(m.net_rev) + '</td>' +
+                '<td class="py-1.5 text-right">' + (m.adr > 0 ? '$' + m.adr : '—') + '</td>' +
+                '</tr>';
+        });
+        // Totals
+        html += '<tr class="border-t-2 border-gray-300 font-semibold">' +
+            '<td class="py-2">Total</td>' +
+            '<td class="py-2 text-right">' + fmt(totGross) + '</td>' +
+            '<td class="py-2 text-right"></td>' +
+            '<td class="py-2 text-right">' + fmt(totNetRn) + '</td>' +
+            '<td class="py-2 text-right text-gray-500">' + fmt(totAvail) + '</td>' +
+            '<td class="py-2 text-right">' + totOcc + '%</td>' +
+            '<td class="py-2 text-right"></td><td class="py-2 text-right"></td>' +
+            '<td class="py-2 text-right">' + fmtMoney(totNetRev) + '</td>' +
+            '<td class="py-2 text-right">$' + fmt(totAdr) + '</td></tr>';
+        document.getElementById('arrivalsTable').innerHTML = html;
+    }
+
+    // ── Render on load if tab is active, or on tab switch ──────────────
+    // Override switchMainTab to add bookings/arrivals rendering
+    var _origSwitchMainTab = switchMainTab;
+    switchMainTab = function(tab) {
+        _origSwitchMainTab(tab);
+        if (tab === 'bookings') renderBookingsTab();
+        if (tab === 'arrivals') renderArrivalsTab();
+    };
+
+    // If page loaded directly on bookings/arrivals tab, render now
+    if (ACTIVE_TAB === 'bookings') renderBookingsTab();
+    if (ACTIVE_TAB === 'arrivals') renderArrivalsTab();
+})();
+</script>
 {% endif %}
 {% endblock %}

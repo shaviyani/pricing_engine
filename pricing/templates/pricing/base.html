@@ -164,6 +164,8 @@
                                 <a href="{% url 'pricing:demand_forecast' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'demand_forecast' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Demand Forecast</a>
                                 <a href="{% url 'pricing:booking_origin_matrix' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'booking_heatmap' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Booking Heatmap</a>
                                 <a href="{% url 'pricing:cancellation_dashboard' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'cancellations' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Cancellations</a>
+                                <a href="{% url 'pricing:destination_report' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'destination_report' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Destination Report</a>
+                                <a href="{% url 'pricing:market_intelligence' org_code=org.code prop_code=prop.code %}" class="block px-4 py-2 text-sm {% if nav_sub == 'market_intelligence' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %}">Market Intelligence</a>
                             </div>
                         </div>
 
@@ -375,6 +377,14 @@
                     <a href="{% url 'pricing:cancellation_dashboard' org_code=org.code prop_code=prop.code %}"
                         class="block {% if nav_sub == 'cancellations' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
                         Cancellations
+                    </a>
+                    <a href="{% url 'pricing:destination_report' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'destination_report' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Destination Report
+                    </a>
+                    <a href="{% url 'pricing:market_intelligence' org_code=org.code prop_code=prop.code %}"
+                        class="block {% if nav_sub == 'market_intelligence' %}text-blue-700 bg-blue-50 font-medium{% else %}text-gray-700 hover:bg-gray-100{% endif %} px-3 py-2 rounded-md text-sm">
+                        Market Intelligence
                     </a>
                 </div>
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from django.db import transaction
-from django.db.models import Sum, Avg, Q
+from django.db.models import Sum, Avg, Max, Q
 from django.utils import timezone
 
 try:
@@ -1670,3 +1670,517 @@ class MarketSignalService:
                 created += 1
 
         return created
+
+
+# =============================================================================
+# DESTINATION REPORT SERVICE
+# =============================================================================
+
+class DestinationReportService:
+    """
+    National-level tourism statistics from MoT arrival data.
+    Property-agnostic — same output for every property in the destination.
+    """
+
+    def __init__(self, country_code='MV'):
+        self.country_code = country_code
+
+    # ── Section 1: Destination Overview ──────────────────────────────────
+
+    def get_overview_kpis(self):
+        """Latest month arrivals, YoY%, MoM%, 12-month rolling, country count."""
+        from platform_data.models import MarketArrivalData
+
+        latest_period = MarketArrivalData.objects.filter(
+            country_code=self.country_code
+        ).aggregate(mx=Max('report_period'))['mx']
+
+        if not latest_period:
+            return {'has_data': False}
+
+        latest_total = MarketArrivalData.objects.filter(
+            country_code=self.country_code,
+            report_period=latest_period,
+        ).aggregate(t=Sum('arrivals'))['t'] or 0
+
+        country_count = MarketArrivalData.objects.filter(
+            country_code=self.country_code,
+            report_period=latest_period,
+        ).values('origin_country').distinct().count()
+
+        # YoY
+        yoy_period = date(latest_period.year - 1, latest_period.month, 1)
+        yoy_total = MarketArrivalData.objects.filter(
+            country_code=self.country_code, report_period=yoy_period,
+        ).aggregate(t=Sum('arrivals'))['t'] or 0
+        yoy_pct = round((latest_total - yoy_total) / yoy_total * 100, 1) if yoy_total > 0 else None
+
+        # MoM
+        if latest_period.month == 1:
+            mom_period = date(latest_period.year - 1, 12, 1)
+        else:
+            mom_period = date(latest_period.year, latest_period.month - 1, 1)
+        mom_total = MarketArrivalData.objects.filter(
+            country_code=self.country_code, report_period=mom_period,
+        ).aggregate(t=Sum('arrivals'))['t'] or 0
+        mom_pct = round((latest_total - mom_total) / mom_total * 100, 1) if mom_total > 0 else None
+
+        # Rolling 12 months
+        twelve_months_ago = date(latest_period.year - 1, latest_period.month, 1)
+        rolling_12m = MarketArrivalData.objects.filter(
+            country_code=self.country_code,
+            report_period__gt=twelve_months_ago,
+            report_period__lte=latest_period,
+        ).aggregate(t=Sum('arrivals'))['t'] or 0
+
+        # Prior 12 months
+        twenty_four_months_ago = date(twelve_months_ago.year - 1, twelve_months_ago.month, 1)
+        prior_12m = MarketArrivalData.objects.filter(
+            country_code=self.country_code,
+            report_period__gt=twenty_four_months_ago,
+            report_period__lte=twelve_months_ago,
+        ).aggregate(t=Sum('arrivals'))['t'] or 0
+        rolling_yoy_pct = round((rolling_12m - prior_12m) / prior_12m * 100, 1) if prior_12m > 0 else None
+
+        return {
+            'has_data': True,
+            'latest_period': latest_period.isoformat(),
+            'latest_period_label': latest_period.strftime('%B %Y'),
+            'latest_arrivals': latest_total,
+            'yoy_pct': yoy_pct,
+            'yoy_total': yoy_total,
+            'mom_pct': mom_pct,
+            'rolling_12m': rolling_12m,
+            'prior_12m': prior_12m,
+            'rolling_yoy_pct': rolling_yoy_pct,
+            'country_count': country_count,
+        }
+
+    def get_monthly_arrivals_chart(self, months=25):
+        """Monthly arrival totals for chart rendering."""
+        from platform_data.models import MarketArrivalData
+
+        monthly = MarketArrivalData.objects.filter(
+            country_code=self.country_code,
+        ).values('report_period').annotate(
+            total=Sum('arrivals')
+        ).order_by('report_period')
+
+        by_period = {m['report_period']: m['total'] for m in monthly}
+
+        result = []
+        for m in list(monthly)[-months:]:
+            period = m['report_period']
+            yoy_period = date(period.year - 1, period.month, 1)
+            yoy_total = by_period.get(yoy_period)
+            yoy_pct = round((m['total'] - yoy_total) / yoy_total * 100, 1) if yoy_total else None
+
+            result.append({
+                'period': period.strftime('%Y-%m'),
+                'label': period.strftime('%b %y'),
+                'year': period.year,
+                'month': period.month,
+                'arrivals': m['total'],
+                'yoy_arrivals': yoy_total,
+                'yoy_pct': yoy_pct,
+            })
+
+        return result
+
+    def get_facility_share_trend(self):
+        """Guesthouse vs resort vs hotel share over time."""
+        from platform_data.models import FacilityDistribution
+
+        records = FacilityDistribution.objects.filter(
+            country_code=self.country_code
+        ).order_by('report_period', 'facility_type')
+
+        if not records.exists():
+            return {'has_data': False}
+
+        trend = {}
+        for r in records:
+            key = r.report_period.strftime('%Y-%m')
+            if key not in trend:
+                trend[key] = {'period': key}
+            trend[key][r.facility_type] = float(r.share_pct) if r.share_pct else 0
+
+        trend_list = sorted(trend.values(), key=lambda x: x['period'])
+        latest = trend_list[-1] if trend_list else {}
+
+        return {
+            'has_data': True,
+            'latest': {k: v for k, v in latest.items() if k != 'period'},
+            'trend': trend_list,
+        }
+
+    # ── Section 2: Source Market Rankings ─────────────────────────────────
+
+    def get_market_rankings(self, year, limit=20):
+        """Top markets by arrivals with share, YoY, and share shift."""
+        from platform_data.models import MarketArrivalData
+
+        current = MarketArrivalData.objects.filter(
+            country_code=self.country_code,
+            report_period__year=year,
+        ).values('origin_country').annotate(
+            total=Sum('arrivals')
+        ).order_by('-total')
+
+        grand_total = sum(m['total'] for m in current)
+
+        prior = {
+            r['origin_country']: r['total']
+            for r in MarketArrivalData.objects.filter(
+                country_code=self.country_code,
+                report_period__year=year - 1,
+            ).values('origin_country').annotate(total=Sum('arrivals'))
+        }
+        prior_grand = sum(prior.values())
+
+        markets = []
+        for i, m in enumerate(current[:limit]):
+            country = m['origin_country']
+            arrivals = m['total']
+            share = round(arrivals / grand_total * 100, 1) if grand_total else 0
+
+            prev_arr = prior.get(country, 0)
+            prev_share = round(prev_arr / prior_grand * 100, 1) if prior_grand else 0
+            yoy_pct = round((arrivals - prev_arr) / prev_arr * 100, 1) if prev_arr > 0 else None
+            share_shift = round(share - prev_share, 2)
+
+            markets.append({
+                'rank': i + 1,
+                'country': country,
+                'arrivals': arrivals,
+                'share': share,
+                'prev_arrivals': prev_arr,
+                'yoy_pct': yoy_pct,
+                'prev_share': prev_share,
+                'share_shift': share_shift,
+            })
+
+        return {
+            'year': year,
+            'total_arrivals': grand_total,
+            'prior_total': prior_grand,
+            'overall_yoy': round((grand_total - prior_grand) / prior_grand * 100, 1) if prior_grand else None,
+            'markets': markets,
+        }
+
+    def get_cumulative_concentration(self, year):
+        """Cumulative share curve showing market concentration."""
+        from platform_data.models import MarketArrivalData
+
+        ranked = MarketArrivalData.objects.filter(
+            country_code=self.country_code,
+            report_period__year=year,
+        ).values('origin_country').annotate(
+            total=Sum('arrivals')
+        ).order_by('-total')
+
+        grand_total = sum(m['total'] for m in ranked)
+        if grand_total == 0:
+            return {'top_3_share': 0}
+
+        curve = []
+        cumulative = 0
+        milestones = {}
+
+        for i, m in enumerate(ranked):
+            cumulative += m['total']
+            cum_share = round(cumulative / grand_total * 100, 1)
+            curve.append({
+                'rank': i + 1,
+                'country': m['origin_country'],
+                'arrivals': m['total'],
+                'share': round(m['total'] / grand_total * 100, 1),
+                'cum_share': cum_share,
+            })
+
+            for threshold in [50, 80, 90, 95]:
+                if threshold not in milestones and cum_share >= threshold:
+                    milestones[threshold] = i + 1
+
+        return {
+            'top_3_share': curve[2]['cum_share'] if len(curve) >= 3 else 0,
+            'top_5_share': curve[4]['cum_share'] if len(curve) >= 5 else 0,
+            'top_10_share': curve[9]['cum_share'] if len(curve) >= 10 else 0,
+            'top_20_share': curve[19]['cum_share'] if len(curve) >= 20 else 0,
+            'markets_for_80pct': milestones.get(80, len(curve)),
+            'markets_for_95pct': milestones.get(95, len(curve)),
+            'curve': curve[:30],
+        }
+
+    def get_emerging_markets(self, year, max_share=1.0, min_growth_pct=20, min_volume=1000):
+        """Small markets with fast growth — early warning for new corridors."""
+        rankings = self.get_market_rankings(year, limit=100)
+
+        emerging = []
+        for m in rankings['markets']:
+            if m['share'] <= max_share and m['arrivals'] >= min_volume:
+                is_new = m['prev_arrivals'] == 0
+                if is_new or (m['yoy_pct'] is not None and m['yoy_pct'] >= min_growth_pct):
+                    emerging.append({
+                        'country': m['country'],
+                        'arrivals': m['arrivals'],
+                        'share': m['share'],
+                        'prev_arrivals': m['prev_arrivals'],
+                        'yoy_pct': m['yoy_pct'],
+                        'is_new': is_new,
+                    })
+
+        emerging.sort(key=lambda x: x['yoy_pct'] or 0, reverse=True)
+        return emerging[:10]
+
+    def get_declining_markets(self, year, min_volume=500, max_yoy=-5):
+        """Markets with significant negative YoY growth."""
+        rankings = self.get_market_rankings(year, limit=100)
+
+        declining = [
+            m for m in rankings['markets']
+            if m['yoy_pct'] is not None and m['yoy_pct'] <= max_yoy
+            and m['arrivals'] >= min_volume
+        ]
+        declining.sort(key=lambda x: x['yoy_pct'])
+        return declining[:10]
+
+    # ── Section 3: Seasonal Calendar ─────────────────────────────────────
+
+    def get_seasonal_heatmap(self, year, top_n=15):
+        """Matrix: top markets x 12 months with arrival values."""
+        from platform_data.models import MarketArrivalData
+
+        top_markets = list(
+            MarketArrivalData.objects.filter(
+                country_code=self.country_code,
+                report_period__year=year,
+            ).values('origin_country').annotate(
+                total=Sum('arrivals')
+            ).order_by('-total')[:top_n].values_list('origin_country', flat=True)
+        )
+
+        monthly = MarketArrivalData.objects.filter(
+            country_code=self.country_code,
+            report_period__year=year,
+            origin_country__in=top_markets,
+        ).values('origin_country', 'report_period').annotate(
+            total=Sum('arrivals')
+        )
+
+        matrix = {market: [0] * 12 for market in top_markets}
+        max_value = 0
+
+        for row in monthly:
+            country = row['origin_country']
+            month_idx = row['report_period'].month - 1
+            val = row['total']
+            matrix[country][month_idx] = val
+            if val > max_value:
+                max_value = val
+
+        months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+        return {
+            'markets': top_markets,
+            'months': months,
+            'matrix': matrix,
+            'max_value': max_value,
+            'year': year,
+        }
+
+    def get_peak_trough_by_market(self, year, top_n=15):
+        """Peak month, trough month, and ratio for each top market."""
+        heatmap = self.get_seasonal_heatmap(year, top_n)
+        months = heatmap['months']
+
+        result = []
+        for market in heatmap['markets']:
+            values = heatmap['matrix'][market]
+            if max(values) == 0:
+                continue
+
+            peak_idx = values.index(max(values))
+            nonzero = [v for v in values if v > 0]
+            trough_idx = values.index(min(nonzero)) if nonzero else 0
+            peak_val = values[peak_idx]
+            trough_val = values[trough_idx] if values[trough_idx] > 0 else 1
+
+            result.append({
+                'country': market,
+                'peak_month': months[peak_idx],
+                'peak_arrivals': peak_val,
+                'trough_month': months[trough_idx],
+                'trough_arrivals': values[trough_idx],
+                'ratio': round(peak_val / trough_val, 1),
+                'annual': sum(values),
+            })
+
+        return result
+
+    def get_offpeak_heroes(self, year, offpeak_months=None, min_pct=40, min_annual=5000):
+        """Markets delivering >40% of annual arrivals in off-peak months."""
+        if offpeak_months is None:
+            offpeak_months = [5, 6, 7, 8, 9]  # May-Sep
+
+        heatmap = self.get_seasonal_heatmap(year, top_n=30)
+
+        heroes = []
+        for market in heatmap['markets']:
+            values = heatmap['matrix'][market]
+            annual = sum(values)
+            if annual < min_annual:
+                continue
+
+            offpeak_total = sum(values[m - 1] for m in offpeak_months)
+            offpeak_pct = round(offpeak_total / annual * 100, 1) if annual > 0 else 0
+
+            if offpeak_pct >= min_pct:
+                heroes.append({
+                    'country': market,
+                    'offpeak_pct': offpeak_pct,
+                    'offpeak_arrivals': offpeak_total,
+                    'annual_arrivals': annual,
+                })
+
+        heroes.sort(key=lambda x: x['offpeak_pct'], reverse=True)
+        return heroes
+
+    # ── Section 4: Share Shift Analysis ──────────────────────────────────
+
+    def get_share_shifts(self, year, min_volume=500):
+        """Markets gaining/losing share between year and year-1."""
+        rankings = self.get_market_rankings(year, limit=80)
+
+        gaining = [m for m in rankings['markets'] if m['share_shift'] > 0.05]
+        losing = [m for m in rankings['markets'] if m['share_shift'] < -0.05 and m['arrivals'] >= min_volume]
+
+        gaining.sort(key=lambda x: x['share_shift'], reverse=True)
+        losing.sort(key=lambda x: x['share_shift'])
+
+        return {
+            'gaining': gaining[:10],
+            'losing': losing[:10],
+            'overall_yoy': rankings['overall_yoy'],
+            'year': year,
+        }
+
+    def get_market_sparklines(self, top_n=10, months=24):
+        """24-month arrival sparkline data per market."""
+        from platform_data.models import MarketArrivalData
+
+        latest_period = MarketArrivalData.objects.filter(
+            country_code=self.country_code
+        ).aggregate(mx=Max('report_period'))['mx']
+
+        if not latest_period:
+            return []
+
+        top_markets = list(
+            MarketArrivalData.objects.filter(
+                country_code=self.country_code,
+                report_period__year=latest_period.year,
+            ).values('origin_country').annotate(
+                total=Sum('arrivals')
+            ).order_by('-total')[:top_n].values_list('origin_country', flat=True)
+        )
+
+        result = []
+        for market in top_markets:
+            monthly = list(
+                MarketArrivalData.objects.filter(
+                    country_code=self.country_code,
+                    origin_country=market,
+                ).values('report_period', 'arrivals').order_by('report_period')
+            )
+            result.append({
+                'country': market,
+                'data': [{'period': m['report_period'].strftime('%Y-%m'), 'arrivals': m['arrivals']}
+                         for m in monthly[-months:]],
+            })
+
+        return result
+
+    # ── Section 5: Monthly Momentum ──────────────────────────────────────
+
+    def get_monthly_momentum(self, months=25):
+        """Per month: total arrivals, MoM%, YoY%, top 3 movers."""
+        from platform_data.models import MarketArrivalData
+
+        monthly = list(
+            MarketArrivalData.objects.filter(
+                country_code=self.country_code,
+            ).values('report_period').annotate(
+                total=Sum('arrivals')
+            ).order_by('report_period')
+        )
+
+        by_period = {m['report_period']: m['total'] for m in monthly}
+
+        result = []
+        for m in monthly[-months:]:
+            period = m['report_period']
+            total = m['total']
+
+            # MoM
+            if period.month == 1:
+                prev_period = date(period.year - 1, 12, 1)
+            else:
+                prev_period = date(period.year, period.month - 1, 1)
+            prev_total = by_period.get(prev_period)
+            mom_pct = round((total - prev_total) / prev_total * 100, 1) if prev_total else None
+
+            # YoY
+            yoy_period = date(period.year - 1, period.month, 1)
+            yoy_total = by_period.get(yoy_period)
+            yoy_pct = round((total - yoy_total) / yoy_total * 100, 1) if yoy_total else None
+
+            # Top movers
+            top_grower = None
+            top_decliner = None
+            new_entrant = None
+
+            if yoy_total:
+                current_markets = dict(
+                    MarketArrivalData.objects.filter(
+                        country_code=self.country_code,
+                        report_period=period,
+                    ).values_list('origin_country', 'arrivals')
+                )
+                prior_markets = dict(
+                    MarketArrivalData.objects.filter(
+                        country_code=self.country_code,
+                        report_period=yoy_period,
+                    ).values_list('origin_country', 'arrivals')
+                )
+
+                movers = []
+                for country, arr in current_markets.items():
+                    prev = prior_markets.get(country, 0)
+                    if prev >= 100:
+                        change = round((arr - prev) / prev * 100, 1)
+                        movers.append((country, arr, prev, change))
+                    elif prev == 0 and arr >= 200:
+                        if not new_entrant or arr > new_entrant['arrivals']:
+                            new_entrant = {'country': country, 'arrivals': arr}
+
+                if movers:
+                    movers.sort(key=lambda x: x[3], reverse=True)
+                    top_grower = {'country': movers[0][0], 'yoy_pct': movers[0][3], 'arrivals': movers[0][1]}
+                    top_decliner = {'country': movers[-1][0], 'yoy_pct': movers[-1][3], 'arrivals': movers[-1][1]}
+
+            result.append({
+                'period': period.strftime('%Y-%m'),
+                'label': period.strftime('%b %Y'),
+                'year': period.year,
+                'month': period.month,
+                'arrivals': total,
+                'mom_pct': mom_pct,
+                'yoy_pct': yoy_pct,
+                'top_grower': top_grower,
+                'top_decliner': top_decliner,
+                'new_entrant': new_entrant,
+            })
+
+        return result

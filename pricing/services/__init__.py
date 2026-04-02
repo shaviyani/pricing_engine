@@ -13,6 +13,7 @@ from .revenue_service import (
     DisplacementService, LosService,
 )
 from .cancellation_service import CancellationAnalysisService
+from .market_intelligence_service import MarketIntelligenceService
 
 # Re-export helper functions from models
 from pricing.models.pricing import (

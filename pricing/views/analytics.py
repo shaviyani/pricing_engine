@@ -153,6 +153,11 @@ class BookingAnalysisDashboardView(AnalyticsBaseView):
         context['room_mix_json'] = json.dumps(trends['room_mix'])
         context['channel_mix_json'] = json.dumps(trends['channel_mix'])
 
+        # ---- Bookings & Arrivals data ----
+        ba_data = service.get_bookings_and_arrivals(year=year)
+        context['bookings_by_month_json'] = json.dumps(ba_data['bookings_by_month'])
+        context['arrivals_by_month_json'] = json.dumps(ba_data['arrivals_by_month'])
+
         return context
 
 
@@ -175,6 +180,7 @@ def booking_analysis_data_ajax(request, org_code, prop_code):
         service = BookingAnalysisService(hotel=prop)
         dashboard_data = service.get_dashboard_data(year=year)
         chart_data = service.get_chart_data(year=year)
+        ba_data = service.get_bookings_and_arrivals(year=year)
 
         _attach_demand_indices(prop, dashboard_data['monthly_data'], year)
 
@@ -247,6 +253,8 @@ def booking_analysis_data_ajax(request, org_code, prop_code):
                 }
                 for m in dashboard_data['monthly_data']
             ],
+            'bookings_by_month': ba_data['bookings_by_month'],
+            'arrivals_by_month': ba_data['arrivals_by_month'],
         })
     
     except Exception as e:
@@ -432,6 +440,7 @@ def booking_heatmap_ajax(request, org_code, prop_code):
     # Last 6 booking months
     booking_start = (today.replace(day=1) - timedelta(days=150)).replace(day=1)
 
+    # Confirmed bookings only
     qs = Reservation.objects.filter(
         hotel=prop,
         status__in=Reservation.ACTIVE_STATUSES,
@@ -673,3 +682,177 @@ class CancellationDashboardView(AnalyticsBaseView):
 
         return context
 
+
+# =============================================================================
+# DESTINATION REPORT
+# =============================================================================
+
+class DestinationReportView(AnalyticsBaseView):
+    """National-level tourism statistics — property-agnostic."""
+    template_name = 'pricing/analytics/destination_report.html'
+    nav_sub = 'destination_report'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        prop = context['property']
+        country_code = getattr(prop, 'country_code', 'MV') or 'MV'
+
+        import json as _json
+        from platform_data.services import DestinationReportService, MarketSignalService
+        svc = DestinationReportService(country_code)
+        context['overview'] = svc.get_overview_kpis()
+        context['monthly_chart_json'] = _json.dumps(svc.get_monthly_arrivals_chart(months=25))
+        facility = svc.get_facility_share_trend()
+        context['facility_share'] = facility
+        context['facility_latest_json'] = _json.dumps(facility.get('latest', {})) if facility.get('has_data') else '{}'
+        context['data_freshness'] = MarketSignalService.get_data_freshness(country_code)
+
+        return context
+
+
+@require_GET
+def destination_rankings_ajax(request, org_code, prop_code):
+    """AJAX: source market rankings + concentration + emerging/declining."""
+    org = get_object_or_404(Organization, code=org_code, is_active=True)
+    prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+    country_code = getattr(prop, 'country_code', 'MV') or 'MV'
+
+    year = int(request.GET.get('year', date.today().year))
+    if year > date.today().year:
+        year = date.today().year
+
+    from platform_data.services import DestinationReportService
+    svc = DestinationReportService(country_code)
+
+    return JsonResponse({
+        'success': True,
+        'rankings': svc.get_market_rankings(year),
+        'concentration': svc.get_cumulative_concentration(year),
+        'emerging': svc.get_emerging_markets(year),
+        'declining': svc.get_declining_markets(year),
+    })
+
+
+@require_GET
+def destination_seasonal_ajax(request, org_code, prop_code):
+    """AJAX: seasonal heatmap + peak/trough + off-peak heroes."""
+    org = get_object_or_404(Organization, code=org_code, is_active=True)
+    prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+    country_code = getattr(prop, 'country_code', 'MV') or 'MV'
+
+    year = int(request.GET.get('year', date.today().year))
+
+    from platform_data.services import DestinationReportService
+    svc = DestinationReportService(country_code)
+
+    return JsonResponse({
+        'success': True,
+        'heatmap': svc.get_seasonal_heatmap(year),
+        'peak_trough': svc.get_peak_trough_by_market(year),
+        'offpeak_heroes': svc.get_offpeak_heroes(year),
+    })
+
+
+@require_GET
+def destination_shifts_ajax(request, org_code, prop_code):
+    """AJAX: share shifts + sparklines."""
+    org = get_object_or_404(Organization, code=org_code, is_active=True)
+    prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+    country_code = getattr(prop, 'country_code', 'MV') or 'MV'
+
+    year = int(request.GET.get('year', date.today().year))
+
+    from platform_data.services import DestinationReportService
+    svc = DestinationReportService(country_code)
+
+    return JsonResponse({
+        'success': True,
+        'shifts': svc.get_share_shifts(year),
+        'sparklines': svc.get_market_sparklines(top_n=10),
+    })
+
+
+@require_GET
+def destination_momentum_ajax(request, org_code, prop_code):
+    """AJAX: monthly momentum table."""
+    org = get_object_or_404(Organization, code=org_code, is_active=True)
+    prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+    country_code = getattr(prop, 'country_code', 'MV') or 'MV'
+
+    from platform_data.services import DestinationReportService
+    svc = DestinationReportService(country_code)
+
+    return JsonResponse({
+        'success': True,
+        'momentum': svc.get_monthly_momentum(months=25),
+    })
+
+
+# =============================================================================
+# MARKET INTELLIGENCE
+# =============================================================================
+
+class MarketIntelligenceView(AnalyticsBaseView):
+    """Property-specific market positioning vs national trends."""
+    template_name = 'pricing/analytics/market_intelligence.html'
+    nav_sub = 'market_intelligence'
+
+    def get_context_data(self, **kwargs):
+        import json as _json
+        context = super().get_context_data(**kwargs)
+        prop = context['property']
+
+        from pricing.services import MarketIntelligenceService
+        svc = MarketIntelligenceService(property=prop)
+
+        position = svc.get_property_vs_national_mix()
+        context['position'] = position
+        context['position_json'] = _json.dumps(position)
+        context['concentration'] = svc.get_concentration_risk()
+        context['opportunities'] = svc.get_diversification_opportunities()
+
+        return context
+
+
+@require_GET
+def market_intel_cancel_cross_ajax(request, org_code, prop_code):
+    org = get_object_or_404(Organization, code=org_code, is_active=True)
+    prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+    from pricing.services import MarketIntelligenceService
+    svc = MarketIntelligenceService(property=prop)
+    return JsonResponse({'success': True, **svc.get_market_cancel_cross()})
+
+
+@require_GET
+def market_intel_lead_times_ajax(request, org_code, prop_code):
+    org = get_object_or_404(Organization, code=org_code, is_active=True)
+    prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+    from pricing.services import MarketIntelligenceService
+    svc = MarketIntelligenceService(property=prop)
+    return JsonResponse({
+        'success': True,
+        'lead_times': svc.get_lead_time_by_market(),
+        'heatmap': svc.get_lead_time_heatmap(),
+    })
+
+
+@require_GET
+def market_intel_forecast_ajax(request, org_code, prop_code):
+    org = get_object_or_404(Organization, code=org_code, is_active=True)
+    prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+    from pricing.services import MarketIntelligenceService
+    svc = MarketIntelligenceService(property=prop)
+    return JsonResponse({'success': True, **svc.get_growth_adjusted_forecast()})
+
+
+@require_GET
+def market_intel_guidance_ajax(request, org_code, prop_code):
+    org = get_object_or_404(Organization, code=org_code, is_active=True)
+    prop = get_object_or_404(Property, organization=org, code=prop_code, is_active=True)
+    from pricing.services import MarketIntelligenceService
+    svc = MarketIntelligenceService(property=prop)
+    return JsonResponse({
+        'success': True,
+        'guidance': svc.get_seasonal_rate_guidance(),
+        'alerts': svc.get_market_momentum_alerts(),
+    })

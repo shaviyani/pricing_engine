@@ -67,6 +67,16 @@ from .analytics import (
     CancellationDashboardView,
     booking_heatmap_ajax,
     arrival_forecast_ajax,
+    DestinationReportView,
+    destination_rankings_ajax,
+    destination_seasonal_ajax,
+    destination_shifts_ajax,
+    destination_momentum_ajax,
+    MarketIntelligenceView,
+    market_intel_cancel_cross_ajax,
+    market_intel_lead_times_ajax,
+    market_intel_forecast_ajax,
+    market_intel_guidance_ajax,
 )
 
 # Forecast views

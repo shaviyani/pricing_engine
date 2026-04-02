@@ -1,0 +1,470 @@
+{% extends "pricing/base.html" %}
+{% load humanize %}
+
+{% block title %}Destination Report{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="space-y-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Destination Report</h1>
+            <p class="text-gray-600 mt-1">
+                National tourism statistics &mdash; Maldives
+                {% if data_freshness.latest_period %}&bull; Data through {{ data_freshness.latest_period|date:"F Y" }}{% endif %}
+            </p>
+        </div>
+        <div class="flex items-center gap-3 no-print">
+            <select id="yearSelector" class="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+                <option value="2025" selected>2025</option>
+                <option value="2024">2024</option>
+            </select>
+        </div>
+    </div>
+
+    {% if not overview.has_data %}
+    <div class="bg-gray-50 rounded-xl p-12 text-center">
+        <p class="text-gray-500">No arrival data available yet.</p>
+    </div>
+    {% else %}
+
+    <!-- ================================================================= -->
+    <!-- SECTION 1: DESTINATION OVERVIEW (server-rendered)                  -->
+    <!-- ================================================================= -->
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Latest Arrivals -->
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">{{ overview.latest_period_label }}</div>
+            <div class="text-2xl font-semibold text-gray-900 mt-1">{{ overview.latest_arrivals|intcomma }}</div>
+            <div class="text-xs mt-1">
+                {% if overview.mom_pct != None %}
+                <span class="{% if overview.mom_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if overview.mom_pct >= 0 %}+{% endif %}{{ overview.mom_pct }}% MoM
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        <!-- YoY Change -->
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">YoY Change</div>
+            <div class="text-2xl font-semibold mt-1 {% if overview.yoy_pct != None and overview.yoy_pct >= 0 %}text-green-700{% elif overview.yoy_pct != None %}text-red-700{% else %}text-gray-900{% endif %}">
+                {% if overview.yoy_pct != None %}{% if overview.yoy_pct >= 0 %}+{% endif %}{{ overview.yoy_pct }}%{% else %}&mdash;{% endif %}
+            </div>
+            <div class="text-xs text-gray-500 mt-1">vs {{ overview.yoy_total|intcomma|default:"—" }} STLY</div>
+        </div>
+        <!-- Rolling 12m -->
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Rolling 12 Months</div>
+            <div class="text-2xl font-semibold text-gray-900 mt-1">{{ overview.rolling_12m|intcomma }}</div>
+            <div class="text-xs mt-1">
+                {% if overview.rolling_yoy_pct != None %}
+                <span class="{% if overview.rolling_yoy_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if overview.rolling_yoy_pct >= 0 %}+{% endif %}{{ overview.rolling_yoy_pct }}% vs prior 12m
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        <!-- Source Countries -->
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Source Countries</div>
+            <div class="text-2xl font-semibold text-gray-900 mt-1">{{ overview.country_count }}</div>
+            <div class="text-xs text-gray-500 mt-1">active markets</div>
+        </div>
+    </div>
+
+    <!-- Monthly Arrivals Chart + Facility Share -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Monthly Chart -->
+        <div class="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Monthly Arrivals &amp; YoY Growth</h3>
+            <div style="height:260px;"><canvas id="monthlyArrivalsChart"></canvas></div>
+        </div>
+        <!-- Facility Share -->
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Accommodation Split</h3>
+            {% if facility_share.has_data %}
+            <div style="height:200px;"><canvas id="facilityChart"></canvas></div>
+            <div class="mt-3 space-y-1 text-xs text-gray-600">
+                {% for key, val in facility_share.latest.items %}
+                <div class="flex justify-between"><span class="capitalize">{{ key }}</span><span class="font-medium">{{ val }}%</span></div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-gray-400 text-sm text-center py-8">No facility data</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- SECTION 2: SOURCE MARKET RANKINGS (AJAX)                          -->
+    <!-- ================================================================= -->
+    <div id="rankingsSection">
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Source Market Rankings</h3>
+            <div id="rankingsLoading" class="text-center py-8 text-gray-400 text-sm">Loading rankings...</div>
+            <div id="rankingsContent" style="display:none;">
+                <!-- Summary row -->
+                <div class="grid grid-cols-3 gap-4 mb-4" id="rankingSummary"></div>
+                <!-- Rankings table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead><tr class="border-b border-gray-200 text-xs text-gray-500 uppercase">
+                            <th class="text-left py-2 pr-2">#</th>
+                            <th class="text-left py-2">Market</th>
+                            <th class="text-right py-2">Arrivals</th>
+                            <th class="text-right py-2">Share</th>
+                            <th class="text-right py-2">YoY %</th>
+                            <th class="text-right py-2">Share Shift</th>
+                        </tr></thead>
+                        <tbody id="rankingsBody"></tbody>
+                    </table>
+                </div>
+                <!-- Emerging / Declining -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                        <h4 class="text-xs font-semibold text-green-700 uppercase mb-2">Emerging Markets</h4>
+                        <div id="emergingList" class="flex flex-wrap gap-2"></div>
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-semibold text-red-700 uppercase mb-2">Declining Markets</h4>
+                        <div id="decliningList" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- SECTION 3: SEASONAL CALENDAR (AJAX)                               -->
+    <!-- ================================================================= -->
+    <div id="seasonalSection">
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Seasonal Arrival Calendar</h3>
+            <div id="seasonalLoading" class="text-center py-8 text-gray-400 text-sm">Loading seasonal data...</div>
+            <div id="seasonalContent" style="display:none;">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-xs" id="heatmapTable"></table>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                        <h4 class="text-xs font-semibold text-gray-700 uppercase mb-2">Off-Peak Heroes (May-Sep)</h4>
+                        <div id="offpeakHeroes"></div>
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-semibold text-gray-700 uppercase mb-2">Peak / Trough Ratio</h4>
+                        <div id="peakTrough"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- SECTION 4: SHARE SHIFTS (AJAX)                                    -->
+    <!-- ================================================================= -->
+    <div id="shiftsSection">
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Market Share Shifts</h3>
+            <div id="shiftsLoading" class="text-center py-8 text-gray-400 text-sm">Loading share shifts...</div>
+            <div id="shiftsContent" style="display:none;">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="text-xs font-semibold text-green-700 uppercase mb-2">Gaining Share</h4>
+                        <div id="gainingList"></div>
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-semibold text-red-700 uppercase mb-2">Losing Share</h4>
+                        <div id="losingList"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- SECTION 5: MONTHLY MOMENTUM (AJAX)                                -->
+    <!-- ================================================================= -->
+    <div id="momentumSection">
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Monthly Momentum</h3>
+            <div id="momentumLoading" class="text-center py-8 text-gray-400 text-sm">Loading momentum...</div>
+            <div id="momentumContent" style="display:none;">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead><tr class="border-b border-gray-200 text-xs text-gray-500 uppercase">
+                            <th class="text-left py-2">Month</th>
+                            <th class="text-right py-2">Arrivals</th>
+                            <th class="text-right py-2">MoM%</th>
+                            <th class="text-right py-2">YoY%</th>
+                            <th class="text-left py-2 pl-4">Top Grower</th>
+                            <th class="text-left py-2">Top Decliner</th>
+                        </tr></thead>
+                        <tbody id="momentumBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    var BASE = '{% url "pricing:destination_rankings_ajax" org_code=org.code prop_code=prop.code %}';
+    var URLS = {
+        rankings: BASE,
+        seasonal: '{% url "pricing:destination_seasonal_ajax" org_code=org.code prop_code=prop.code %}',
+        shifts:   '{% url "pricing:destination_shifts_ajax" org_code=org.code prop_code=prop.code %}',
+        momentum: '{% url "pricing:destination_momentum_ajax" org_code=org.code prop_code=prop.code %}',
+    };
+
+    function getYear() { return document.getElementById('yearSelector').value; }
+    function fmt(n) { return n != null ? n.toLocaleString() : '—'; }
+    function pctClass(v) { return v != null && v >= 0 ? 'text-green-600' : 'text-red-600'; }
+    function pctStr(v) { return v != null ? (v >= 0 ? '+' : '') + v + '%' : '—'; }
+
+    // ── Heatmap intensity ──────────────────────────────────────────────
+    function getIntensity(val, max) {
+        if (!val || !max) return 'background:#f9fafb;color:#9ca3af;';
+        var pct = val / max;
+        if (pct > 0.75) return 'background:#1e40af;color:#fff;';
+        if (pct > 0.50) return 'background:#3b82f6;color:#fff;';
+        if (pct > 0.30) return 'background:#93c5fd;color:#1e3a5f;';
+        if (pct > 0.10) return 'background:#dbeafe;color:#1e3a5f;';
+        return 'background:#eff6ff;color:#64748b;';
+    }
+
+    // ── Section 1: Monthly Arrivals Chart ──────────────────────────────
+    var chartData = {{ monthly_chart_json|safe }};
+    if (chartData && chartData.length > 0) {
+        var ctx = document.getElementById('monthlyArrivalsChart');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: chartData.map(function(d) { return d.label; }),
+                datasets: [
+                    {
+                        label: 'Arrivals',
+                        data: chartData.map(function(d) { return d.arrivals; }),
+                        backgroundColor: 'rgba(59,130,246,0.7)',
+                        borderRadius: 3,
+                        yAxisID: 'y',
+                        order: 2,
+                    },
+                    {
+                        label: 'YoY %',
+                        data: chartData.map(function(d) { return d.yoy_pct; }),
+                        type: 'line',
+                        borderColor: '#22c55e',
+                        backgroundColor: 'transparent',
+                        pointRadius: 2,
+                        borderWidth: 2,
+                        yAxisID: 'y1',
+                        order: 1,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } },
+                scales: {
+                    y: { ticks: { callback: function(v) { return v >= 1000 ? (v/1000).toFixed(0) + 'k' : v; }, font: { size: 10 } } },
+                    y1: { position: 'right', ticks: { callback: function(v) { return v + '%'; }, font: { size: 10 } }, grid: { drawOnChartArea: false } },
+                    x: { ticks: { font: { size: 10 }, maxRotation: 45 } }
+                }
+            }
+        });
+    }
+
+    // ── Facility Share Donut ────────────────────────────────────────────
+    {% if facility_share.has_data %}
+    var facData = {{ facility_latest_json|safe }};
+    var facLabels = [], facValues = [];
+    for (var k in facData) { facLabels.push(k.charAt(0).toUpperCase() + k.slice(1)); facValues.push(facData[k]); }
+    new Chart(document.getElementById('facilityChart'), {
+        type: 'doughnut',
+        data: {
+            labels: facLabels,
+            datasets: [{ data: facValues, backgroundColor: ['#3b82f6','#22c55e','#f59e0b','#8b5cf6'] }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }
+        }
+    });
+    {% endif %}
+
+    // ── Section 2: Rankings ────────────────────────────────────────────
+    function loadRankings() {
+        fetch(URLS.rankings + '?year=' + getYear())
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.success) return;
+            document.getElementById('rankingsLoading').style.display = 'none';
+            document.getElementById('rankingsContent').style.display = 'block';
+
+            var r = d.rankings;
+            document.getElementById('rankingSummary').innerHTML =
+                '<div class="text-center"><div class="text-xs text-gray-500 uppercase">Total Arrivals</div><div class="text-lg font-semibold">' + fmt(r.total_arrivals) + '</div></div>' +
+                '<div class="text-center"><div class="text-xs text-gray-500 uppercase">Overall YoY</div><div class="text-lg font-semibold ' + pctClass(r.overall_yoy) + '">' + pctStr(r.overall_yoy) + '</div></div>' +
+                '<div class="text-center"><div class="text-xs text-gray-500 uppercase">Top 10 Share</div><div class="text-lg font-semibold">' + (d.concentration.top_10_share || 0) + '%</div></div>';
+
+            var html = '';
+            r.markets.forEach(function(m) {
+                html += '<tr class="border-b border-gray-100">';
+                html += '<td class="py-1.5 pr-2 text-gray-400">' + m.rank + '</td>';
+                html += '<td class="py-1.5 font-medium">' + m.country + '</td>';
+                html += '<td class="py-1.5 text-right">' + fmt(m.arrivals) + '</td>';
+                html += '<td class="py-1.5 text-right">' + m.share + '%</td>';
+                html += '<td class="py-1.5 text-right ' + pctClass(m.yoy_pct) + '">' + pctStr(m.yoy_pct) + '</td>';
+                html += '<td class="py-1.5 text-right ' + (m.share_shift > 0 ? 'text-green-600' : m.share_shift < 0 ? 'text-red-600' : '') + '">' + (m.share_shift > 0 ? '+' : '') + m.share_shift.toFixed(2) + 'pp</td>';
+                html += '</tr>';
+            });
+            document.getElementById('rankingsBody').innerHTML = html;
+
+            // Emerging
+            var eHtml = '';
+            d.emerging.forEach(function(m) {
+                eHtml += '<span class="inline-block px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">' +
+                    m.country + ' ' + (m.is_new ? 'NEW' : '+' + (m.yoy_pct||0) + '%') + '</span>';
+            });
+            document.getElementById('emergingList').innerHTML = eHtml || '<span class="text-xs text-gray-400">None detected</span>';
+
+            // Declining
+            var dHtml = '';
+            d.declining.forEach(function(m) {
+                dHtml += '<span class="inline-block px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">' +
+                    m.country + ' ' + m.yoy_pct + '%</span>';
+            });
+            document.getElementById('decliningList').innerHTML = dHtml || '<span class="text-xs text-gray-400">None detected</span>';
+        });
+    }
+
+    // ── Section 3: Seasonal Heatmap ────────────────────────────────────
+    function loadSeasonal() {
+        fetch(URLS.seasonal + '?year=' + getYear())
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.success) return;
+            document.getElementById('seasonalLoading').style.display = 'none';
+            document.getElementById('seasonalContent').style.display = 'block';
+
+            var h = d.heatmap;
+            var html = '<thead><tr class="text-xs text-gray-500"><th class="text-left py-1 pr-2">Market</th>';
+            h.months.forEach(function(m) { html += '<th class="text-center py-1 px-1" style="min-width:42px;">' + m + '</th>'; });
+            html += '<th class="text-right py-1 pl-2">Total</th></tr></thead><tbody>';
+            h.markets.forEach(function(market) {
+                var vals = h.matrix[market];
+                var total = vals.reduce(function(a, b) { return a + b; }, 0);
+                html += '<tr class="border-t border-gray-100"><td class="py-1 pr-2 font-medium whitespace-nowrap">' + market + '</td>';
+                vals.forEach(function(v) {
+                    html += '<td class="text-center py-1 px-1" style="' + getIntensity(v, h.max_value) + 'font-size:10px;">' + (v > 0 ? (v >= 1000 ? (v/1000).toFixed(1) + 'k' : v) : '') + '</td>';
+                });
+                html += '<td class="text-right py-1 pl-2 font-medium">' + fmt(total) + '</td></tr>';
+            });
+            html += '</tbody>';
+            document.getElementById('heatmapTable').innerHTML = html;
+
+            // Off-peak heroes
+            var ohHtml = '';
+            d.offpeak_heroes.forEach(function(h) {
+                ohHtml += '<div class="flex justify-between text-xs py-1 border-b border-gray-100">' +
+                    '<span class="font-medium">' + h.country + '</span>' +
+                    '<span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-semibold">' + h.offpeak_pct + '% off-peak</span></div>';
+            });
+            document.getElementById('offpeakHeroes').innerHTML = ohHtml || '<span class="text-xs text-gray-400">None (min 40% in May-Sep)</span>';
+
+            // Peak / Trough
+            var ptHtml = '<table class="w-full text-xs"><thead><tr class="text-gray-500 uppercase"><th class="text-left py-1">Market</th><th class="text-center py-1">Peak</th><th class="text-center py-1">Trough</th><th class="text-right py-1">Ratio</th></tr></thead><tbody>';
+            d.peak_trough.slice(0, 10).forEach(function(p) {
+                ptHtml += '<tr class="border-t border-gray-100"><td class="py-1 font-medium">' + p.country + '</td>' +
+                    '<td class="py-1 text-center">' + p.peak_month + '</td>' +
+                    '<td class="py-1 text-center">' + p.trough_month + '</td>' +
+                    '<td class="py-1 text-right font-medium">' + p.ratio + 'x</td></tr>';
+            });
+            ptHtml += '</tbody></table>';
+            document.getElementById('peakTrough').innerHTML = ptHtml;
+        });
+    }
+
+    // ── Section 4: Share Shifts ────────────────────────────────────────
+    function loadShifts() {
+        fetch(URLS.shifts + '?year=' + getYear())
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.success) return;
+            document.getElementById('shiftsLoading').style.display = 'none';
+            document.getElementById('shiftsContent').style.display = 'block';
+
+            function renderShiftList(items, el, isGaining) {
+                var html = '';
+                items.forEach(function(m) {
+                    var color = isGaining ? 'green' : 'red';
+                    html += '<div class="flex justify-between items-center text-xs py-1.5 border-b border-gray-100">' +
+                        '<div><span class="font-medium">' + m.country + '</span> <span class="text-gray-400">' + fmt(m.arrivals) + '</span></div>' +
+                        '<div class="flex items-center gap-2">' +
+                        '<span class="' + pctClass(m.yoy_pct) + '">' + pctStr(m.yoy_pct) + '</span>' +
+                        '<span class="px-1.5 py-0.5 rounded text-' + color + '-800 bg-' + color + '-100 font-semibold">' +
+                        (m.share_shift > 0 ? '+' : '') + m.share_shift.toFixed(2) + 'pp</span></div></div>';
+                });
+                el.innerHTML = html || '<span class="text-xs text-gray-400">None</span>';
+            }
+
+            renderShiftList(d.shifts.gaining, document.getElementById('gainingList'), true);
+            renderShiftList(d.shifts.losing, document.getElementById('losingList'), false);
+        });
+    }
+
+    // ── Section 5: Monthly Momentum ────────────────────────────────────
+    function loadMomentum() {
+        fetch(URLS.momentum)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.success) return;
+            document.getElementById('momentumLoading').style.display = 'none';
+            document.getElementById('momentumContent').style.display = 'block';
+
+            var html = '';
+            d.momentum.slice().reverse().forEach(function(m) {
+                var rowBg = m.yoy_pct != null ? (m.yoy_pct >= 0 ? 'background:#f0fdf4;' : 'background:#fef2f2;') : '';
+                html += '<tr class="border-b border-gray-100" style="' + rowBg + '">';
+                html += '<td class="py-1.5 font-medium">' + m.label + '</td>';
+                html += '<td class="py-1.5 text-right">' + fmt(m.arrivals) + '</td>';
+                html += '<td class="py-1.5 text-right ' + pctClass(m.mom_pct) + '">' + pctStr(m.mom_pct) + '</td>';
+                html += '<td class="py-1.5 text-right ' + pctClass(m.yoy_pct) + '">' + pctStr(m.yoy_pct) + '</td>';
+                html += '<td class="py-1.5 pl-4 text-xs">';
+                if (m.top_grower) html += '<span class="text-green-700">' + m.top_grower.country + ' +' + m.top_grower.yoy_pct + '%</span>';
+                html += '</td><td class="py-1.5 text-xs">';
+                if (m.top_decliner) html += '<span class="text-red-700">' + m.top_decliner.country + ' ' + m.top_decliner.yoy_pct + '%</span>';
+                html += '</td></tr>';
+            });
+            document.getElementById('momentumBody').innerHTML = html;
+        });
+    }
+
+    // ── Year selector ──────────────────────────────────────────────────
+    document.getElementById('yearSelector').addEventListener('change', function() {
+        loadRankings();
+        loadSeasonal();
+        loadShifts();
+    });
+
+    // ── Initial load ───────────────────────────────────────────────────
+    loadRankings();
+    loadSeasonal();
+    loadShifts();
+    loadMomentum();
+})();
+</script>
+{% endblock %}

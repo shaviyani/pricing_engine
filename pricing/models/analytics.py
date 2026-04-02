@@ -686,3 +686,17 @@ class Reservation(models.Model):
         return result
 
 
+class RoomTypeMapping(models.Model):
+    """Maps imported room type strings to configured RoomType objects."""
+    hotel = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='room_type_mappings')
+    import_name = models.CharField(max_length=200)
+    room_type = models.ForeignKey(RoomType, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['hotel', 'import_name']
+        verbose_name = "Room Type Mapping"
+        verbose_name_plural = "Room Type Mappings"
+
+    def __str__(self):
+        return f'"{self.import_name}" → {self.room_type.name}'

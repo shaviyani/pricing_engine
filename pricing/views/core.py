@@ -10,7 +10,7 @@ from decimal import Decimal
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.generic import TemplateView, View, ListView
 from django.http import JsonResponse
-from django.db.models import Sum, Count, Avg, Q
+from django.db.models import Sum, Count, Avg, Q, Case, When, Value, IntegerField, DecimalField
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 import calendar
@@ -155,22 +155,18 @@ class OrganizationDashboardView(OrganizationMixin, TemplateView):
         
         year = date.today().year
         
-        # Aggregate reservations across all properties
-        reservations = Reservation.objects.filter(
-            hotel__in=properties,
-            arrival_date__year=year,
-            status__in=Reservation.ACTIVE_STATUSES
-        )
-        
-        stats = reservations.aggregate(
-            total_revenue=Sum('total_amount'),
-            total_room_nights=Sum('nights'),
-            total_reservations=Count('id'),
-        )
-        
-        total_revenue = stats['total_revenue'] or Decimal('0.00')
-        total_room_nights = stats['total_room_nights'] or 0
-        total_reservations = stats['total_reservations'] or 0
+        # Aggregate reservations across all properties (net prorated)
+        year_start = date(year, 1, 1)
+        year_end = date(year, 12, 31)
+        total_room_nights = 0
+        total_rev_float = 0.0
+        total_reservations = 0
+        for p in properties:
+            rn, rev, bk = PropertyDashboardView._period_stats(p, year_start, year_end)
+            total_room_nights += rn
+            total_rev_float += rev
+            total_reservations += bk
+        total_revenue = Decimal(str(total_rev_float))
         
         # Calculate portfolio ADR
         portfolio_adr = calculate_adr(total_revenue, total_room_nights)
@@ -203,21 +199,12 @@ class OrganizationDashboardView(OrganizationMixin, TemplateView):
         cards = []
         
         for prop in properties:
-            reservations = Reservation.objects.filter(
-                hotel=prop,
-                arrival_date__year=year,
-                status__in=Reservation.ACTIVE_STATUSES
-            )
-            
-            stats = reservations.aggregate(
-                revenue=Sum('total_amount'),
-                room_nights=Sum('nights'),
-                bookings=Count('id'),
-            )
-            
-            revenue = stats['revenue'] or Decimal('0.00')
-            room_nights = stats['room_nights'] or 0
-            
+            year_start = date(year, 1, 1)
+            year_end = date(year, 12, 31)
+            room_nights, net_rev, _ = PropertyDashboardView._period_stats(
+                prop, year_start, year_end)
+            revenue = Decimal(str(net_rev))
+
             adr = calculate_adr(revenue, room_nights)
             
             cards.append({
@@ -314,20 +301,30 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
             month_start = date(y, m, 1)
             month_end = date(y, m, days)
 
-            stats = Reservation.objects.filter(
+            # Confirmed bookings only, prorated to this month
+            month_next = date(y + (1 if m == 12 else 0), (m % 12) + 1, 1)
+            overlapping = Reservation.objects.filter(
                 hotel=prop,
-                arrival_date__gte=month_start,
-                arrival_date__lte=month_end,
-                status__in=Reservation.ACTIVE_STATUSES
-            ).aggregate(
-                room_nights=Sum('nights'),
-                revenue=Sum('total_amount'),
-                bookings=Count('id'),
+                status__in=Reservation.ACTIVE_STATUSES,
+                arrival_date__lt=month_next,
+                departure_date__gt=month_start,
             )
 
-            rn = stats['room_nights'] or 0
-            rev = float(stats['revenue'] or 0)
-            bk = stats['bookings'] or 0
+            rn = 0
+            rev = 0.0
+            bk = 0
+            for r in overlapping.values('arrival_date', 'departure_date', 'nights',
+                                         'total_amount'):
+                stay_start = max(r['arrival_date'], month_start)
+                stay_end = min(r['departure_date'], month_next)
+                month_nights = (stay_end - stay_start).days
+                if month_nights <= 0:
+                    continue
+                total_nights = r['nights'] or (r['departure_date'] - r['arrival_date']).days
+                fraction = month_nights / total_nights if total_nights > 0 else 0
+                rn += month_nights
+                rev += float(r['total_amount'] or 0) * fraction
+                bk += 1
             available = total_rooms * days
             occ = round(rn / available * 100, 1) if available > 0 else 0
             adr_val = calculate_adr(rev, rn)
@@ -618,72 +615,84 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
     # -----------------------------------------------------------------
     # KPI helpers
     # -----------------------------------------------------------------
+    @staticmethod
+    def _period_stats(prop, period_start, period_end):
+        """
+        Prorated stats for confirmed bookings in a date range.
+        Only counts the portion of each stay that falls within the period.
+        Returns (rn, rev, bookings).
+        """
+        period_boundary = period_end + timedelta(days=1)
+
+        overlapping = Reservation.objects.filter(
+            hotel=prop,
+            status__in=Reservation.ACTIVE_STATUSES,
+            arrival_date__lt=period_boundary,
+            departure_date__gt=period_start,
+        ).values('arrival_date', 'departure_date', 'nights', 'total_amount')
+
+        rn = 0
+        rev = 0.0
+        bk = 0
+        for r in overlapping:
+            stay_start = max(r['arrival_date'], period_start)
+            stay_end = min(r['departure_date'], period_boundary)
+            period_nights = (stay_end - stay_start).days
+            if period_nights <= 0:
+                continue
+            total_nights = r['nights'] or (r['departure_date'] - r['arrival_date']).days
+            fraction = period_nights / total_nights if total_nights > 0 else 0
+            rn += period_nights
+            rev += float(r['total_amount'] or 0) * fraction
+            bk += 1
+
+        return rn, rev, bk
+
     def _calc_occ_kpi(self, prop, today, days_ahead, total_rooms):
-        """OTB occupancy for next N days, with STLY comparison and net-of-cancellation."""
-        window_end = today + timedelta(days=days_ahead)
-        rn = Reservation.objects.filter(
-            hotel=prop,
-            arrival_date__gte=today,
-            arrival_date__lt=window_end,
-            status__in=Reservation.FUTURE_STATUSES
-        ).aggregate(t=Sum('nights'))['t'] or 0
+        """OTB occupancy for next N days using net prorated formula."""
+        window_end = today + timedelta(days=days_ahead - 1)
+        net_rn, _, _ = self._period_stats(prop, today, window_end)
         available = total_rooms * days_ahead
-        occ = round(rn / available * 100, 1) if available > 0 else 0
+        occ = round(net_rn / available * 100, 1) if available > 0 else 0
 
-        # Historical cancel rate for net OTB
-        all_bookings = Reservation.objects.filter(
-            hotel=prop, arrival_date__gte=today, arrival_date__lt=window_end
+        # Cancel rate
+        all_bk = Reservation.objects.filter(
+            hotel=prop, arrival_date__gte=today, arrival_date__lt=window_end + timedelta(days=1),
+        ).exclude(status='no_show').count()
+        cancel_bk = Reservation.objects.filter(
+            hotel=prop, arrival_date__gte=today, arrival_date__lt=window_end + timedelta(days=1),
+            status='cancelled',
         ).count()
-        cancelled = Reservation.objects.filter(
-            hotel=prop, arrival_date__gte=today, arrival_date__lt=window_end,
-            status='cancelled'
-        ).count()
-        cancel_rate = cancelled / all_bookings if all_bookings > 0 else 0
-        # If no future cancellations yet, use overall historical rate
-        if cancel_rate == 0:
-            hist_total = Reservation.objects.filter(hotel=prop).count()
-            hist_cxl = Reservation.objects.filter(hotel=prop, status='cancelled').count()
-            cancel_rate = hist_cxl / hist_total if hist_total > 0 else 0
-        net_rn = int(rn * (1 - cancel_rate))
-        net_occ = round(net_rn / available * 100, 1) if available > 0 else 0
+        cancel_rate = round(cancel_bk / all_bk * 100, 1) if all_bk > 0 else 0
 
-        # STLY at same days-out
+        # STLY
         stly_start = date(today.year - 1, today.month, today.day)
-        stly_end = stly_start + timedelta(days=days_ahead)
-        stly_rn = Reservation.objects.filter(
-            hotel=prop,
-            arrival_date__gte=stly_start,
-            arrival_date__lt=stly_end,
-            status__in=Reservation.ACTIVE_STATUSES
-        ).aggregate(t=Sum('nights'))['t'] or 0
-        stly_available = total_rooms * days_ahead
-        stly_occ = round(stly_rn / stly_available * 100, 1) if stly_available > 0 else 0
+        stly_end = stly_start + timedelta(days=days_ahead - 1)
+        stly_rn, _, _ = self._period_stats(prop, stly_start, stly_end)
+        stly_occ = round(stly_rn / available * 100, 1) if available > 0 else 0
 
         return {
             'occ': occ,
-            'net_occ': net_occ,
-            'cancel_rate': round(cancel_rate * 100, 1),
+            'net_occ': occ,
+            'cancel_rate': cancel_rate,
             'stly_occ': stly_occ,
             'delta': round(occ - stly_occ, 1),
         }
 
     def _calc_month_revenue_kpi(self, prop, today):
-        """Current month gross & net revenue with STLY comparison."""
+        """Current month net prorated revenue with STLY comparison."""
         _, days = calendar.monthrange(today.year, today.month)
         month_start = date(today.year, today.month, 1)
         month_end = date(today.year, today.month, days)
 
-        month_qs = Reservation.objects.filter(
-            hotel=prop,
-            arrival_date__gte=month_start,
-            arrival_date__lte=month_end,
-            status__in=Reservation.ACTIVE_STATUSES,
-        )
-        rev = float(month_qs.aggregate(t=Sum('total_amount'))['t'] or 0)
+        _, rev, _ = self._period_stats(prop, month_start, month_end)
 
-        # Estimate commission from channel mix
+        # Estimate commission from active channel mix (arrival in month)
         commission = 0.0
-        for r in month_qs.select_related('channel').values('total_amount', 'channel__commission_percent'):
+        for r in Reservation.objects.filter(
+            hotel=prop, arrival_date__gte=month_start, arrival_date__lte=month_end,
+            status__in=Reservation.ACTIVE_STATUSES,
+        ).select_related('channel').values('total_amount', 'channel__commission_percent'):
             amt = float(r['total_amount'] or 0)
             pct = float(r['channel__commission_percent'] or 0)
             commission += amt * pct / 100
@@ -693,12 +702,7 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
         stly_start = date(today.year - 1, today.month, 1)
         _, stly_days = calendar.monthrange(today.year - 1, today.month)
         stly_end = date(today.year - 1, today.month, stly_days)
-        stly_rev = float(Reservation.objects.filter(
-            hotel=prop,
-            arrival_date__gte=stly_start,
-            arrival_date__lte=stly_end,
-            status__in=Reservation.ACTIVE_STATUSES,
-        ).aggregate(t=Sum('total_amount'))['t'] or 0)
+        _, stly_rev, _ = self._period_stats(prop, stly_start, stly_end)
 
         delta_pct = round((rev - stly_rev) / stly_rev * 100, 1) if stly_rev > 0 else 0
 
@@ -711,29 +715,15 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
         }
 
     def _calc_adr_kpi(self, prop, today):
-        """Blended ADR for next 90 days, with STLY comparison."""
-        window_end = today + timedelta(days=90)
-        stats = Reservation.objects.filter(
-            hotel=prop,
-            arrival_date__gte=today,
-            arrival_date__lt=window_end,
-            status__in=Reservation.FUTURE_STATUSES
-        ).aggregate(rev=Sum('total_amount'), rn=Sum('nights'))
-        rev = float(stats['rev'] or 0)
-        rn = stats['rn'] or 0
+        """Blended ADR for next 90 days using net prorated formula."""
+        window_end = today + timedelta(days=89)
+        rn, rev, _ = self._period_stats(prop, today, window_end)
         adr = calculate_adr(rev, rn)
 
         # STLY
         stly_start = date(today.year - 1, today.month, today.day)
-        stly_end = stly_start + timedelta(days=90)
-        stly_stats = Reservation.objects.filter(
-            hotel=prop,
-            arrival_date__gte=stly_start,
-            arrival_date__lt=stly_end,
-            status__in=Reservation.ACTIVE_STATUSES
-        ).aggregate(rev=Sum('total_amount'), rn=Sum('nights'))
-        stly_rev = float(stly_stats['rev'] or 0)
-        stly_rn = stly_stats['rn'] or 0
+        stly_end = stly_start + timedelta(days=89)
+        stly_rn, stly_rev, _ = self._period_stats(prop, stly_start, stly_end)
         stly_adr = calculate_adr(stly_rev, stly_rn)
 
         return {
@@ -743,28 +733,16 @@ class PropertyDashboardView(PropertyMixin, TemplateView):
         }
 
     def _calc_revpar_kpi(self, prop, today, total_rooms):
-        """RevPAR for next 90 days: revenue / available room-nights."""
-        window_end = today + timedelta(days=90)
-        stats = Reservation.objects.filter(
-            hotel=prop,
-            arrival_date__gte=today,
-            arrival_date__lt=window_end,
-            status__in=Reservation.FUTURE_STATUSES,
-        ).aggregate(rev=Sum('total_amount'))
-        rev = float(stats['rev'] or 0)
+        """RevPAR for next 90 days using net prorated formula."""
+        window_end = today + timedelta(days=89)
+        _, rev, _ = self._period_stats(prop, today, window_end)
         available = total_rooms * 90
         revpar = round(rev / available, 2) if available > 0 else 0
 
         # STLY
         stly_start = date(today.year - 1, today.month, today.day)
-        stly_end = stly_start + timedelta(days=90)
-        stly_stats = Reservation.objects.filter(
-            hotel=prop,
-            arrival_date__gte=stly_start,
-            arrival_date__lt=stly_end,
-            status__in=Reservation.ACTIVE_STATUSES,
-        ).aggregate(rev=Sum('total_amount'))
-        stly_rev = float(stly_stats['rev'] or 0)
+        stly_end = stly_start + timedelta(days=89)
+        _, stly_rev, _ = self._period_stats(prop, stly_start, stly_end)
         stly_revpar = round(stly_rev / available, 2) if available > 0 else 0
 
         return {

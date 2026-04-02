@@ -12,6 +12,16 @@ from pricing.views import (
     CancellationDashboardView,
     booking_heatmap_ajax,
     arrival_forecast_ajax,
+    DestinationReportView,
+    destination_rankings_ajax,
+    destination_seasonal_ajax,
+    destination_shifts_ajax,
+    destination_momentum_ajax,
+    MarketIntelligenceView,
+    market_intel_cancel_cross_ajax,
+    market_intel_lead_times_ajax,
+    market_intel_forecast_ajax,
+    market_intel_guidance_ajax,
 )
 
 urlpatterns = [
@@ -36,4 +46,28 @@ urlpatterns = [
          booking_heatmap_ajax, name='booking_heatmap_ajax'),
     path('org/<slug:org_code>/<slug:prop_code>/api/arrival-forecast/',
          arrival_forecast_ajax, name='arrival_forecast_ajax'),
+
+    # Destination Report
+    path('org/<slug:org_code>/<slug:prop_code>/analytics/destination-report/',
+         DestinationReportView.as_view(), name='destination_report'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/destination/rankings/',
+         destination_rankings_ajax, name='destination_rankings_ajax'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/destination/seasonal/',
+         destination_seasonal_ajax, name='destination_seasonal_ajax'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/destination/shifts/',
+         destination_shifts_ajax, name='destination_shifts_ajax'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/destination/momentum/',
+         destination_momentum_ajax, name='destination_momentum_ajax'),
+
+    # Market Intelligence
+    path('org/<slug:org_code>/<slug:prop_code>/analytics/market-intelligence/',
+         MarketIntelligenceView.as_view(), name='market_intelligence'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/market-intel/cancel-cross/',
+         market_intel_cancel_cross_ajax, name='market_intel_cancel_cross'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/market-intel/lead-times/',
+         market_intel_lead_times_ajax, name='market_intel_lead_times'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/market-intel/forecast/',
+         market_intel_forecast_ajax, name='market_intel_forecast'),
+    path('org/<slug:org_code>/<slug:prop_code>/api/market-intel/guidance/',
+         market_intel_guidance_ajax, name='market_intel_guidance'),
 ]

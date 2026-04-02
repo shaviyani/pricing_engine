@@ -1,0 +1,371 @@
+{% extends "pricing/base.html" %}
+{% load humanize %}
+
+{% block title %}Market Intelligence — {{ property.name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="space-y-6">
+
+    <!-- Header -->
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Market Intelligence</h1>
+        <p class="text-gray-600 mt-1">
+            {{ property.name }} &mdash; Your position relative to destination market trends
+            {% if position.country_completeness %}<span class="text-xs text-gray-400 ml-2">({{ position.country_completeness }}% guest country data)</span>{% endif %}
+        </p>
+    </div>
+
+    {% if not position.has_data %}
+    <div class="bg-gray-50 rounded-xl p-12 text-center">
+        <p class="text-gray-500">{{ position.reason|default:"No reservation data with guest country information." }}</p>
+    </div>
+    {% else %}
+
+    <!-- ================================================================= -->
+    <!-- SECTION 1: PROPERTY POSITION (server-rendered)                    -->
+    <!-- ================================================================= -->
+
+    <!-- Mix Comparison Table -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Your Market Mix vs National</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead><tr class="border-b border-gray-200 text-xs text-gray-500 uppercase">
+                    <th class="text-left py-2">Market</th>
+                    <th class="text-right py-2">Your Share</th>
+                    <th class="text-right py-2">National Share</th>
+                    <th class="text-right py-2">Index</th>
+                    <th class="text-right py-2">National YoY</th>
+                    <th class="text-right py-2">Your Revenue</th>
+                </tr></thead>
+                <tbody>
+                {% for m in position.markets %}
+                <tr class="border-b border-gray-100 {% if m.position == 'over_indexed' %}bg-blue-50{% elif m.position == 'under_indexed' %}bg-amber-50{% endif %}">
+                    <td class="py-1.5 font-medium">{{ m.country }}</td>
+                    <td class="py-1.5 text-right">{{ m.prop_share }}%</td>
+                    <td class="py-1.5 text-right text-gray-500">{{ m.national_share }}%</td>
+                    <td class="py-1.5 text-right {% if m.position == 'over_indexed' %}text-blue-700 font-semibold{% elif m.position == 'under_indexed' %}text-amber-700 font-semibold{% endif %}">
+                        {% if m.index %}{{ m.index }}x{% else %}&mdash;{% endif %}
+                    </td>
+                    <td class="py-1.5 text-right {% if m.national_yoy != None %}{% if m.national_yoy >= 0 %}text-green-600{% else %}text-red-600{% endif %}{% endif %}">
+                        {% if m.national_yoy != None %}{% if m.national_yoy >= 0 %}+{% endif %}{{ m.national_yoy }}%{% else %}&mdash;{% endif %}
+                    </td>
+                    <td class="py-1.5 text-right text-gray-500">${{ m.prop_revenue|intcomma }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Concentration + Opportunities -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Concentration Risk -->
+        {% if concentration.has_data %}
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Concentration Risk</h3>
+            <div class="flex items-center gap-3 mb-3">
+                <span class="px-2 py-1 rounded text-xs font-semibold
+                    {% if concentration.risk_level == 'high' %}bg-red-100 text-red-800
+                    {% elif concentration.risk_level == 'moderate' %}bg-amber-100 text-amber-800
+                    {% else %}bg-green-100 text-green-800{% endif %}">
+                    {{ concentration.risk_level|upper }}
+                </span>
+                <span class="text-sm text-gray-600">Top 3 = {{ concentration.prop_top3_share }}% of revenue</span>
+            </div>
+            <div class="space-y-2 text-xs">
+                <div class="flex justify-between"><span class="text-gray-500">Your top 3</span><span class="font-medium">{{ concentration.prop_top3|join:", " }} ({{ concentration.prop_top3_share }}%)</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">National top 3</span><span>{{ concentration.national_top3_share }}%</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">Your HHI</span><span>{{ concentration.prop_hhi }}</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">National HHI</span><span>{{ concentration.national_hhi }}</span></div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Diversification Opportunities -->
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Diversification Opportunities</h3>
+            {% if opportunities %}
+            <div class="space-y-2">
+                {% for o in opportunities|slice:":5" %}
+                <div class="flex justify-between items-center text-xs py-1.5 border-b border-gray-100">
+                    <div>
+                        <span class="font-medium">{{ o.country }}</span>
+                        <span class="text-gray-400 ml-1">{{ o.national_share }}% national{% if o.prop_share > 0 %}, {{ o.prop_share }}% yours{% else %}, not captured{% endif %}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        {% if o.national_yoy != None %}
+                        <span class="{% if o.national_yoy >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                            {% if o.national_yoy >= 0 %}+{% endif %}{{ o.national_yoy }}%
+                        </span>
+                        {% endif %}
+                        <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-semibold">{{ o.gap }}pp gap</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-xs text-gray-400">No significant gaps detected</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- SECTION 2: MARKET-CANCELLATION CROSS (AJAX)                       -->
+    <!-- ================================================================= -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Market-Cancellation Cross Analysis</h3>
+        <div id="cancelCrossLoading" class="text-center py-8 text-gray-400 text-sm">Loading...</div>
+        <div id="cancelCrossContent" style="display:none;">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead><tr class="border-b border-gray-200 text-xs text-gray-500 uppercase">
+                        <th class="text-left py-2">Market</th>
+                        <th class="text-right py-2">Cancel Rate</th>
+                        <th class="text-right py-2">National YoY</th>
+                        <th class="text-left py-2 pl-3">Diagnosis</th>
+                        <th class="text-left py-2">Action</th>
+                    </tr></thead>
+                    <tbody id="cancelCrossBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- SECTION 3: LEAD TIME BY MARKET (AJAX)                             -->
+    <!-- ================================================================= -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Booking Lead Time by Market</h3>
+        <div id="leadTimeLoading" class="text-center py-8 text-gray-400 text-sm">Loading...</div>
+        <div id="leadTimeContent" style="display:none;">
+            <div class="overflow-x-auto mb-4">
+                <table class="w-full text-sm">
+                    <thead><tr class="border-b border-gray-200 text-xs text-gray-500 uppercase">
+                        <th class="text-left py-2">Market</th>
+                        <th class="text-right py-2">Avg Days</th>
+                        <th class="text-center py-2">Bucket</th>
+                        <th class="text-left py-2 pl-3">Peak Months</th>
+                        <th class="text-left py-2">Watch Guidance</th>
+                    </tr></thead>
+                    <tbody id="leadTimeBody"></tbody>
+                </table>
+            </div>
+            <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">Lead Time Distribution</h4>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs" id="leadHeatmapTable"></table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- SECTION 4: GROWTH-ADJUSTED FORECAST (AJAX)                        -->
+    <!-- ================================================================= -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Growth-Adjusted Forecast</h3>
+        <div id="forecastLoading" class="text-center py-8 text-gray-400 text-sm">Loading...</div>
+        <div id="forecastContent" style="display:none;">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead><tr class="border-b border-gray-200 text-xs text-gray-500 uppercase">
+                        <th class="text-left py-2">Month</th>
+                        <th class="text-right py-2">STLY RN</th>
+                        <th class="text-right py-2">Adjusted RN</th>
+                        <th class="text-right py-2">Adjustment</th>
+                        <th class="text-left py-2 pl-3">Market Drivers</th>
+                    </tr></thead>
+                    <tbody id="forecastBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- SECTION 5: SEASONAL RATE GUIDANCE (AJAX)                          -->
+    <!-- ================================================================= -->
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Seasonal Rate Guidance</h3>
+        <div id="guidanceLoading" class="text-center py-8 text-gray-400 text-sm">Loading...</div>
+        <div id="guidanceContent" style="display:none;">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" id="guidanceCards"></div>
+            <div id="alertsSection" class="mt-4" style="display:none;">
+                <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">Market Momentum Alerts</h4>
+                <div id="alertsList" class="space-y-2"></div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    var URLS = {
+        cancelCross: '{% url "pricing:market_intel_cancel_cross" org_code=org.code prop_code=prop.code %}',
+        leadTimes:   '{% url "pricing:market_intel_lead_times" org_code=org.code prop_code=prop.code %}',
+        forecast:    '{% url "pricing:market_intel_forecast" org_code=org.code prop_code=prop.code %}',
+        guidance:    '{% url "pricing:market_intel_guidance" org_code=org.code prop_code=prop.code %}',
+    };
+
+    function fmt(n) { return n != null ? n.toLocaleString() : '—'; }
+    function pctClass(v) { return v != null && v >= 0 ? 'text-green-600' : 'text-red-600'; }
+    function pctStr(v) { return v != null ? (v >= 0 ? '+' : '') + v + '%' : '—'; }
+
+    var diagColors = {
+        strong_position: 'bg-green-100 text-green-800',
+        demand_healthy_retention_problem: 'bg-amber-100 text-amber-800',
+        market_shrinking: 'bg-amber-100 text-amber-800',
+        demand_and_retention_problem: 'bg-red-100 text-red-800',
+        neutral: 'bg-gray-100 text-gray-600',
+    };
+
+    var bucketColors = {
+        last_minute: 'bg-red-100 text-red-800',
+        standard: 'bg-amber-100 text-amber-800',
+        early: 'bg-blue-100 text-blue-800',
+        ultra_early: 'bg-purple-100 text-purple-800',
+    };
+
+    // ── Section 2: Cancel Cross ────────────────────────────────────────
+    fetch(URLS.cancelCross)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.success || !d.has_data) return;
+        document.getElementById('cancelCrossLoading').style.display = 'none';
+        document.getElementById('cancelCrossContent').style.display = 'block';
+
+        var html = '';
+        d.markets.forEach(function(m) {
+            var barW = Math.min(m.cancel_rate, 100);
+            html += '<tr class="border-b border-gray-100">';
+            html += '<td class="py-1.5 font-medium">' + m.country + ' <span class="text-gray-400 text-xs">(' + m.total_bookings + ')</span></td>';
+            html += '<td class="py-1.5 text-right"><div class="flex items-center justify-end gap-2"><div class="w-16 h-2 bg-gray-100 rounded-full overflow-hidden"><div class="h-full rounded-full ' + (m.cancel_rate >= 45 ? 'bg-red-400' : 'bg-green-400') + '" style="width:' + barW + '%"></div></div><span class="text-xs font-medium">' + m.cancel_rate + '%</span></div></td>';
+            html += '<td class="py-1.5 text-right ' + pctClass(m.national_yoy) + ' text-xs">' + pctStr(m.national_yoy) + '</td>';
+            html += '<td class="py-1.5 pl-3"><span class="px-2 py-0.5 rounded text-xs font-medium ' + (diagColors[m.diagnosis] || 'bg-gray-100') + '">' + m.diagnosis_label + '</span></td>';
+            html += '<td class="py-1.5 text-xs text-gray-500">' + m.action + '</td>';
+            html += '</tr>';
+        });
+        document.getElementById('cancelCrossBody').innerHTML = html;
+    });
+
+    // ── Section 3: Lead Times ──────────────────────────────────────────
+    fetch(URLS.leadTimes)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.success) return;
+        document.getElementById('leadTimeLoading').style.display = 'none';
+        document.getElementById('leadTimeContent').style.display = 'block';
+
+        // Lead time table
+        var lt = d.lead_times;
+        if (lt.has_data) {
+            var html = '';
+            lt.markets.forEach(function(m) {
+                html += '<tr class="border-b border-gray-100">';
+                html += '<td class="py-1.5 font-medium">' + m.country + ' <span class="text-gray-400 text-xs">(' + m.bookings + ')</span></td>';
+                html += '<td class="py-1.5 text-right font-medium">' + m.avg_lead_days + 'd</td>';
+                html += '<td class="py-1.5 text-center"><span class="px-2 py-0.5 rounded text-xs font-medium ' + (bucketColors[m.lead_bucket] || '') + '">' + m.lead_bucket.replace('_', ' ') + '</span></td>';
+                html += '<td class="py-1.5 pl-3 text-xs">' + (m.peak_arrival_months.length ? m.peak_arrival_months.join(', ') : '—') + '</td>';
+                html += '<td class="py-1.5 text-xs text-gray-500">' + (m.watch_guidance || '—') + '</td>';
+                html += '</tr>';
+            });
+            document.getElementById('leadTimeBody').innerHTML = html;
+        }
+
+        // Heatmap
+        var hm = d.heatmap;
+        if (hm.has_data) {
+            var th = '<thead><tr class="text-xs text-gray-500"><th class="text-left py-1 pr-2">Market</th>';
+            hm.buckets.forEach(function(b) { th += '<th class="text-center py-1 px-2">' + b + '</th>'; });
+            th += '</tr></thead><tbody>';
+            hm.markets.forEach(function(market) {
+                th += '<tr class="border-t border-gray-100"><td class="py-1 pr-2 font-medium whitespace-nowrap">' + market + '</td>';
+                hm.matrix[market].forEach(function(pct) {
+                    var bg = pct > 30 ? 'background:#1e40af;color:#fff;' : pct > 20 ? 'background:#3b82f6;color:#fff;' : pct > 10 ? 'background:#93c5fd;color:#1e3a5f;' : pct > 0 ? 'background:#dbeafe;color:#1e3a5f;' : 'background:#f9fafb;color:#9ca3af;';
+                    th += '<td class="text-center py-1 px-2" style="' + bg + 'font-size:10px;">' + (pct > 0 ? pct + '%' : '') + '</td>';
+                });
+                th += '</tr>';
+            });
+            th += '</tbody>';
+            document.getElementById('leadHeatmapTable').innerHTML = th;
+        }
+    });
+
+    // ── Section 4: Forecast ────────────────────────────────────────────
+    fetch(URLS.forecast)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.success || !d.has_data) return;
+        document.getElementById('forecastLoading').style.display = 'none';
+        document.getElementById('forecastContent').style.display = 'block';
+
+        var html = '';
+        d.months.forEach(function(m) {
+            html += '<tr class="border-b border-gray-100">';
+            html += '<td class="py-1.5 font-medium">' + m.month + '</td>';
+            html += '<td class="py-1.5 text-right">' + m.stly_rn + '</td>';
+            html += '<td class="py-1.5 text-right font-medium">' + m.adjusted_rn + '</td>';
+            html += '<td class="py-1.5 text-right"><span class="px-1.5 py-0.5 rounded text-xs font-medium ' + (m.adjustment_pct >= 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800') + '">' + (m.adjustment_pct >= 0 ? '+' : '') + m.adjustment_pct + '%</span></td>';
+            html += '<td class="py-1.5 pl-3 text-xs">';
+            m.dominant_markets.forEach(function(dm) {
+                html += '<span class="inline-block mr-1 px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">' + dm.country + ' ' + (dm.yoy >= 0 ? '+' : '') + dm.yoy + '%</span>';
+            });
+            html += '</td></tr>';
+        });
+        document.getElementById('forecastBody').innerHTML = html;
+    });
+
+    // ── Section 5: Guidance ────────────────────────────────────────────
+    fetch(URLS.guidance)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.success) return;
+        document.getElementById('guidanceLoading').style.display = 'none';
+        document.getElementById('guidanceContent').style.display = 'block';
+
+        var g = d.guidance;
+        if (g.has_data) {
+            var html = '';
+            g.months.forEach(function(m) {
+                var dirIcon = m.direction === 'increase' ? '&#9650;' : m.direction === 'reduce' ? '&#9660;' : '&#8212;';
+                var dirClass = m.direction === 'increase' ? 'bg-green-100 text-green-800' : m.direction === 'reduce' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600';
+                var levelClass = m.demand_level === 'strong' ? 'bg-green-100 text-green-800' : m.demand_level === 'moderate' ? 'bg-blue-100 text-blue-800' : m.demand_level === 'soft' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800';
+
+                html += '<div class="border border-gray-200 rounded-lg p-3">';
+                html += '<div class="flex items-center justify-between mb-2">';
+                html += '<span class="font-medium text-sm">' + m.month + '</span>';
+                html += '<span class="px-2 py-0.5 rounded text-xs font-semibold ' + dirClass + '">' + dirIcon + ' ' + m.direction_label + '</span>';
+                html += '</div>';
+                html += '<div class="flex items-center gap-2 mb-2"><span class="px-1.5 py-0.5 rounded text-xs font-medium ' + levelClass + '">' + m.demand_level + '</span>';
+                html += '<span class="text-xs text-gray-500">STLY ' + m.stly_rn + ' &rarr; ' + m.adjusted_rn + ' RN</span></div>';
+                html += '<p class="text-xs text-gray-600">' + m.reason + '</p>';
+                if (m.offpeak_targets) {
+                    html += '<div class="mt-2 flex gap-1">';
+                    m.offpeak_targets.forEach(function(t) {
+                        html += '<span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-xs">Target: ' + t + '</span>';
+                    });
+                    html += '</div>';
+                }
+                html += '</div>';
+            });
+            document.getElementById('guidanceCards').innerHTML = html;
+        }
+
+        // Alerts
+        if (d.alerts && d.alerts.length > 0) {
+            document.getElementById('alertsSection').style.display = 'block';
+            var aHtml = '';
+            d.alerts.forEach(function(a) {
+                var cls = a.severity === 'warning' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-blue-50 border-blue-200 text-blue-800';
+                aHtml += '<div class="border rounded-lg px-3 py-2 text-xs ' + cls + '">' + a.message + '</div>';
+            });
+            document.getElementById('alertsList').innerHTML = aHtml;
+        }
+    });
+})();
+</script>
+{% endblock %}

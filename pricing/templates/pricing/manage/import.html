@@ -70,6 +70,16 @@
                 <div class="stat-card"><div class="stat-value">{{ import_stats.total_updated|default:"0" }}</div><div class="stat-label">Updated</div></div>
             </div>
             {% endif %}
+            <div style="margin-bottom:16px;">
+                <label class="text-sm font-semibold text-gray-600">Import Format</label>
+                <select id="importFormatSelect" style="margin-left:8px;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+                    <option value="auto">Auto-detect</option>
+                    <option value="ids_monthly">SynXis/IDS Monthly Export</option>
+                    <option value="ids_daily">SynXis/IDS Daily Report</option>
+                    <option value="synxis_activity">SynXis Activity Report</option>
+                    <option value="manual">Manual Column Mapping</option>
+                </select>
+            </div>
             <div id="uploadZone" style="border:2px dashed #d1d5db;border-radius:12px;padding:40px;text-align:center;background:#f9fafb;cursor:pointer;" onclick="document.getElementById('importFileInput').click()">
                 <div class="text-gray-300 mb-2"><svg class="w-8 h-8 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></div>
                 <p class="font-semibold text-gray-700">Drop file here or click to browse</p>
@@ -289,7 +299,7 @@ function loadReservations(page) {
         html += '<th style="width:32px;"><input type="checkbox" id="resSelectAll" onchange="toggleSelectAll(this)" title="Select all"></th>';
         html += '<th>Conf #</th><th>Arrival</th><th>Departure</th><th>Nts</th><th>Pax</th>';
         html += '<th>Room</th><th>Rate Plan</th><th>ADR</th><th>Total</th>';
-        html += '<th>Status</th><th>Source</th><th></th>';
+        html += '<th>Status</th><th>Guest</th><th>Country</th><th>Source</th><th></th>';
         html += '</tr></thead><tbody>';
 
         data.reservations.forEach(function(r) {
@@ -324,6 +334,10 @@ function loadReservations(page) {
                 html += '<option value="' + s + '"' + (r.status === s ? ' selected' : '') + '>' + s.replace('_', ' ') + '</option>';
             });
             html += '</select></td>';
+            // Guest
+            html += '<td style="font-size:12px;">' + escHtml(r.guest_name || '—') + '</td>';
+            // Country
+            html += '<td style="font-size:12px;">' + escHtml(r.guest_country || '—') + '</td>';
             // Source (read-only)
             html += '<td class="text-sm text-gray-500" style="font-size:12px;">' + escHtml(r.source_name || '—') + '</td>';
             // Actions
@@ -480,14 +494,30 @@ zone.addEventListener('dragleave', function() { this.style.borderColor = '#d1d5d
 zone.addEventListener('drop', function(e) { e.preventDefault(); this.style.borderColor = '#d1d5db'; this.style.background = '#f9fafb'; if (e.dataTransfer.files.length) handleFileUpload(e.dataTransfer.files[0]); });
 
 function handleFileUpload(file) {
+    var format = document.getElementById('importFormatSelect').value;
     document.getElementById('uploadProgress').style.display = 'block';
     document.getElementById('uploadZone').style.display = 'none';
+
     var fd = new FormData(); fd.append('file', file);
+    if (format !== 'manual') { fd.append('format', format); }
+
     fetch(API_BASE + '/api/import/upload/', { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken') }, body: fd })
     .then(function(r) { return r.json(); }).then(function(d) {
         document.getElementById('uploadProgress').style.display = 'none';
         if (!d.success) { showToast(d.error || 'Upload failed', 'error'); document.getElementById('uploadZone').style.display = 'block'; return; }
-        uploadData = d.data; renderMappingUI(d.data);
+        uploadData = d.data;
+
+        if (format !== 'manual') {
+            // Auto-detect: show preview briefly then import directly
+            currentColumnMap = JSON.parse(JSON.stringify(d.data.auto_detected));
+            matchedTemplateId = null;
+            renderMappingUI(d.data);
+            // Auto-trigger import
+            showToast('Auto-detected ' + Object.keys(currentColumnMap).length + ' columns. Importing...');
+            executeImport();
+        } else {
+            renderMappingUI(d.data);
+        }
     }).catch(function(err) { document.getElementById('uploadProgress').style.display = 'none'; document.getElementById('uploadZone').style.display = 'block'; showToast('Upload error: ' + err, 'error'); });
 }
 

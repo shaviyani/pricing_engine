@@ -1572,6 +1572,7 @@ class ReservationListView(PricingManagementMixin, View):
                 'adr': str(r.adr),
                 'status': r.status,
                 'guest_name': r.guest.name if r.guest else '',
+                'guest_country': r.guest.country if r.guest and r.guest.country else '',
                 'source_name': r.booking_source.name if r.booking_source and r.booking_source.name != 'Unknown' else '',
                 'cancellation_date': str(r.cancellation_date) if r.cancellation_date else '',
             })
@@ -1784,11 +1785,26 @@ class RoomTypeMappingUpdateView(PricingManagementMixin, View):
             if not room_type:
                 return self.error_response('Room type not found', 404)
             qs.update(room_type=room_type)
+
+            # Persist mapping for future imports
+            from pricing.models.analytics import RoomTypeMapping
+            if room_type_name:
+                RoomTypeMapping.objects.update_or_create(
+                    hotel=hotel, import_name=room_type_name,
+                    defaults={'room_type': room_type},
+                )
+
             return self.success_response(
                 message=f'{count} reservations mapped to "{room_type.name}"'
             )
         else:
             qs.update(room_type=None)
+
+            # Remove persistent mapping
+            from pricing.models.analytics import RoomTypeMapping
+            if room_type_name:
+                RoomTypeMapping.objects.filter(hotel=hotel, import_name=room_type_name).delete()
+
             return self.success_response(
                 message=f'{count} reservations unmapped'
             )
